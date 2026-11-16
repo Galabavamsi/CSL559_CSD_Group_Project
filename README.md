@@ -115,6 +115,7 @@ app/
     serviceability/  inventory/  fulfilment/  pickpack/  inbound/  replenishment/
     forecasting/     slotting/   assortment/  network_planning/    dashboard/
 web/                 the demo screens (plain HTML, CSS and JavaScript; no build step)
+scripts/             developer tools; generate_sales.py writes 60 days of seeded sales history
 tests/               pytest suite
 docs/                architecture notes, team plan and one guide per team member
 ```
