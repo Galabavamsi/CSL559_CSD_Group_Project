@@ -7,12 +7,15 @@ A few situations are planted on purpose so the demo has something to show:
   * Store 2, bananas   - out of stock (shows an item hidden from the customer)
 """
 from datetime import date, timedelta
+from functools import cache
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from . import config
+from .auth import hash_password
 from .db import Base, SessionLocal, engine
-from .models import SKU, Bin, StockItem, StockLedger, StockLevel, Store, utcnow
+from .models import SKU, Bin, Staff, StockItem, StockLedger, StockLevel, Store, utcnow
 
 STORES = [
     ("DS-01 Central", 12.9716, 77.5946),
@@ -48,6 +51,9 @@ SALES_HISTORY = {
 }
 
 DEFAULT_QTY = 30
+
+STORE_ROLES = ("picker", "packer", "receiver", "manager")   # one login of each per store
+CITY_ROLES = ("ops", "admin")                                 # not tied to a store
 
 
 def _make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
@@ -115,13 +121,35 @@ def seed(db: Session) -> None:
                 db.add(StockLedger(store_id=store.id, sku_id=sku.id, bin_id=home.id, delta=-units,
                                    reason="sale", reference="history", actor="seed",
                                    ts=utcnow() - timedelta(days=days_ago)))
+    seed_staff(db)
     db.commit()
+
+
+@cache
+def _demo_password_hash() -> str:
+    """Hashed once per process: scrypt is slow on purpose, and the tests reseed before every test."""
+    return hash_password(config.DEMO_PASSWORD)
+
+
+def seed_staff(db: Session) -> None:
+    """Demo logins: picker1, packer1, receiver1, manager1 (and ...2 for store 2), plus city-wide ops and admin.
+    They all share config.DEMO_PASSWORD. Does not commit."""
+    for store_id in db.scalars(select(Store.id).order_by(Store.id)).all():
+        for role in STORE_ROLES:
+            db.add(Staff(username=f"{role}{store_id}", password_hash=_demo_password_hash(),
+                         role=role, store_id=store_id))
+    for role in CITY_ROLES:
+        db.add(Staff(username=role, password_hash=_demo_password_hash(), role=role, store_id=None))
 
 
 def seed_if_empty(db: Session) -> bool:
     if db.scalar(select(func.count()).select_from(Store)) == 0:
         seed(db)
         return True
+    if db.scalar(select(func.count()).select_from(Staff)) == 0:
+        # A database from before logins existed: add the demo staff without touching its stock.
+        seed_staff(db)
+        db.commit()
     return False
 
 

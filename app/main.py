@@ -4,14 +4,15 @@ Run it with:   uvicorn app.main:app --reload
 Then open:     http://localhost:8000        (demo screens)
                http://localhost:8000/docs   (interactive API reference)
 """
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import seed
+from . import auth, config, seed
 from .db import SessionLocal, init_db
 from .errors import DomainError
 from .modules.assortment.router import router as assortment_router
@@ -31,6 +32,9 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if config.JWT_SECRET == config.DEFAULT_JWT_SECRET:
+        logging.getLogger("uvicorn.error").warning(
+            "JWT_SECRET is not set: tokens are signed with the public development secret.")
     init_db()
     with SessionLocal() as db:
         seed.seed_if_empty(db)
@@ -52,7 +56,7 @@ async def domain_error_handler(_request: Request, exc: DomainError):
 
 
 for router in (
-    serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
+    auth.router, serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
     replenishment_router, forecasting_router, slotting_router, assortment_router,
     network_planning_router, dashboard_router,
 ):
@@ -64,7 +68,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/v1/admin/reset", tags=["admin"])
+@app.post("/v1/admin/reset", tags=["admin"], dependencies=[Depends(auth.require_role("admin"))])
 def reset_demo_data():
     """Wipe everything and reload the demo data. For demos and local testing only."""
     seed.reset()

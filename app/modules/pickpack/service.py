@@ -44,6 +44,14 @@ def next_job(db: Session, picker_id: str, store_id: int) -> FulfilmentJob | None
         db.rollback()   # another picker claimed it first; look for the next one
 
 
+def task_store_id(db: Session, task_id: int) -> int:
+    """Which store a pick task belongs to (used for the permission check). Read-only."""
+    task = db.get(PickTask, task_id)
+    if task is None:
+        raise not_found("Pick task", task_id)
+    return db.get(FulfilmentJob, task.job_id).store_id
+
+
 def _open_task(db: Session, task_id: int) -> tuple[PickTask, FulfilmentJob]:
     task = db.get(PickTask, task_id)
     if task is None:

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...auth import check_store, current_staff, require_role
 from ...db import get_db
 from . import service
 
@@ -58,21 +59,27 @@ def release_reservation(reservation_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/v1/stock-adjustments")
-def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db)):
+def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db),
+                      staff: dict = Depends(require_role("manager"))):
+    check_store(staff, body.store_id)
     return service.adjust(db, body.store_id, body.sku_id, body.delta, body.reason, body.bin_id, body.actor)
 
 
 @router.get("/v1/stores/{store_id}/stock")
-def read_stock_by_bin(store_id: int, db: Session = Depends(get_db)):
+def read_stock_by_bin(store_id: int, db: Session = Depends(get_db),
+                      staff: dict = Depends(current_staff)):
+    check_store(staff, store_id)
     return service.stock_by_bin(db, store_id)
 
 
 @router.get("/v1/stores/{store_id}/ledger")
-def read_ledger(store_id: int, limit: int = 50, db: Session = Depends(get_db)):
+def read_ledger(store_id: int, limit: int = 50, db: Session = Depends(get_db),
+                staff: dict = Depends(current_staff)):
+    check_store(staff, store_id)
     return service.ledger(db, store_id, limit)
 
 
-@router.post("/v1/admin/sweep-reservations")
+@router.post("/v1/admin/sweep-reservations", dependencies=[Depends(require_role("admin"))])
 def sweep(db: Session = Depends(get_db)):
     """Release holds that have run out. In production this runs on a timer (see Member 1 guide)."""
     return {"released": service.sweep_expired(db)}

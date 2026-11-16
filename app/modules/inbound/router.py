@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...auth import check_store, require_role
 from ...db import get_db
 from . import service
 
@@ -26,6 +27,8 @@ class GoodsReceiptIn(BaseModel):
 
 
 @router.post("/v1/goods-receipts", status_code=201)
-def create_goods_receipt(body: GoodsReceiptIn, db: Session = Depends(get_db)):
+def create_goods_receipt(body: GoodsReceiptIn, db: Session = Depends(get_db),
+                         staff: dict = Depends(require_role("receiver", "manager"))):
+    check_store(staff, body.store_id)
     return service.receive_goods(db, body.store_id, [line.model_dump() for line in body.lines],
                                  body.transfer_order_id, body.actor)
