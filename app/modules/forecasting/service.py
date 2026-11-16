@@ -9,7 +9,7 @@ It then applies the reorder-point formula from HLD 6.2 (in days instead of hours
 Member 3's guide covers replacing the moving average with a better model.
 """
 import math
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 from statistics import pstdev
 
 from sqlalchemy import func, select
@@ -20,34 +20,42 @@ from ...models import Forecast, StockLedger, StockLevel, utcnow
 from ..inventory import service as inventory
 
 
-def daily_sales(db: Session, store_id: int, window_days: int) -> dict[int, list[int]]:
-    """Units sold per day for each SKU over the window, with zero-sale days included."""
+def daily_sales(db: Session, store_id: int, days_back: int) -> dict[int, dict[date, int]]:
+    """Units sold per SKU per day over the `days_back` whole days ending yesterday. Read-only.
+
+    Today is left out because it is only partly over. Days without sales are absent from the result.
+    """
     today = utcnow().date()
-    days = [(today - timedelta(days=n)).isoformat() for n in range(window_days)]
-    since = utcnow() - timedelta(days=window_days)
     rows = db.execute(
         select(StockLedger.sku_id, func.date(StockLedger.ts), func.sum(-StockLedger.delta))
-        .where(StockLedger.store_id == store_id, StockLedger.reason == "sale", StockLedger.ts >= since)
+        .where(StockLedger.store_id == store_id, StockLedger.reason == "sale",
+               StockLedger.ts >= datetime.combine(today - timedelta(days=days_back), time.min),
+               StockLedger.ts < datetime.combine(today, time.min))
         .group_by(StockLedger.sku_id, func.date(StockLedger.ts))
     ).all()
-    by_sku: dict[int, dict[str, int]] = {}
+    sales: dict[int, dict[date, int]] = {}
     for sku_id, day, units in rows:
-        by_sku.setdefault(sku_id, {})[str(day)] = int(units)
-    return {sku_id: [per_day.get(d, 0) for d in days] for sku_id, per_day in by_sku.items()}
+        # SQLite returns the day as text and PostgreSQL as a date; going through str() handles both.
+        sales.setdefault(sku_id, {})[date.fromisoformat(str(day))] = int(units)
+    return sales
 
 
 def run(db: Session, store_id: int, window_days: int | None = None) -> list[dict]:
-    """Recalculate forecasts for one store and update reorder points for SKUs that have sales (FR-7)."""
+    """Recalculate forecasts for one store from the `window_days` days ending yesterday, and update reorder
+    points for SKUs that have sales (FR-7)."""
     inventory.get_store(db, store_id)
     window = window_days or config.FORECAST_WINDOW_DAYS
     sales = daily_sales(db, store_id, window)
+    today = utcnow().date()
+    window_dates = [today - timedelta(days=n) for n in range(window, 0, -1)]
     lead = config.LEAD_TIME_DAYS
     results = []
     levels = db.scalars(
         select(StockLevel).where(StockLevel.store_id == store_id).execution_options(populate_existing=True)
     ).all()
     for level in levels:
-        series = sales.get(level.sku_id, [0] * window)
+        history = sales.get(level.sku_id, {})
+        series = [history.get(d, 0) for d in window_dates]
         mean = sum(series) / window
         std = pstdev(series)
         forecast = db.get(Forecast, (store_id, level.sku_id))
