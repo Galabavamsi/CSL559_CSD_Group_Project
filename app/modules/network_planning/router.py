@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...auth import require_role
 from ...db import get_db
 from . import service
 
@@ -18,6 +19,6 @@ class CoverageIn(BaseModel):
     points: list[DemandPoint] = Field(min_length=1)
 
 
-@router.post("/v1/network-planning/coverage")
+@router.post("/v1/network-planning/coverage", dependencies=[Depends(require_role("ops"))])
 def coverage(body: CoverageIn, db: Session = Depends(get_db)):
     return service.coverage(db, [p.model_dump() for p in body.points])

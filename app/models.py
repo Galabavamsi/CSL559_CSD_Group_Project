@@ -61,6 +61,16 @@ class SKU(Base):
     price: Mapped[float] = mapped_column(Float)
 
 
+class Staff(Base):
+    """Someone who can log in (HLD 10). `store_id` is empty for city-wide roles (ops, admin)."""
+    __tablename__ = "staff"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(40), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(10))                     # picker | packer | receiver | manager | ops | admin
+    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
+
+
 # --------------------------------------------------------------------------- stock
 
 class StockLevel(Base):

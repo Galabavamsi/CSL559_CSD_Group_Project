@@ -4,6 +4,13 @@ import os
 # Database. SQLite keeps the prototype zero-setup; the HLD target is PostgreSQL sharded by store_id.
 DATABASE_URL = os.getenv("DARKSTORE_DB", "sqlite:///./darkstore.db")
 
+# Login (HLD 10). The default secret is fake and public: always set JWT_SECRET outside local development.
+DEFAULT_JWT_SECRET = "dev-only-change-me-not-a-real-secret"
+JWT_SECRET = os.getenv("JWT_SECRET", DEFAULT_JWT_SECRET)
+TOKEN_MINUTES = int(os.getenv("TOKEN_MINUTES", "30"))
+# Password of every seeded demo account (picker1, manager1, admin, ...). The demo screens log in with it.
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo")
+
 # Inventory: how long a checkout hold lasts before the sweeper releases it (HLD 9.1).
 RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))
 

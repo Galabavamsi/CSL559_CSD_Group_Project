@@ -24,7 +24,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Forecast | Reorder points are recalculated from the last 7 days of sales |
 | Watch | A dashboard, the stock table and a live event feed for each store |
 
-25 automated tests cover these flows, including twenty buyers racing for the last unit.
+39 automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
 
 ## Quick start
 
@@ -66,6 +66,26 @@ docker compose --profile postgres up --build
 ```
 
 `docker compose down -v` stops everything and deletes the stored data.
+
+## Logging in
+
+Customer endpoints (serviceability, availability, reservations) are open. Everything else needs a
+staff token. The demo data has `picker1`, `packer1`, `receiver1`, `manager1` (and `...2` for the
+second store), plus city-wide `ops` and `admin`. They all use the password `demo`.
+
+```bash
+TOKEN=$(curl -s localhost:8000/v1/auth/login -H "Content-Type: application/json" \
+  -d '{"username":"manager1","password":"demo"}' | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+curl localhost:8000/v1/stores/1/dashboard -H "Authorization: Bearer $TOKEN"
+```
+
+In `/docs`, press *Authorize* and paste the token. The demo screens log in by themselves.
+Tokens last 30 minutes. Outside local development set `JWT_SECRET` (signing key) and
+`DEMO_PASSWORD` in the environment; the built-in defaults are public.
+
+Staff may act only on their own store: pickers and packers pick and pack, receivers and managers
+receive goods, managers adjust stock and run replenishment and forecasting, `ops` can read every
+store, and `/v1/admin/*` needs `admin`.
 
 ## Five-minute tour
 
@@ -116,7 +136,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |
 | Kafka | `events.py` | Events logged to a table and handled in-process | No broker |
 | PostgreSQL + Redis | `db.py` | SQLite | One file, no sharding, no cache |
-| Auth, gateway | none | none | Everything is open |
+| Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint | No gateway or mutual TLS; customer endpoints are open; demo accounts share one password |
 
 Every "simplified" cell is a task in one of the member guides.
 

@@ -65,11 +65,17 @@ def run(db: Session, store_id: int) -> TransferOrder | None:
     return order
 
 
-def dispatch(db: Session, transfer_order_id: int) -> TransferOrder:
-    """Stand-in for the mother hub WMS saying 'the truck has left'."""
+def get_order(db: Session, transfer_order_id: int) -> TransferOrder:
+    """Look up one transfer order or raise 404. Read-only."""
     order = db.get(TransferOrder, transfer_order_id)
     if order is None:
         raise not_found("Transfer order", transfer_order_id)
+    return order
+
+
+def dispatch(db: Session, transfer_order_id: int) -> TransferOrder:
+    """Stand-in for the mother hub WMS saying 'the truck has left'."""
+    order = get_order(db, transfer_order_id)
     if order.status != "created":
         raise DomainError(409, "bad_state", f"Transfer order is {order.status}; only a new one can be dispatched")
     order.status = "dispatched"

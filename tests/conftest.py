@@ -9,7 +9,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 
-from app import seed  # noqa: E402
+from app import auth, seed  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import SKU, StockItem, StockLedger, StockLevel  # noqa: E402
@@ -20,10 +20,23 @@ def fresh_data():
     seed.reset()
 
 
+def _logged_in(role: str, store_id: int | None = None) -> TestClient:
+    token = auth.make_token(f"test-{role}", role, store_id)
+    return TestClient(app, headers={"Authorization": f"Bearer {token}"})
+
+
 @pytest.fixture()
 def client(fresh_data):
-    with TestClient(app) as c:
+    """Logged in as admin, so tests of business rules are not about permissions."""
+    with _logged_in("admin") as c:
         yield c
+
+
+@pytest.fixture()
+def client_as(fresh_data):
+    """For permission tests: client_as("picker", 1) is a client logged in with that role at that store.
+    Leave store_id out for city-wide roles such as ops."""
+    return _logged_in
 
 
 @pytest.fixture()

@@ -43,10 +43,11 @@ anyone can see what is going on. You are also the **integrator**: you keep `main
 ```bash
 curl "localhost:8000/v1/serviceability?lat=12.975&lng=77.60"        # served by DS-01 Central
 curl "localhost:8000/v1/serviceability?lat=12.80&lng=77.40"         # not serviceable
+# The next three need a staff token: see "Logging in" in README.md, log in as ops, and set $TOKEN.
 curl -X POST localhost:8000/v1/network-planning/coverage -H "Content-Type: application/json" \
-  -d '{"points":[{"lat":12.972,"lng":77.595,"orders":100},{"lat":12.90,"lng":77.65,"orders":60}]}'
-curl "localhost:8000/v1/stores/1/dashboard"
-curl "localhost:8000/v1/events?limit=5"
+  -H "Authorization: Bearer $TOKEN" -d '{"points":[{"lat":12.972,"lng":77.595,"orders":100},{"lat":12.90,"lng":77.65,"orders":60}]}'
+curl "localhost:8000/v1/stores/1/dashboard" -H "Authorization: Bearer $TOKEN"
+curl "localhost:8000/v1/events?limit=5" -H "Authorization: Bearer $TOKEN"
 ```
 
 Then read `tests/test_serviceability.py` and skim `web/app.js`.
