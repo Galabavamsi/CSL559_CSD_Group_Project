@@ -1,6 +1,9 @@
 """Forecasting (guide task 3.2): daily sales, backtest, WAPE."""
 from datetime import date, datetime, time, timedelta
 
+from fastapi.testclient import TestClient
+
+from app.main import app
 from app.models import utcnow
 from app.modules.forecasting import service as forecasting
 from scripts.generate_sales import clear_history, write_history
@@ -58,3 +61,23 @@ def test_backtest_with_no_sales_has_no_wape(db):
     clear_history(db, 1)
     db.commit()
     assert forecasting.backtest(db, 1)["wape"] is None
+
+
+URL = "/v1/forecasting/backtest"
+
+
+def test_backtest_endpoint_is_for_staff_of_that_store(client_as):
+    with TestClient(app) as anonymous:
+        assert anonymous.get(URL, params={"store_id": 1}).status_code == 401
+    picker = client_as("picker", 1)
+    assert picker.get(URL, params={"store_id": 1}).status_code == 200
+    assert picker.get(URL, params={"store_id": 2}).status_code == 403
+    assert client_as("ops").get(URL, params={"store_id": 2}).status_code == 200
+
+
+def test_backtest_endpoint_checks_its_parameters(client):
+    assert client.get(URL, params={"store_id": 1, "test_days": 0}).status_code == 422
+    assert client.get(URL, params={"store_id": 1, "window": 0}).status_code == 422
+    assert client.get(URL, params={"store_id": 99}).status_code == 404
+    body = client.get(URL, params={"store_id": 1}).json()
+    assert body["model"] == "moving_average" and (body["test_days"], body["window"]) == (14, 7)
