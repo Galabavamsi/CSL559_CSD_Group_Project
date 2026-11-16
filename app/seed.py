@@ -9,13 +9,15 @@ A few situations are planted on purpose so the demo has something to show:
 from datetime import date, timedelta
 from functools import cache
 
+import h3
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import config
 from .auth import hash_password
 from .db import Base, SessionLocal, engine
-from .models import SKU, Bin, Staff, StockItem, StockLedger, StockLevel, Store, utcnow
+from .models import SKU, Bin, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
+from .modules.serviceability import service as serviceability
 
 STORES = [
     ("DS-01 Central", 12.9716, 77.5946),
@@ -123,6 +125,7 @@ def seed(db: Session) -> None:
                                    ts=utcnow() - timedelta(days=days_ago)))
     seed_staff(db)
     db.commit()
+    serviceability.rebuild_zones(db)
 
 
 @cache
@@ -150,6 +153,10 @@ def seed_if_empty(db: Session) -> bool:
         # A database from before logins existed: add the demo staff without touching its stock.
         seed_staff(db)
         db.commit()
+    cell = db.scalar(select(StoreZone.h3_cell).limit(1))
+    if cell is None or h3.get_resolution(cell) != config.H3_RESOLUTION:
+        # A database from before delivery zones existed, or one built at another H3_RESOLUTION.
+        serviceability.rebuild_zones(db)
     return False
 
 

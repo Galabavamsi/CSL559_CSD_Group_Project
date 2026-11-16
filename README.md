@@ -24,7 +24,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Forecast | Reorder points are recalculated from the last 7 days of sales |
 | Watch | A dashboard, the stock table and a live event feed for each store |
 
-39 automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
+45 automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
 
 ## Quick start
 
@@ -106,7 +106,7 @@ docs/                architecture notes, team plan and one guide per team member
 
 | HLD service | Module | In the prototype | Simplified for now |
 | --- | --- | --- | --- |
-| 1 Serviceability | `serviceability` | Nearest store within its radius, ETA, busy flag | Straight-line distance instead of H3 cells |
+| 1 Serviceability | `serviceability` | H3 cell to store lookup, ETA, zone shrinks when the store is busy | Zones are rebuilt by hand (`POST /v1/admin/rebuild-zones`); a cell has one store, so a busy or closed store's customers are not passed to a neighbour |
 | 2 Assortment | `assortment` | List and add SKUs per store | No demand-based recommendations |
 | 3 Inventory | `inventory` | ATP, atomic holds, confirm, release, expiry sweep, adjustments, ledger, FEFO allocation | Sweep is triggered by hand; no cache; no safety buffer |
 | 4 Fulfilment Orchestrator | `fulfilment` | Job per paid order, pick tasks, state machine, store busy flag | No cancellation after payment |
