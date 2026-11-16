@@ -74,6 +74,40 @@ def run(db: Session, store_id: int, window_days: int | None = None) -> list[dict
     return sorted(results, key=lambda r: r["sku"])
 
 
+def moving_average(history: dict[date, int], target_day: date, window: int = 7) -> float:
+    """Forecast for `target_day`: the mean of the `window` days before it. Days missing from `history` sold 0."""
+    return sum(history.get(target_day - timedelta(days=n), 0) for n in range(1, window + 1)) / window
+
+
+def _wape(abs_error: float, actual: int) -> float | None:
+    return round(abs_error / actual, 4) if actual else None
+
+
+def backtest(db: Session, store_id: int, test_days: int = 14, window: int = 7) -> dict:
+    """How wrong would the moving average have been over the `test_days` days ending yesterday? Read-only.
+
+    For each of those days and each SKU the store carries, the forecast is the moving average of the `window`
+    days before it, and the actual is what sold. WAPE = sum of |actual - forecast| / sum of actual (HLD 12
+    target: 30% or lower); weighting by volume stops slow sellers swamping the score. WAPE is None when
+    nothing sold.
+    """
+    inventory.get_store(db, store_id)
+    sales = daily_sales(db, store_id, test_days + window)
+    today = utcnow().date()
+    test_dates = [today - timedelta(days=n) for n in range(test_days, 0, -1)]
+    per_sku, total_error, total_actual = [], 0.0, 0
+    for level in db.scalars(select(StockLevel).where(StockLevel.store_id == store_id)).all():
+        history = sales.get(level.sku_id, {})
+        actual = sum(history.get(d, 0) for d in test_dates)
+        error = sum(abs(history.get(d, 0) - moving_average(history, d, window)) for d in test_dates)
+        total_error += error
+        total_actual += actual
+        per_sku.append({"sku_id": level.sku_id, "sku": level.sku.name, "actual_units": actual,
+                        "abs_error": round(error, 2), "wape": _wape(error, actual)})
+    return {"store_id": store_id, "model": "moving_average", "window": window, "test_days": test_days,
+            "wape": _wape(total_error, total_actual), "per_sku": sorted(per_sku, key=lambda row: row["sku"])}
+
+
 def list_forecasts(db: Session, store_id: int) -> list[dict]:
     rows = db.scalars(select(Forecast).where(Forecast.store_id == store_id)).all()
     return [{"sku_id": f.sku_id, "daily_demand": round(f.daily_demand, 2), "daily_std": round(f.daily_std, 2),
