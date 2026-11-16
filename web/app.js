@@ -15,12 +15,32 @@ const state = {
 
 // ---------------------------------------------------------------- helpers
 
-async function api(method, path, body) {
-  const res = await fetch(path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+// Staff logins (HLD 10). Each station logs in as a seeded demo user; the customer station needs no login.
+const DEMO_PASSWORD = "demo"; // same as DEMO_PASSWORD in app/config.py; demo accounts only
+const tokens = {}; // username -> promise of a bearer token, so calls made together share one login
+const picker = () => `picker${state.opsStore}`;
+const manager = () => `manager${state.opsStore}`;
+const ADMIN = "admin";
+
+function tokenFor(user) {
+  tokens[user] ??= api("POST", "/v1/auth/login", { username: user, password: DEMO_PASSWORD })
+    .then((session) => session.access_token)
+    .catch((error) => {
+      delete tokens[user]; // let the next call try to log in again
+      throw error;
+    });
+  return tokens[user];
+}
+
+/** Call the API. Pass `user` to send that staff member's token; leave it out for the open customer endpoints. */
+async function api(method, path, body, user, isRetry = false) {
+  const headers = body ? { "Content-Type": "application/json" } : {};
+  if (user) headers.Authorization = `Bearer ${await tokenFor(user)}`;
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401 && user && !isRetry) {
+    delete tokens[user]; // the token expired: log in again and retry once
+    return api(method, path, body, user, true);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const error = new Error(data.error?.message || `Request failed (${res.status})`);
@@ -189,8 +209,7 @@ async function cancelHold() {
 // ---------------------------------------------------------------- picker station
 
 async function nextJob() {
-  const picker = encodeURIComponent($("picker-id").value.trim() || "picker-1");
-  const result = await api("GET", `/v1/pickers/${picker}/next-task?store_id=${state.opsStore}`);
+  const result = await api("GET", `/v1/pickers/${picker()}/next-task?store_id=${state.opsStore}`, undefined, picker());
   state.job = result.job;
   say($("picker-message"), result.job ? "" : "No paid orders are waiting in this store.");
   renderJob();
@@ -237,7 +256,7 @@ function renderJob() {
 }
 
 async function scanTask(task, barcode) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty: task.qty });
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty: task.qty }, picker());
   if (!result.match) {
     say($("picker-message"), result.message, "bad");
     return;
@@ -248,7 +267,7 @@ async function scanTask(task, barcode) {
 }
 
 async function reportShort(task) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`);
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, undefined, picker());
   state.job = result.job;
   say($("picker-message"), result.message, result.dropped ? "bad" : "");
   renderJob();
@@ -257,7 +276,7 @@ async function reportShort(task) {
 
 async function packJob() {
   const slot = $("crate-slot").value.trim() || "S-01";
-  state.job = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot });
+  state.job = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot }, picker());
   const done = state.job.state === "packed";
   say($("picker-message"),
     done ? `Packed into ${slot}. The stock has now left the books.` : "Nothing could be picked, so the order was cancelled.",
@@ -268,7 +287,7 @@ async function packJob() {
 }
 
 async function handover() {
-  const job = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/handover`);
+  const job = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/handover`, undefined, picker());
   say($("picker-message"), `Order ${job.order_id} is with the rider.`, "good");
   state.job = null;
   renderJob();
@@ -280,10 +299,10 @@ async function handover() {
 async function refreshOps() {
   const store = state.opsStore;
   const [dash, stock, transfers, events] = await Promise.all([
-    api("GET", `/v1/stores/${store}/dashboard`),
+    api("GET", `/v1/stores/${store}/dashboard`, undefined, manager()),
     api("GET", `/v1/stores/${store}/availability`),
-    api("GET", `/v1/transfer-orders?store_id=${store}`),
-    api("GET", `/v1/events?store_id=${store}&limit=12`),
+    api("GET", `/v1/transfer-orders?store_id=${store}`, undefined, manager()),
+    api("GET", `/v1/events?store_id=${store}&limit=12`, undefined, manager()),
   ]);
   renderTiles(dash);
   renderStock(stock);
@@ -334,7 +353,7 @@ function renderTransfers(orders) {
       if (order.status === "created") {
         const button = el("button", { className: "btn btn-small", textContent: "Hub dispatches truck" });
         button.onclick = guarded($("ops-message"), async () => {
-          await api("POST", `/v1/transfer-orders/${order.transfer_order_id}/dispatch`);
+          await api("POST", `/v1/transfer-orders/${order.transfer_order_id}/dispatch`, undefined, manager());
           say($("ops-message"), `Truck for transfer order #${order.transfer_order_id} is on its way.`);
           await refreshOps();
         });
@@ -356,7 +375,7 @@ async function receiveTruck(order) {
     store_id: order.store_id,
     transfer_order_id: order.transfer_order_id,
     lines: order.lines.map((l) => ({ sku_id: l.sku_id, qty: l.qty_ordered })),
-  });
+  }, manager());
   const bins = receipt.received.map((r) => `${r.sku} to ${r.bin}`).join("; ");
   say($("ops-message"), `Truck received and put away: ${bins}.`, "good");
   await refreshOps();
@@ -380,7 +399,7 @@ function renderEvents(events) {
 }
 
 async function runReplenishment() {
-  const { transfer_order: order } = await api("POST", `/v1/replenishment/run?store_id=${state.opsStore}`);
+  const { transfer_order: order } = await api("POST", `/v1/replenishment/run?store_id=${state.opsStore}`, undefined, manager());
   say($("ops-message"), order
     ? `Transfer order #${order.transfer_order_id} raised for ${order.lines.map((l) => `${l.qty_ordered} × ${l.sku}`).join(", ")}.`
     : "Nothing to reorder: every item is above its reorder point or already on its way.");
@@ -388,14 +407,14 @@ async function runReplenishment() {
 }
 
 async function runForecast() {
-  const rows = await api("POST", `/v1/forecasting/run?store_id=${state.opsStore}`);
+  const rows = await api("POST", `/v1/forecasting/run?store_id=${state.opsStore}`, undefined, manager());
   const updated = rows.filter((r) => r.daily_demand > 0).length;
   say($("ops-message"), `Forecasts recalculated from the last 7 days of sales. Reorder points updated for ${updated} ${updated === 1 ? "item" : "items"}.`);
   await refreshOps();
 }
 
 async function sweepHolds() {
-  const { released } = await api("POST", "/v1/admin/sweep-reservations");
+  const { released } = await api("POST", "/v1/admin/sweep-reservations", undefined, ADMIN);
   say($("ops-message"), released ? `${released} expired ${released === 1 ? "hold" : "holds"} released.` : "No holds have expired.");
   await refreshOps();
   await loadProducts();
@@ -403,7 +422,7 @@ async function sweepHolds() {
 
 async function resetDemo() {
   if (!window.confirm("Reset all demo data? Every order, hold and stock change will be wiped.")) return;
-  await api("POST", "/v1/admin/reset");
+  await api("POST", "/v1/admin/reset", undefined, ADMIN);
   clearHold();
   state.cart = {};
   state.job = null;
@@ -422,6 +441,7 @@ async function start() {
   $("store-select").replaceChildren(...stores.map((s) => el("option", { value: s.store_id }, s.name)));
   $("store-select").onchange = guarded($("ops-message"), async () => {
     state.opsStore = Number($("store-select").value);
+    $("picker-id").textContent = picker();
     state.job = null;
     renderJob();
     await refreshOps();
