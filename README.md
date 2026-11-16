@@ -50,6 +50,23 @@ Then open:
 Run the tests with `python -m pytest -q`. Reset the demo data with the button on the ops desk,
 or with `python -m app.seed`.
 
+### With Docker
+
+If you have Docker, one command builds and starts the app on http://localhost:8000
+(the SQLite file is kept in a Docker volume, so data survives restarts):
+
+```bash
+docker compose up --build
+```
+
+To also start the PostgreSQL container that task 1.7 will move the app onto:
+
+```bash
+docker compose --profile postgres up --build
+```
+
+`docker compose down -v` stops everything and deletes the stored data.
+
 ## Logging in
 
 Customer endpoints (serviceability, availability, reservations) are open. Everything else needs a

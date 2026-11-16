@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      DARKSTORE_DB: sqlite:////data/darkstore.db
+    volumes: ["appdata:/data"]
+  postgres:                      # used by Member 1 in task 1.7
+    image: postgres:16
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: darkstore
+      POSTGRES_PASSWORD: darkstore   # local development only
+      POSTGRES_DB: darkstore
+    ports: ["5432:5432"]
+volumes:
+  appdata: {}
