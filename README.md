@@ -130,7 +130,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 4 Fulfilment Orchestrator | `fulfilment` | Job per paid order, pick tasks, state machine, store busy flag | No cancellation after payment |
 | 5 Pick & Pack | `pickpack` | Claim next order, scan check, empty-shelf fallback, pack | One order per picker; no substitutes |
 | 6 Slotting | `slotting` | Suggest a bin in the right temperature zone | No velocity or affinity rules |
-| 7 Forecasting | `forecasting` | Moving average, reorder-point formula | Daily, not hourly; no weather or festivals |
+| 7 Forecasting | `forecasting` | Moving average, reorder-point formula, WAPE backtest | Daily, not hourly; no weather or festivals |
 | 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock | Run by hand; no bin-capacity cap |
 | 9 Inbound | `inbound` | Goods receipt against a transfer order, shortfall report, putaway | One call does receive and putaway |
 | 10 Network Planning | `network_planning` | Coverage report and one suggested site | Uses points you pass in, not real orders |
