@@ -1,0 +1,437 @@
+"""Inventory Service - the single source of truth for stock (HLD section 5, service 3).
+
+Every change to StockLevel or StockItem goes through a function in this file, and every
+change writes a StockLedger row. Other modules call these functions; they never write to
+the stock tables themselves.
+
+Functions whose name starts with an underscore, and the ones documented as "does not commit",
+leave the transaction open so the caller can combine several steps and commit once.
+"""
+import uuid
+from datetime import date, timedelta
+
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from ... import config, events
+from ...errors import DomainError, not_found
+from ...models import (SKU, Bin, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem, StockLedger,
+                       StockLevel, Store, utcnow)
+
+# --------------------------------------------------------------------------- lookups
+
+
+def get_store(db: Session, store_id: int) -> Store:
+    store = db.get(Store, store_id)
+    if store is None:
+        raise not_found("Store", store_id)
+    return store
+
+
+def get_sku(db: Session, sku_id: int) -> SKU:
+    sku = db.get(SKU, sku_id)
+    if sku is None:
+        raise not_found("SKU", sku_id)
+    return sku
+
+
+def get_level(db: Session, store_id: int, sku_id: int) -> StockLevel | None:
+    """Read the StockLevel row straight from the database, ignoring any cached copy."""
+    return db.scalar(
+        select(StockLevel)
+        .where(StockLevel.store_id == store_id, StockLevel.sku_id == sku_id)
+        .execution_options(populate_existing=True)
+    )
+
+
+def get_reservation(db: Session, reservation_id: str) -> Reservation:
+    res = db.get(Reservation, reservation_id)
+    if res is None:
+        raise not_found("Reservation", reservation_id)
+    return res
+
+
+# --------------------------------------------------------------------------- availability (FR-2)
+
+
+def availability(db: Session, store_id: int, sku_ids: list[int] | None = None) -> list[dict]:
+    """ATP (available to promise) per SKU for one store. ATP = on hand - reserved."""
+    get_store(db, store_id)
+    query = select(StockLevel).where(StockLevel.store_id == store_id)
+    if sku_ids:
+        query = query.where(StockLevel.sku_id.in_(sku_ids))
+    rows = db.scalars(query.execution_options(populate_existing=True)).all()
+    out = [
+        {
+            "sku_id": r.sku_id,
+            "name": r.sku.name,
+            "category": r.sku.category,
+            "barcode": r.sku.barcode,
+            "price": r.sku.price,
+            "on_hand": r.qty_on_hand,
+            "reserved": r.qty_reserved,
+            "atp": r.qty_on_hand - r.qty_reserved,
+            "reorder_point": r.reorder_point,
+            "target_stock": r.target_stock,
+        }
+        for r in rows
+    ]
+    return sorted(out, key=lambda row: row["name"])
+
+
+# --------------------------------------------------------------------------- reservations (FR-3)
+
+
+def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, int]]) -> Reservation:
+    """Hold stock for a whole cart, or for none of it.
+
+    The no-overselling rule from HLD 9.1 lives here: each line is one conditional UPDATE that
+    only succeeds if enough unreserved stock exists at that instant. If any line fails, the whole
+    transaction is rolled back, so a cart is held whole or not at all.
+
+    `order_id` is the idempotency key: calling this twice with the same order returns the first hold.
+    """
+    existing = db.scalar(select(Reservation).where(Reservation.order_id == order_id))
+    if existing is not None:
+        return existing
+    get_store(db, store_id)
+
+    wanted: dict[int, int] = {}
+    for sku_id, qty in lines:
+        if qty <= 0:
+            raise DomainError(422, "bad_quantity", "Every line needs a quantity of at least 1")
+        wanted[sku_id] = wanted.get(sku_id, 0) + qty
+    if not wanted:
+        raise DomainError(422, "empty_cart", "A reservation needs at least one line")
+
+    failed: list[int] = []
+    for sku_id, qty in wanted.items():
+        result = db.execute(
+            update(StockLevel)
+            .where(
+                StockLevel.store_id == store_id,
+                StockLevel.sku_id == sku_id,
+                StockLevel.qty_on_hand - StockLevel.qty_reserved >= qty,
+            )
+            .values(qty_reserved=StockLevel.qty_reserved + qty, version=StockLevel.version + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount == 0:      # 0 rows updated = not enough stock -> reject
+            failed.append(sku_id)
+
+    if failed:
+        db.rollback()
+        details = []
+        for sku_id in failed:
+            level = get_level(db, store_id, sku_id)
+            details.append({
+                "sku_id": sku_id,
+                "requested": wanted[sku_id],
+                "available": (level.qty_on_hand - level.qty_reserved) if level else 0,
+            })
+        raise DomainError(409, "insufficient_stock", "Not enough stock for one or more items",
+                          {"lines": details})
+
+    reservation = Reservation(
+        id=str(uuid.uuid4()),
+        order_id=order_id,
+        store_id=store_id,
+        status="held",
+        expires_at=utcnow() + timedelta(minutes=config.RESERVATION_TTL_MINUTES),
+        lines=[ReservationLine(sku_id=s, qty=q) for s, q in wanted.items()],
+    )
+    db.add(reservation)
+    try:
+        db.flush()
+    except IntegrityError:            # the same order_id arrived twice at the same moment
+        db.rollback()
+        return db.scalar(select(Reservation).where(Reservation.order_id == order_id))
+    for sku_id in wanted:
+        events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": "reserved"})
+    db.commit()
+    return reservation
+
+
+def confirm(db: Session, reservation_id: str) -> Reservation:
+    """Payment succeeded: turn the hold into a paid order. Publishes order.paid, which the
+    Fulfilment Orchestrator listens to."""
+    res = get_reservation(db, reservation_id)
+    if res.status in ("confirmed", "fulfilled"):
+        return res                                            # safe to retry
+    if res.status != "held":
+        raise DomainError(409, "not_held", f"Reservation is {res.status}, so it cannot be confirmed")
+    if res.expires_at < utcnow():
+        _release(db, res, "expired")
+        db.commit()
+        raise DomainError(409, "hold_expired", "The 10-minute hold ran out; the items are back on sale")
+    res.status = "confirmed"
+    events.publish(db, "order.paid", res.store_id, {"order_id": res.order_id, "reservation_id": res.id})
+    db.commit()
+    return res
+
+
+def release(db: Session, reservation_id: str) -> Reservation:
+    """Payment failed or the customer cancelled before paying: give the stock back."""
+    res = get_reservation(db, reservation_id)
+    if res.status in ("released", "expired"):
+        return res                                            # safe to retry
+    if res.status != "held":
+        raise DomainError(409, "already_paid",
+                          "This order is already paid. Cancelling after payment is not built yet.")
+    _release(db, res, "released")
+    db.commit()
+    return res
+
+
+def sweep_expired(db: Session) -> int:
+    """Release every hold whose time has run out. Returns how many were released."""
+    stale = db.scalars(
+        select(Reservation).where(Reservation.status == "held", Reservation.expires_at < utcnow())
+    ).all()
+    for res in stale:
+        _release(db, res, "expired")
+    db.commit()
+    return len(stale)
+
+
+def _release(db: Session, res: Reservation, new_status: str) -> None:
+    for line in res.lines:
+        unreserve(db, res.store_id, line.sku_id, line.qty)
+    res.status = new_status
+    db.flush()
+    for line in res.lines:
+        events.publish(db, "stock.changed", res.store_id, {"sku_id": line.sku_id, "cause": new_status})
+
+
+def unreserve(db: Session, store_id: int, sku_id: int, qty: int) -> None:
+    """Give `qty` held units back to ATP. Does not commit."""
+    db.execute(
+        update(StockLevel)
+        .where(StockLevel.store_id == store_id, StockLevel.sku_id == sku_id)
+        .values(qty_reserved=StockLevel.qty_reserved - qty, version=StockLevel.version + 1)
+        .execution_options(synchronize_session=False)
+    )
+
+
+# --------------------------------------------------------------------------- stock movements
+
+
+def _ledger(db: Session, store_id: int, sku_id: int, bin_id: int | None, delta: int, reason: str,
+            reference: str | None, actor: str) -> None:
+    db.add(StockLedger(store_id=store_id, sku_id=sku_id, bin_id=bin_id, delta=delta, reason=reason,
+                       reference=reference, actor=actor))
+
+
+def _change_on_hand(db: Session, store_id: int, sku_id: int, delta: int, reserved_delta: int = 0) -> None:
+    """Apply a change to the StockLevel totals, creating the row the first time a SKU is stocked."""
+    if get_level(db, store_id, sku_id) is None:
+        db.add(StockLevel(store_id=store_id, sku_id=sku_id, qty_on_hand=0, qty_reserved=0))
+        db.flush()
+    db.execute(
+        update(StockLevel)
+        .where(StockLevel.store_id == store_id, StockLevel.sku_id == sku_id)
+        .values(
+            qty_on_hand=StockLevel.qty_on_hand + delta,
+            qty_reserved=StockLevel.qty_reserved + reserved_delta,
+            version=StockLevel.version + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+
+def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batch_no: str,
+            expiry_date: date, reference: str | None = None, actor: str = "receiver") -> StockItem:
+    """Put received stock into a bin (FR-9). The units are sellable as soon as this returns.
+    Does not commit."""
+    if qty <= 0:
+        raise DomainError(422, "bad_quantity", "Received quantity must be at least 1")
+    sku = get_sku(db, sku_id)
+    bin_ = db.get(Bin, bin_id)
+    if bin_ is None or bin_.store_id != store_id:
+        raise DomainError(422, "bad_bin", f"Bin {bin_id} is not in store {store_id}")
+    if bin_.zone != sku.storage_type:
+        raise DomainError(422, "wrong_zone",
+                          f"{sku.name} needs {sku.storage_type} storage but bin {bin_.code} is {bin_.zone}")
+    item = db.scalar(
+        select(StockItem).where(
+            StockItem.store_id == store_id, StockItem.sku_id == sku_id,
+            StockItem.bin_id == bin_id, StockItem.batch_no == batch_no,
+        )
+    )
+    if item is None:
+        item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no=batch_no,
+                         expiry_date=expiry_date, qty=0)
+        db.add(item)
+    item.qty += qty
+    db.flush()
+    _change_on_hand(db, store_id, sku_id, +qty)
+    _ledger(db, store_id, sku_id, bin_id, +qty, "receipt", reference, actor)
+    events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": "receipt"})
+    return item
+
+
+def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin_id: int | None = None,
+           actor: str = "manager", reference: str | None = None) -> dict:
+    """Correct the stock count (FR-11): damage, expiry, theft, or a cycle-count difference.
+
+    Negative delta removes units (from `bin_id` if given, otherwise earliest-expiry first).
+    Positive delta adds found units and needs a `bin_id`.
+    """
+    if delta == 0:
+        raise DomainError(422, "bad_quantity", "delta cannot be 0")
+    get_store(db, store_id)
+    sku = get_sku(db, sku_id)
+
+    if delta > 0:
+        if bin_id is None:
+            raise DomainError(422, "bin_required", "Adding stock needs a bin_id")
+        item = db.scalar(
+            select(StockItem).where(StockItem.store_id == store_id, StockItem.sku_id == sku_id,
+                                    StockItem.bin_id == bin_id).order_by(StockItem.expiry_date)
+        )
+        if item is None:
+            bin_ = db.get(Bin, bin_id)
+            if bin_ is None or bin_.store_id != store_id:
+                raise DomainError(422, "bad_bin", f"Bin {bin_id} is not in store {store_id}")
+            item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no="ADJ",
+                             expiry_date=date.today() + timedelta(days=sku.shelf_life_days), qty=0)
+            db.add(item)
+        item.qty += delta
+        _ledger(db, store_id, sku_id, bin_id, delta, reason, reference, actor)
+    else:
+        to_remove = -delta
+        query = select(StockItem).where(StockItem.store_id == store_id, StockItem.sku_id == sku_id,
+                                        StockItem.qty > 0)
+        if bin_id is not None:
+            query = query.where(StockItem.bin_id == bin_id)
+        items = db.scalars(query.order_by(StockItem.expiry_date)).all()
+        if sum(i.qty for i in items) < to_remove:
+            raise DomainError(409, "not_enough_stock", "Cannot remove more units than are on the shelf")
+        for item in items:
+            take = min(item.qty, to_remove)
+            if take == 0:
+                break
+            item.qty -= take
+            to_remove -= take
+            _ledger(db, store_id, sku_id, item.bin_id, -take, reason, reference, actor)
+
+    db.flush()
+    _change_on_hand(db, store_id, sku_id, delta)
+    events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": reason})
+    db.commit()
+    level = get_level(db, store_id, sku_id)
+    return {"sku_id": sku_id, "on_hand": level.qty_on_hand, "reserved": level.qty_reserved,
+            "atp": level.qty_on_hand - level.qty_reserved}
+
+
+def commit_sale(db: Session, task: PickTask, reference: str, actor: str) -> None:
+    """A picked line leaves the store: take the units off the shelf and off the hold.
+    Called by Pick & Pack when an order is packed. Does not commit."""
+    item = task.stock_item
+    if item is None or item.qty < task.qty:
+        raise DomainError(409, "stock_mismatch", f"Bin no longer holds {task.qty} units for task {task.id}")
+    item.qty -= task.qty
+    db.flush()
+    _change_on_hand(db, item.store_id, task.sku_id, -task.qty, reserved_delta=-task.qty)
+    _ledger(db, item.store_id, task.sku_id, item.bin_id, -task.qty, "sale", reference, actor)
+
+
+def write_off_missing(db: Session, item: StockItem, qty: int, reference: str, actor: str) -> None:
+    """The picker could not find units the system thought were in a bin. Remove them from the
+    count; the hold on them stays until the caller re-allocates or unreserves. Does not commit."""
+    take = min(item.qty, qty)
+    if take <= 0:
+        return
+    item.qty -= take
+    db.flush()
+    _change_on_hand(db, item.store_id, item.sku_id, -take)
+    _ledger(db, item.store_id, item.sku_id, item.bin_id, -take, "not_found", reference, actor)
+
+
+# --------------------------------------------------------------------------- allocation (FEFO, FR-10)
+
+
+def allocate(db: Session, store_id: int, sku_id: int, qty: int,
+             exclude_item_ids: tuple[int, ...] = ()) -> tuple[list[tuple[StockItem, int]], int]:
+    """Choose which bins to pick `qty` units from: first-expiry-first-out, then nearest bin.
+
+    Units already promised to an unpacked order (pending or already scanned) are skipped.
+    Returns (list of (stock item, quantity), quantity that could not be found).
+    """
+    items = db.scalars(
+        select(StockItem)
+        .join(Bin, Bin.id == StockItem.bin_id)
+        .where(StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0)
+        .order_by(StockItem.expiry_date, Bin.walk_seq)
+        .execution_options(populate_existing=True)
+    ).all()
+    picks: list[tuple[StockItem, int]] = []
+    remaining = qty
+    for item in items:
+        if remaining == 0:
+            break
+        if item.id in exclude_item_ids:
+            continue
+        # Units promised to an order that is not packed yet: lines still to pick, and lines
+        # already scanned into a tote (they only leave item.qty when the order is packed).
+        promised = db.scalar(
+            select(func.coalesce(func.sum(PickTask.qty), 0))
+            .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
+            .where(PickTask.stock_item_id == item.id,
+                   PickTask.status.in_(("pending", "picked")),
+                   FulfilmentJob.state.in_(("created", "picking")))
+        )
+        free = item.qty - promised
+        if free <= 0:
+            continue
+        take = min(free, remaining)
+        picks.append((item, take))
+        remaining -= take
+    return picks, remaining
+
+
+# --------------------------------------------------------------------------- read models for the ops screen
+
+
+def stock_by_bin(db: Session, store_id: int) -> list[dict]:
+    get_store(db, store_id)
+    items = db.scalars(
+        select(StockItem).join(Bin, Bin.id == StockItem.bin_id)
+        .where(StockItem.store_id == store_id, StockItem.qty > 0)
+        .order_by(Bin.walk_seq, StockItem.expiry_date)
+        .execution_options(populate_existing=True)
+    ).all()
+    today = date.today()
+    return [
+        {
+            "stock_item_id": i.id, "sku_id": i.sku_id, "sku": i.sku.name, "bin_id": i.bin_id,
+            "bin": i.bin.code, "zone": i.bin.zone, "batch_no": i.batch_no,
+            "expiry_date": i.expiry_date.isoformat(), "days_to_expiry": (i.expiry_date - today).days,
+            "qty": i.qty,
+        }
+        for i in items
+    ]
+
+
+def ledger(db: Session, store_id: int, limit: int = 50) -> list[dict]:
+    rows = db.scalars(
+        select(StockLedger).where(StockLedger.store_id == store_id)
+        .order_by(StockLedger.id.desc()).limit(limit)
+    ).all()
+    return [
+        {"id": r.id, "sku_id": r.sku_id, "bin_id": r.bin_id, "delta": r.delta, "reason": r.reason,
+         "reference": r.reference, "actor": r.actor, "ts": r.ts.isoformat()}
+        for r in rows
+    ]
+
+
+def reservation_view(res: Reservation) -> dict:
+    return {
+        "reservation_id": res.id,
+        "order_id": res.order_id,
+        "store_id": res.store_id,
+        "status": res.status,
+        "expires_at": res.expires_at.isoformat() + "Z",
+        "lines": [{"sku_id": line.sku_id, "qty": line.qty} for line in res.lines],
+    }

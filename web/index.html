@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dark Store Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Dark store prototype</h1>
+      <p>One order, three stations. Place it on the left, pick it in the middle, watch the stock on the right.</p>
+    </div>
+    <div class="topbar-controls">
+      <label for="store-select">Store for picker and ops</label>
+      <select id="store-select"></select>
+      <a class="quiet-link" href="/docs" target="_blank" rel="noopener">API reference</a>
+    </div>
+  </header>
+
+  <main class="stations">
+    <!-- ============ Customer ============ -->
+    <section class="station" aria-labelledby="customer-title">
+      <h2 id="customer-title" class="station-tag">Customer app</h2>
+
+      <div class="block">
+        <label for="location-select">Deliver to</label>
+        <div class="row">
+          <select id="location-select">
+            <option value="12.975,77.600">Home near DS-01 Central</option>
+            <option value="13.030,77.596">Home near DS-02 North</option>
+            <option value="12.800,77.400">Home far outside the city</option>
+          </select>
+          <button id="check-location" class="btn">Check delivery</button>
+        </div>
+        <p id="service-message" class="note" role="status"></p>
+      </div>
+
+      <div id="shop" class="block" hidden>
+        <h3>Items this store can deliver now</h3>
+        <ul id="product-list" class="product-list"></ul>
+        <p id="hidden-note" class="note"></p>
+        <div class="cart-bar">
+          <span id="cart-summary">Cart is empty</span>
+          <button id="checkout" class="btn btn-primary" disabled>Hold my items</button>
+        </div>
+      </div>
+
+      <div id="hold-panel" class="block hold" hidden>
+        <p><strong>Items held for you.</strong> <span id="hold-timer"></span></p>
+        <p class="note">Nobody else can buy them until you pay, cancel, or the hold runs out.</p>
+        <div class="row">
+          <button id="pay" class="btn btn-primary">Pay now</button>
+          <button id="cancel-hold" class="btn">Cancel order</button>
+        </div>
+      </div>
+      <p id="customer-message" class="message" role="status"></p>
+    </section>
+
+    <!-- ============ Picker ============ -->
+    <section class="station" aria-labelledby="picker-title">
+      <h2 id="picker-title" class="station-tag">Picker handheld</h2>
+
+      <div class="block">
+        <label for="picker-id">Picker name</label>
+        <div class="row">
+          <input id="picker-id" value="picker-1" autocomplete="off">
+          <button id="next-job" class="btn btn-primary">Get next order</button>
+        </div>
+      </div>
+
+      <div id="job-panel" class="block" hidden>
+        <h3 id="job-title"></h3>
+        <p class="note">Lines are in walking order. Scan each item, or report it if the shelf is empty.</p>
+        <ol id="task-list" class="task-list"></ol>
+        <div id="pack-row" class="row" hidden>
+          <label class="visually-hidden" for="crate-slot">Crate slot</label>
+          <input id="crate-slot" value="S-01" autocomplete="off" aria-label="Crate slot">
+          <button id="pack" class="btn btn-primary">Mark packed</button>
+        </div>
+        <button id="handover" class="btn btn-primary" hidden>Rider collected the bag</button>
+      </div>
+      <p id="picker-message" class="message" role="status"></p>
+    </section>
+
+    <!-- ============ Store ops ============ -->
+    <section class="station station-wide" aria-labelledby="ops-title">
+      <h2 id="ops-title" class="station-tag">Store ops desk</h2>
+
+      <dl id="tiles" class="tiles"></dl>
+
+      <div class="block">
+        <div class="row row-wrap">
+          <button id="run-replenishment" class="btn">Check what needs reordering</button>
+          <button id="run-forecast" class="btn">Recalculate forecasts</button>
+          <button id="sweep-holds" class="btn">Release expired holds</button>
+          <button id="reset-demo" class="btn btn-danger">Reset demo data</button>
+        </div>
+        <p id="ops-message" class="message" role="status"></p>
+      </div>
+
+      <div class="block">
+        <h3>Transfer orders from the mother hub</h3>
+        <ul id="transfer-list" class="plain-list"></ul>
+      </div>
+
+      <div class="block">
+        <h3>Stock</h3>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Held</th><th class="num">Available</th><th class="num">Reorder at</th></tr></thead>
+            <tbody id="stock-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3>Latest events</h3>
+        <ul id="event-list" class="event-list"></ul>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
