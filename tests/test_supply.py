@@ -40,7 +40,7 @@ def test_chilled_goods_cannot_go_in_an_ambient_bin(client, sku):
     res = client.post("/v1/goods-receipts", json={
         "store_id": 1, "lines": [{"sku_id": milk, "qty": 5, "bin_id": ambient_bin["bin_id"]}]})
     assert res.status_code == 422 and res.json()["error"]["code"] == "wrong_zone"
-    assert atp(client, 1, milk) == 30
+    assert atp(client, 1, milk) == 28                                  # unchanged: 30 on hand less the seeded buffer of 2
 
 
 def test_slotting_keeps_a_sku_together_and_respects_zones(client, sku):

@@ -1,7 +1,8 @@
 """Demo data: two stores, 16 products, and a week of sales history.
 
 A few situations are planted on purpose so the demo has something to show:
-  * Store 1, milk      - two batches with different expiry dates (shows FEFO picking)
+  * Store 1, milk      - two batches with different expiry dates (shows FEFO picking), and a safety buffer
+                         of 2, so 30 on hand shows as 28 available
   * Store 1, bread     - only 4 left, below the reorder point (shows replenishment)
   * Store 1, ice cream - exactly 1 left (shows two customers racing for the last unit)
   * Store 2, bananas   - out of stock (shows an item hidden from the customer)
@@ -109,8 +110,9 @@ def seed(db: Session) -> None:
 
             history = SALES_HISTORY.get(sku.name, []) if index == 1 else []
             on_hand = sum(qty for _, _, _, qty in placements)
+            buffer = 2 if index == 1 and sku.name == "Toned milk 500 ml" else 0     # shows the ATP safety buffer
             db.add(StockLevel(store_id=store.id, sku_id=sku.id, qty_on_hand=on_hand, qty_reserved=0,
-                              reorder_point=10, target_stock=40))
+                              safety_buffer=buffer, reorder_point=10, target_stock=40))
             for bin_, batch, expiry, qty in placements:
                 db.add(StockItem(store_id=store.id, sku_id=sku.id, bin_id=bin_.id, batch_no=batch,
                                  expiry_date=expiry, qty=qty))

@@ -44,7 +44,9 @@ def store_dashboard(db: Session, store_id: int) -> dict:
             select(func.count()).select_from(Reservation)
             .where(Reservation.store_id == store_id, Reservation.status == "held")),
         "skus_stocked": len(levels),
-        "skus_out_of_stock": sum(1 for lv in levels if lv.qty_on_hand - lv.qty_reserved <= 0),
+        # What customers see, so the safety buffer counts; "below reorder point" above uses physical stock, like
+        # replenishment does.
+        "skus_out_of_stock": sum(1 for lv in levels if inventory.atp_of(lv) <= 0),
         "skus_below_reorder_point": len(low),
         "open_transfer_orders": db.scalar(
             select(func.count()).select_from(TransferOrder)
