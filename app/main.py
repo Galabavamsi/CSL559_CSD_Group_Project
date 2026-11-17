@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, events, seed
+from . import auth, config, events, monitoring, seed
 from .db import SessionLocal, init_db
 from .errors import DomainError
 from .modules.assortment.router import router as assortment_router
@@ -29,6 +29,7 @@ from .modules.serviceability.router import router as serviceability_router
 from .modules.slotting.router import router as slotting_router
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+monitoring.setup_logging()
 
 
 @asynccontextmanager
@@ -54,6 +55,9 @@ app = FastAPI(
 )
 
 
+app.middleware("http")(monitoring.observe)   # request ids, timing and one JSON log line per request
+
+
 @app.exception_handler(DomainError)
 async def domain_error_handler(_request: Request, exc: DomainError):
     return JSONResponse(status_code=exc.status,
@@ -61,7 +65,7 @@ async def domain_error_handler(_request: Request, exc: DomainError):
 
 
 for router in (
-    auth.router, serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
+    auth.router, monitoring.router, serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
     replenishment_router, forecasting_router, slotting_router, assortment_router,
     network_planning_router, dashboard_router,
 ):

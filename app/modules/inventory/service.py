@@ -14,7 +14,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ... import config, events
+from ... import config, events, metrics
 from ...errors import DomainError, not_found
 from ...models import (SKU, Bin, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem, StockLedger,
                        StockLevel, Store, utcnow)
@@ -122,6 +122,7 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
 
     if failed:
         db.rollback()
+        metrics.RESERVATIONS.labels("insufficient_stock").inc()
         details = []
         for sku_id in failed:
             level = get_level(db, store_id, sku_id)
@@ -150,6 +151,7 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
     for sku_id in wanted:
         events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": "reserved"})
     db.commit()
+    metrics.RESERVATIONS.labels("held").inc()
     return reservation
 
 

@@ -2,7 +2,7 @@
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ... import events
+from ... import events, metrics
 from ...errors import DomainError, not_found
 from ...models import FulfilmentJob, PickTask, Reservation, utcnow
 from ..fulfilment import service as fulfilment
@@ -68,11 +68,14 @@ def scan(db: Session, task_id: int, barcode: str, qty: int) -> dict:
     """Check a barcode scan against the pick task (FR-5). A wrong item changes nothing."""
     task, job = _open_task(db, task_id)
     if barcode != task.sku.barcode:
+        metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
     if qty != task.qty:
+        metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Pick {task.qty} units for this line, not {qty}."}
     task.status = "picked"
     db.commit()
+    metrics.SCANS.labels("match").inc()
     pending = sum(1 for t in job.tasks if t.status == "pending")
     return {"match": True, "message": "Picked.", "lines_left": pending, "job": fulfilment.job_view(job)}
 
