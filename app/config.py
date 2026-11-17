@@ -27,7 +27,7 @@ FORECAST_TEST_DAYS = int(os.getenv("FORECAST_TEST_DAYS", "14"))
 
 # Supply KPIs (HLD 12). Wastage and on-time deliveries look back this many days.
 KPI_WINDOW_DAYS = int(os.getenv("KPI_WINDOW_DAYS", "30"))
-# A SKU that expires within this many days counts as fresh: its days-of-cover target is 1-2 days, not 3-5.
+# A SKU whose shelf life is at most this many days counts as fresh: its days-of-cover target is 1-2 days, not 3-5.
 FRESH_SHELF_LIFE_DAYS = int(os.getenv("FRESH_SHELF_LIFE_DAYS", "7"))
 
 # Fulfilment: a store with more than this many unpacked orders is marked "busy" (HLD 9.2).

@@ -7,7 +7,11 @@ to say. Rehearse it twice; press **Reset demo data** on the ops desk before ever
 
 ```bash
 python -m uvicorn app.main:app
+python scripts/generate_sales.py     # in a second terminal, after every reset
 ```
+
+The generator gives the forecast in section 7 two months of sales; the demo data alone has one week, too
+little to forecast from the same weekday or to measure forecast error.
 
 Open http://localhost:8000 in **two browser windows** side by side (you need the second one for
 step 3). Keep the store selector on *DS-01 Central*.

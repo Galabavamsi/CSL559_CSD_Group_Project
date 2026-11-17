@@ -72,6 +72,7 @@ def test_days_of_cover_compares_stock_with_the_forecast(client, db, sku):
     assert by_sku[sku("Basmati rice")]["days"] is None         # no forecast demand: not measured
     assert (cover["measured"], cover["within_target"], cover["under_1_day"], cover["over_14_days"]) == (5, 2, 1, 1)
     assert (cover["value"], cover["met"]) == (0.4, False)
+    assert cover["target"] == "100% of SKUs within 3–5 days of cover (fresh: 1–2 days)"
     assert cover["per_sku"][0]["sku_id"] == sku("Vanilla ice cream")       # 1 / 2 = 0.5 days: most urgent first
 
 
@@ -79,6 +80,11 @@ def test_forecast_wape_kpi_is_the_backtest_of_the_model_in_use(client, db, sku):
     plant_sales(db, {sku("Toned milk"): dict.fromkeys(EVERY_DAY, 10)})
     wape = kpis(client)["forecast_wape"]
     assert (wape["value"], wape["met"], wape["model"], wape["test_days"]) == (0.0, True, config.FORECAST_MODEL, 14)
+
+
+def test_a_week_of_sales_is_too_little_to_measure_forecast_error(client):
+    wape = kpis(client)["forecast_wape"]                      # the seed has 7 days of sales in store 1
+    assert (wape["value"], wape["met"]) == (None, None)
 
 
 def test_a_store_with_nothing_to_measure_reports_not_available(client):

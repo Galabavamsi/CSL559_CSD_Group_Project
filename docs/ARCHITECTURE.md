@@ -166,10 +166,10 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | Kafka | `event_log` table + in-process handlers | Member 4 |
 | API gateway, JWT, roles | Open endpoints | Member 4 |
 | H3 delivery zones | Radius around each store | Member 4 |
-| Hourly forecasts, ML model | Daily moving average | Member 3 |
+| Hourly forecasts, ML model | Daily forecast: three simple models compared by WAPE, weekday average in use | Member 3 |
 | Reservation timeout sweeper | Manual endpoint | Member 1 |
 | Substitution and refund saga | Line is dropped, hold released | Member 2 |
 | Batch picking at peak | One order per picker | Member 2 |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
 | Store edge node | Not built | Out of scope; explain it in the report |
-| Monitoring and KPIs | Basic dashboard numbers | Members 2, 3 and 4 |
+| Monitoring and KPIs | Basic dashboard numbers; supply KPIs from `GET /v1/stores/{id}/supply-kpis` (no screen yet) | Members 2, 3 and 4 |

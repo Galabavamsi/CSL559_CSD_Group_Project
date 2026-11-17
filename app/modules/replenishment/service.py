@@ -157,8 +157,8 @@ def _stock_out_rate(levels: list[StockLevel]) -> dict:
 
 def _days_of_cover(db: Session, store_id: int, levels: list[StockLevel]) -> dict:
     """Per SKU: ATP / forecast daily demand. The value is the share of SKUs with a forecast whose cover is within
-    target: 1-2 days for a fresh SKU (shelf life up to config.FRESH_SHELF_LIFE_DAYS), 3-5 days for the rest.
-    SKUs without forecast demand are not measured."""
+    target: 1-2 days for a fresh SKU (shelf life up to config.FRESH_SHELF_LIFE_DAYS), 3-5 days for the rest; met
+    when every one of them is. SKUs without forecast demand are not measured."""
     demand = {row["sku_id"]: row["daily_demand"] for row in forecasting.list_forecasts(db, store_id)}
     rows = []
     for level in levels:
@@ -174,7 +174,8 @@ def _days_of_cover(db: Session, store_id: int, levels: list[StockLevel]) -> dict
     within = sum(1 for row in measured if row["met"])
     value = _ratio(within, len(measured))
     rows.sort(key=lambda row: (row["days"] is None, row["days"] or 0, row["sku"]))
-    return _kpi(value, "3–5 days (fresh: 1–2 days)", None if value is None else within == len(measured),
+    return _kpi(value, "100% of SKUs within 3–5 days of cover (fresh: 1–2 days)",
+                None if value is None else within == len(measured),
                 measured=len(measured), within_target=within,
                 under_1_day=sum(1 for row in measured if row["days"] < 1),
                 over_14_days=sum(1 for row in measured if row["days"] > 14), per_sku=rows)

@@ -12,7 +12,7 @@ from app.models import utcnow
 from app.modules.forecasting import service as forecasting
 from scripts.generate_sales import clear_history
 
-from .conftest import plant_sales
+from .conftest import assert_stock_is_consistent, plant_sales
 
 
 def plant(db, sku_id, units_by_days_ago, store_id=1):
@@ -42,6 +42,16 @@ def test_forecast_sizes_safety_stock_from_forecast_errors(client, db, sku, monke
     # Reorder point = ceil(10 x 1 + 1.65 x 2.5754) = 15; target = 15 + 10 x 3 = 45.
     assert (row["model"], row["daily_demand"], row["daily_std"]) == ("weekday_average", 10.0, 2.58)
     assert (row["reorder_point"], row["target_stock"]) == (15, 45)
+
+
+def test_a_young_sku_gets_safety_stock_from_the_spread_of_its_sales(client, db, sku, monkeypatch):
+    monkeypatch.setattr(config, "FORECAST_MODEL", "moving_average")
+    milk = sku("Toned milk")
+    plant(db, milk, {5: 10, 4: 14, 3: 6, 2: 12, 1: 8})            # first sold 5 days ago
+    row = next(r for r in client.post("/v1/forecasting/run", params={"store_id": 1}).json() if r["sku_id"] == milk)
+    # Too new to judge the model by its own errors, so the spread of its sales stands in:
+    # mean 10, pstdev([10, 14, 6, 12, 8]) = 2.83; reorder point = ceil(10 x 1 + 1.65 x 2.83) = 15.
+    assert (row["daily_demand"], row["daily_std"], row["reorder_point"]) == (10.0, 2.83, 15)
 
 
 def test_forecasts_show_the_model_that_made_them(client):
@@ -105,13 +115,25 @@ def test_backtest_is_exact_for_constant_sales(db, sku):
 
 def test_backtest_matches_hand_arithmetic(db, sku):
     milk = sku("Toned milk")
-    plant(db, milk, {4: 10, 3: 20, 2: 30, 1: 40})
-    # Moving average of the known days before each day (the first sale was 4 days ago):
-    # day -2: (10 + 20) / 2 = 15, sold 30 -> 15 off; day -1: (10 + 20 + 30) / 3 = 20, sold 40 -> 20 off
+    plant(db, milk, {n: 10 for n in range(3, 10)} | {2: 24, 1: 26})
+    # Moving average of the 7 days before each day: day -2: 10, sold 24 -> 14 off; day -1: (24 + 6 x 10) / 7 = 12,
+    # sold 26 -> 14 off.
     result = forecasting.backtest(db, 1, test_days=2, model="moving_average")
     row = next(r for r in result["per_sku"] if r["sku_id"] == milk)
-    assert (row["actual_units"], row["abs_error"]) == (70, 35.0)
-    assert result["wape"] == row["wape"] == 0.5                   # 35 / 70
+    assert (row["actual_units"], row["abs_error"]) == (50, 28.0)
+    assert result["wape"] == row["wape"] == 0.56                  # 28 / 50
+
+
+def test_a_model_is_judged_only_on_days_with_a_week_of_history(db, sku):
+    plant(db, sku("Toned milk"), {4: 10, 3: 20, 2: 30, 1: 40})   # first sold 4 days ago: nothing to judge yet
+    assert forecasting.backtest(db, 1, test_days=2, model="moving_average")["wape"] is None
+
+
+def test_a_week_of_history_is_too_little_to_judge_a_model(db):
+    # The seed has 7 days of sales: no day has a week of history before it, for any model.
+    assert {name: forecasting.backtest(db, 1, model=name)["wape"] for name in forecasting.MODELS} == dict.fromkeys(
+        forecasting.MODELS)
+    assert forecasting.compare_models(db, 1)["best"] is None
 
 
 def test_weekday_average_beats_moving_average_on_a_weekend_pattern(db, sku):
@@ -136,6 +158,7 @@ def test_backtest_with_no_sales_has_no_wape(db):
     clear_history(db, 1)
     db.commit()
     assert forecasting.backtest(db, 1)["wape"] is None
+    assert_stock_is_consistent()
 
 
 URL = "/v1/forecasting/backtest"

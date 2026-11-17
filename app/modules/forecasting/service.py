@@ -46,7 +46,8 @@ def run(db: Session, store_id: int) -> list[dict]:
 
     daily_demand is the model's forecast for today. daily_std is the standard deviation of the model's errors over
     the last config.FORECAST_TEST_DAYS days, not of raw sales: safety stock should cover what the forecast gets
-    wrong, not variation it already predicts (such as busier weekends).
+    wrong, not variation it already predicts (such as busier weekends). A SKU too new to judge the model by uses
+    the spread of its daily sales instead (see _error_spread).
     """
     inventory.get_store(db, store_id)
     name = config.FORECAST_MODEL
@@ -62,8 +63,7 @@ def run(db: Session, store_id: int) -> list[dict]:
     for level in levels:
         history = sales.get(level.sku_id, {})
         demand = forecast_for(history, today)
-        errors = _errors(history, test_dates, forecast_for)
-        std = pstdev(errors) if errors else 0.0
+        std = _error_spread(history, test_dates, forecast_for)
         forecast = db.get(Forecast, (store_id, level.sku_id))
         if forecast is None:
             forecast = Forecast(store_id=store_id, sku_id=level.sku_id)
@@ -148,14 +148,39 @@ def _errors(history: dict[date, int], days: list[date], forecast) -> list[float]
     return [history.get(day, 0) - forecast(history, day) for day in days]
 
 
+WARM_UP_DAYS = 7    # a model is judged only on days with a week of the SKU's sales history before them
+
+
+def _scored_days(history: dict[date, int], days: list[date]) -> list[date]:
+    """The `days` a model can fairly be judged on: those with at least WARM_UP_DAYS days of the SKU's sales history
+    before them. Before that, no model has enough to go on, and scoring those days would measure the missing data,
+    not the model. Every model can forecast a scored day, so all three are compared on the same days."""
+    if not history:
+        return []
+    first_sale = min(history)
+    return [day for day in days if day - timedelta(days=WARM_UP_DAYS) >= first_sale]
+
+
+def _error_spread(history: dict[date, int], days: list[date], forecast) -> float:
+    """Standard deviation of the model's errors on the scored `days`. With fewer than WARM_UP_DAYS scored days the
+    SKU is too new to judge the model by, so the spread of its daily sales on the known days stands in (the rule
+    used before task 3.3)."""
+    scored = _scored_days(history, days)
+    if len(scored) >= WARM_UP_DAYS:
+        return pstdev(_errors(history, scored, forecast))
+    known = _known_days(history, days)
+    return pstdev([history.get(day, 0) for day in known]) if known else 0.0
+
+
 def backtest(db: Session, store_id: int, test_days: int | None = None, model: str | None = None) -> dict:
     """How wrong would `model` have been over the `test_days` days ending yesterday? Read-only.
 
     Defaults: config.FORECAST_TEST_DAYS days and config.FORECAST_MODEL. For each of those days and each SKU the
     store carries, the model forecasts the day from the days before it, and the actual is what sold.
     WAPE = sum of |actual - forecast| / sum of actual (HLD 12 target: 30% or lower); weighting by volume stops
-    slow sellers swamping the score. WAPE is None when nothing sold. The demo data has one week of sales, so run
-    `python scripts/generate_sales.py` first for numbers worth reading.
+    slow sellers swamping the score. Only days with a week of the SKU's history before them are scored
+    (_scored_days), so WAPE is None when nothing sold on such a day: the demo data's single week of sales is too
+    little. Run `python scripts/generate_sales.py` first for numbers worth reading.
     """
     name = model or config.FORECAST_MODEL
     forecast = _model(name)
@@ -168,8 +193,9 @@ def backtest(db: Session, store_id: int, test_days: int | None = None, model: st
     per_sku, total_error, total_actual = [], 0.0, 0
     for level in db.scalars(select(StockLevel).where(StockLevel.store_id == store_id)).all():
         history = sales.get(level.sku_id, {})
-        actual = sum(history.get(d, 0) for d in test_dates)
-        error = sum(abs(e) for e in _errors(history, test_dates, forecast))
+        scored = _scored_days(history, test_dates)
+        actual = sum(history.get(d, 0) for d in scored)
+        error = sum(abs(e) for e in _errors(history, scored, forecast))
         total_error += error
         total_actual += actual
         per_sku.append({"sku_id": level.sku_id, "sku": level.sku.name, "actual_units": actual,
