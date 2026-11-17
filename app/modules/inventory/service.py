@@ -8,7 +8,7 @@ Functions whose name starts with an underscore, and the ones documented as "does
 leave the transaction open so the caller can combine several steps and commit once.
 """
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from ... import config, events, metrics
 from ...errors import DomainError, not_found
-from ...models import (SKU, Bin, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem, StockLedger,
-                       StockLevel, Store, utcnow)
+from ...models import (SKU, Bin, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
+                       StockLedger, StockLevel, Store, utcnow)
 
 # --------------------------------------------------------------------------- lookups
 
@@ -357,9 +357,8 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
             take = min(item.qty, to_remove)
             if take == 0:
                 break
-            item.qty -= take
+            _remove_from_item(db, item, take, reason, reference, actor, change_on_hand=False)
             to_remove -= take
-            _ledger(db, store_id, sku_id, item.bin_id, -take, reason, reference, actor)
 
     db.flush()
     _change_on_hand(db, store_id, sku_id, delta)
@@ -368,6 +367,89 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
     level = get_level(db, store_id, sku_id)
     return {"sku_id": sku_id, "on_hand": level.qty_on_hand, "reserved": level.qty_reserved,
             "atp": level.qty_on_hand - level.qty_reserved}
+
+
+def _remove_from_item(db: Session, item: StockItem, qty: int, reason: str, reference: str | None, actor: str,
+                      change_on_hand: bool = True) -> None:
+    """Take `qty` units out of one exact batch in one bin and write the ledger row. With `change_on_hand=False` the
+    caller lowers StockLevel itself (once, for several items). Does not commit."""
+    item.qty -= qty
+    _ledger(db, item.store_id, item.sku_id, item.bin_id, -qty, reason, reference, actor)
+    if change_on_hand:
+        db.flush()
+        _change_on_hand(db, item.store_id, item.sku_id, -qty)
+
+
+# --------------------------------------------------------------------------- expiry (FR-10)
+
+
+def _in_totes(db: Session, item: StockItem) -> int:
+    """Units of this batch already scanned into a tote for an order that is not packed yet. They are off the shelf
+    and leave the count when the order is packed, so an expiry write-off must not take them too."""
+    return db.scalar(
+        select(func.coalesce(func.sum(PickTask.qty), 0))
+        .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
+        .where(PickTask.stock_item_id == item.id, PickTask.status == "picked",
+               FulfilmentJob.state.in_(("created", "picking")))
+    )
+
+
+def expire_stock(db: Session, store_id: int | None = None, actor: str = "system") -> int:
+    """Write off every batch whose expiry date has passed (all stores when `store_id` is None) and return the units
+    removed. Each batch gets its own `expiry` ledger row and a stock.changed event.
+
+    Holds are not touched: a paid order whose units expired may be left with reserved > on hand until the picker
+    reaches the line, finds the shelf empty, and the usual empty-shelf path drops the line and frees its hold."""
+    query = select(StockItem).where(StockItem.expiry_date < date.today(), StockItem.qty > 0)
+    if store_id is not None:
+        get_store(db, store_id)
+        query = query.where(StockItem.store_id == store_id)
+    removed = 0
+    for item in db.scalars(query.order_by(StockItem.id).execution_options(populate_existing=True)).all():
+        qty = item.qty - _in_totes(db, item)
+        if qty <= 0:
+            continue
+        _remove_from_item(db, item, qty, "expiry", f"batch:{item.batch_no}", actor)
+        events.publish(db, "stock.changed", item.store_id, {"sku_id": item.sku_id, "cause": "expiry"})
+        removed += qty
+    db.commit()
+    return removed
+
+
+def near_expiry(db: Session, store_id: int, days: int = 2) -> list[dict]:
+    """Batches on the shelf that expire within `days` days (today counts as 0), soonest first."""
+    get_store(db, store_id)
+    today = date.today()
+    items = db.scalars(
+        select(StockItem).join(Bin, Bin.id == StockItem.bin_id)
+        .where(StockItem.store_id == store_id, StockItem.qty > 0,
+               StockItem.expiry_date >= today, StockItem.expiry_date <= today + timedelta(days=days))
+        .order_by(StockItem.expiry_date, Bin.walk_seq)
+        .execution_options(populate_existing=True)
+    ).all()
+    return [
+        {"stock_item_id": i.id, "sku_id": i.sku_id, "sku": i.sku.name, "bin_id": i.bin_id, "bin": i.bin.code,
+         "batch_no": i.batch_no, "qty": i.qty, "expiry_date": i.expiry_date.isoformat(),
+         "days_left": (i.expiry_date - today).days}
+        for i in items
+    ]
+
+
+def flag_near_expiry(db: Session, days: int = 2) -> int:
+    """Publish item.near_expiry (HLD 8.2) for every store's near-expiry batches, at most once per batch per day.
+    Returns how many events were published."""
+    start_of_day = datetime.combine(utcnow().date(), time.min)
+    already = {e.payload.get("stock_item_id") for e in db.scalars(
+        select(EventLog).where(EventLog.type == "item.near_expiry", EventLog.ts >= start_of_day))}
+    published = 0
+    for store in db.scalars(select(Store).order_by(Store.id)).all():
+        for row in near_expiry(db, store.id, days):
+            if row["stock_item_id"] in already:
+                continue
+            events.publish(db, "item.near_expiry", store.id, row)
+            published += 1
+    db.commit()
+    return published
 
 
 def commit_sale(db: Session, task: PickTask, reference: str, actor: str) -> None:
@@ -399,7 +481,8 @@ def write_off_missing(db: Session, item: StockItem, qty: int, reference: str, ac
 
 def allocate(db: Session, store_id: int, sku_id: int, qty: int,
              exclude_item_ids: tuple[int, ...] = ()) -> tuple[list[tuple[StockItem, int]], int]:
-    """Choose which bins to pick `qty` units from: first-expiry-first-out, then nearest bin.
+    """Choose which bins to pick `qty` units from: first-expiry-first-out, then nearest bin. Expired batches are
+    never chosen, even before the hourly write-off has removed them.
 
     Units already promised to an unpacked order (pending or already scanned) are skipped.
     Returns (list of (stock item, quantity), quantity that could not be found).
@@ -407,7 +490,8 @@ def allocate(db: Session, store_id: int, sku_id: int, qty: int,
     items = db.scalars(
         select(StockItem)
         .join(Bin, Bin.id == StockItem.bin_id)
-        .where(StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0)
+        .where(StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0,
+               StockItem.expiry_date >= date.today())                 # never pick a batch that has expired
         .order_by(StockItem.expiry_date, Bin.walk_seq)
         .execution_options(populate_existing=True)
     ).all()

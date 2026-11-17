@@ -96,6 +96,7 @@ rolls back, so does the event. This is the "transactional outbox" from HLD 9.2, 
 | --- | --- | --- |
 | `stock.changed` | inventory, pickpack | replenishment (raises `stock.low`) |
 | `stock.low` | replenishment | nobody yet |
+| `item.near_expiry` | inventory (hourly job, once per batch per day) | nobody yet (live feed shows it) |
 | `order.paid` | inventory | fulfilment (creates the job) |
 | `fulfilment.state_changed` | fulfilment, pickpack | nobody yet |
 | `order.ready_for_pickup` | pickpack | nobody yet (the rider system would) |

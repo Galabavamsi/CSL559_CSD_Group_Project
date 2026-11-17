@@ -138,7 +138,7 @@ docs/                architecture notes, team plan and one guide per team member
 | --- | --- | --- | --- |
 | 1 Serviceability | `serviceability` | H3 cell to store lookup, ETA, zone shrinks when the store is busy | Zones are rebuilt by hand (`POST /v1/admin/rebuild-zones`); a cell has one store, so a busy or closed store's customers are not passed to a neighbour |
 | 2 Assortment | `assortment` | List and add SKUs per store | No demand-based recommendations |
-| 3 Inventory | `inventory` | ATP, atomic holds, confirm, release (race-proof), automatic expiry sweep every `SWEEP_INTERVAL_SECONDS`, adjustments, ledger, FEFO allocation | No cache; no safety buffer |
+| 3 Inventory | `inventory` | ATP, atomic holds, confirm, release (race-proof), automatic expiry sweep every `SWEEP_INTERVAL_SECONDS`, adjustments, ledger, FEFO allocation that skips expired batches, hourly expiry write-off and near-expiry report (`GET /v1/stores/{id}/near-expiry`) | No cache; no safety buffer; a write-off does not cancel a paid order holding those units (the picker's empty-shelf report settles it) |
 | 4 Fulfilment Orchestrator | `fulfilment` | Job per paid order, pick tasks, state machine, store busy flag | No cancellation after payment |
 | 5 Pick & Pack | `pickpack` | Claim next order, scan check, empty-shelf fallback, pack | One order per picker; no substitutes |
 | 6 Slotting | `slotting` | Suggest a bin in the right temperature zone | No velocity or affinity rules |

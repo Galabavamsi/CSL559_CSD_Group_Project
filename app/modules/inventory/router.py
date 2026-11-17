@@ -95,3 +95,18 @@ def read_ledger(store_id: int, limit: int = 50, db: Session = Depends(get_db),
 def sweep(db: Session = Depends(get_db)):
     """Release holds that have run out. In production this runs on a timer (see Member 1 guide)."""
     return {"released": service.sweep_expired(db)}
+
+
+@router.post("/v1/admin/expire-stock", dependencies=[Depends(require_role("admin"))],
+             summary="Write off every batch past its expiry date")
+def expire_stock(store_id: int | None = Query(None, description="Omit for every store"),
+                 db: Session = Depends(get_db)):
+    """Also runs on its own every EXPIRY_INTERVAL_SECONDS (an hour by default)."""
+    return {"units_written_off": service.expire_stock(db, store_id)}
+
+
+@router.get("/v1/stores/{store_id}/near-expiry", summary="Batches that expire within the next few days")
+def read_near_expiry(store_id: int, days: int = Query(2, ge=0, le=30, description="0 means expiring today"),
+                     db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    check_store(staff, store_id)
+    return service.near_expiry(db, store_id, days)

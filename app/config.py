@@ -16,6 +16,10 @@ RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))
 # The sweeper runs this often (app/background.py). BACKGROUND_JOBS=off stops every timed job (the tests do).
 SWEEP_INTERVAL_SECONDS = float(os.getenv("SWEEP_INTERVAL_SECONDS", "30"))
 BACKGROUND_JOBS = os.getenv("BACKGROUND_JOBS", "on") == "on"
+# Expiry (FR-10): expired batches are written off this often, and batches expiring within NEAR_EXPIRY_DAYS are
+# flagged with an item.near_expiry event, at most once per batch per day.
+EXPIRY_INTERVAL_SECONDS = float(os.getenv("EXPIRY_INTERVAL_SECONDS", "3600"))
+NEAR_EXPIRY_DAYS = int(os.getenv("NEAR_EXPIRY_DAYS", "2"))
 
 # Replenishment / forecasting (HLD 6.2). The prototype works in days, the HLD in hours.
 LEAD_TIME_DAYS = float(os.getenv("LEAD_TIME_DAYS", "1"))        # hub -> store delivery time
