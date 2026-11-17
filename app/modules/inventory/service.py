@@ -55,8 +55,15 @@ def get_reservation(db: Session, reservation_id: str) -> Reservation:
 # --------------------------------------------------------------------------- availability (FR-2)
 
 
+def atp_of(level: StockLevel) -> int:
+    """What customers may buy (HLD 7.1): on hand - reserved - safety buffer, never below 0.
+    Use this wherever a number means "can a customer have it". Replenishment and Pick & Pack use the physical
+    stock instead (on hand - reserved), because the buffer units are really on the shelf."""
+    return max(0, level.qty_on_hand - level.qty_reserved - level.safety_buffer)
+
+
 def availability(db: Session, store_id: int, sku_ids: list[int] | None = None) -> list[dict]:
-    """ATP (available to promise) per SKU for one store. ATP = on hand - reserved."""
+    """ATP (available to promise) per SKU for one store. ATP = on hand - reserved - safety buffer."""
     get_store(db, store_id)
     query = select(StockLevel).where(StockLevel.store_id == store_id)
     if sku_ids:
@@ -71,13 +78,33 @@ def availability(db: Session, store_id: int, sku_ids: list[int] | None = None) -
             "price": r.sku.price,
             "on_hand": r.qty_on_hand,
             "reserved": r.qty_reserved,
-            "atp": r.qty_on_hand - r.qty_reserved,
+            "safety_buffer": r.safety_buffer,
+            "atp": atp_of(r),
             "reorder_point": r.reorder_point,
             "target_stock": r.target_stock,
         }
         for r in rows
     ]
     return sorted(out, key=lambda row: row["name"])
+
+
+def set_safety_buffer(db: Session, store_id: int, sku_id: int, safety_buffer: int) -> dict:
+    """Change how many units of one SKU are hidden from customers. Moves no stock, so it writes no ledger row.
+    Holds that already exist are kept even if ATP is now below them; only new holds see the new buffer."""
+    get_store(db, store_id)
+    get_sku(db, sku_id)
+    changed = db.execute(
+        update(StockLevel)
+        .where(StockLevel.store_id == store_id, StockLevel.sku_id == sku_id)
+        .values(safety_buffer=safety_buffer, version=StockLevel.version + 1)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if changed == 0:
+        raise DomainError(404, "not_stocked", f"Store {store_id} does not stock SKU {sku_id}")
+    db.commit()
+    level = get_level(db, store_id, sku_id)
+    return {"store_id": store_id, "sku_id": sku_id, "on_hand": level.qty_on_hand, "reserved": level.qty_reserved,
+            "safety_buffer": level.safety_buffer, "atp": atp_of(level)}
 
 
 # --------------------------------------------------------------------------- reservations (FR-3)
@@ -114,7 +141,7 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
             .where(
                 StockLevel.store_id == store_id,
                 StockLevel.sku_id == sku_id,
-                StockLevel.qty_on_hand - StockLevel.qty_reserved >= qty,
+                StockLevel.qty_on_hand - StockLevel.qty_reserved - StockLevel.safety_buffer >= qty,
             )
             .values(qty_reserved=StockLevel.qty_reserved + qty, version=StockLevel.version + 1)
             .execution_options(synchronize_session=False)
@@ -131,7 +158,7 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
             details.append({
                 "sku_id": sku_id,
                 "requested": wanted[sku_id],
-                "available": (level.qty_on_hand - level.qty_reserved) if level else 0,
+                "available": atp_of(level) if level else 0,
             })
         raise DomainError(409, "insufficient_stock", "Not enough stock for one or more items",
                           {"lines": details})
@@ -367,7 +394,7 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
     db.commit()
     level = get_level(db, store_id, sku_id)
     return {"sku_id": sku_id, "on_hand": level.qty_on_hand, "reserved": level.qty_reserved,
-            "atp": level.qty_on_hand - level.qty_reserved}
+            "atp": atp_of(level)}
 
 
 def commit_sale(db: Session, task: PickTask, reference: str, actor: str) -> None:

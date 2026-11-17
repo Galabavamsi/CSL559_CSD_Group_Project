@@ -110,6 +110,71 @@ def test_damage_adjustment_updates_stock_and_ledger(client, sku):
     assert_stock_is_consistent()
 
 
+# --------------------------------------------------------------------------- safety buffer (task 1.1, HLD 7.1)
+
+
+def test_safety_buffer_hides_units_from_customers(client, sku):
+    """The seed gives milk in store 1 a buffer of 2: 30 on hand shows as 28 available."""
+    milk = sku("Toned milk")
+    row = client.get("/v1/stores/1/availability", params={"skus": str(milk)}).json()[0]
+    assert (row["on_hand"], row["reserved"], row["safety_buffer"], row["atp"]) == (30, 0, 2, 28)
+
+    too_many = hold(client, "order-29", [(milk, 29)])
+    assert too_many.status_code == 409
+    assert too_many.json()["error"]["details"]["lines"] == [{"sku_id": milk, "requested": 29, "available": 28}]
+    assert hold(client, "order-28", [(milk, 28)]).status_code == 201
+    assert atp(client, 1, milk) == 0
+    assert_stock_is_consistent()
+
+
+def test_set_safety_buffer(client, sku):
+    rice = sku("Basmati rice")
+    res = client.put(f"/v1/stores/1/stock-settings/{rice}", json={"safety_buffer": 5})
+    assert res.status_code == 200, res.text
+    assert (res.json()["safety_buffer"], res.json()["atp"]) == (5, 25)
+    assert atp(client, 1, rice) == 25
+    assert atp(client, 2, rice) == 30                                   # only that store changed
+
+    client.put(f"/v1/stores/1/stock-settings/{rice}", json={"safety_buffer": 50})
+    assert atp(client, 1, rice) == 0                                    # never below zero
+    assert hold(client, "order-1", [(rice, 1)]).status_code == 409
+
+
+def test_buffer_does_not_touch_existing_holds(client, sku):
+    rice = sku("Basmati rice")
+    held = hold(client, "order-1", [(rice, 28)]).json()
+    client.put(f"/v1/stores/1/stock-settings/{rice}", json={"safety_buffer": 5})
+    assert atp(client, 1, rice) == 0
+    paid = client.post(f"/v1/reservations/{held['reservation_id']}/confirm")
+    assert paid.status_code == 200 and paid.json()["status"] == "confirmed"
+    assert_stock_is_consistent()
+
+
+def test_stock_settings_rejects_bad_input(client, sku):
+    rice = sku("Basmati rice")
+    assert client.put(f"/v1/stores/1/stock-settings/{rice}", json={"safety_buffer": -1}).status_code == 422
+    assert client.put("/v1/stores/1/stock-settings/99999", json={"safety_buffer": 1}).status_code == 404
+    assert client.put(f"/v1/stores/999/stock-settings/{rice}", json={"safety_buffer": 1}).status_code == 404
+
+
+def test_only_the_stores_manager_sets_the_buffer(client_as, sku):
+    rice = sku("Basmati rice")
+    url, body = f"/v1/stores/1/stock-settings/{rice}", {"safety_buffer": 3}
+    with client_as("picker", 1) as picker:
+        assert picker.put(url, json=body).status_code == 403
+    with client_as("manager", 2) as other_manager:
+        assert other_manager.put(url, json=body).status_code == 403
+    with client_as("manager", 1) as manager:
+        assert manager.put(url, json=body).status_code == 200
+
+
+def test_dashboard_counts_buffered_skus_as_out_of_stock(client, sku):
+    before = client.get("/v1/stores/1/dashboard").json()["skus_out_of_stock"]
+    rice = sku("Basmati rice")
+    client.put(f"/v1/stores/1/stock-settings/{rice}", json={"safety_buffer": 30})
+    assert client.get("/v1/stores/1/dashboard").json()["skus_out_of_stock"] == before + 1
+
+
 # --------------------------------------------------------------------------- automatic sweeper (task 1.2, HLD 9.1)
 
 
