@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, events, monitoring, seed
+from . import auth, background, config, events, monitoring, seed
 from .db import SessionLocal, init_db
 from .errors import DomainError
 from .modules.assortment.router import router as assortment_router
@@ -41,10 +41,13 @@ async def lifespan(_app: FastAPI):
     with SessionLocal() as db:
         seed.seed_if_empty(db)
     relay = asyncio.create_task(events.run_relay())
+    sweeper = asyncio.create_task(background.sweep_loop()) if config.BACKGROUND_JOBS else None
     yield
-    relay.cancel()
-    with suppress(asyncio.CancelledError):
-        await relay
+    for task in (relay, sweeper):
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(

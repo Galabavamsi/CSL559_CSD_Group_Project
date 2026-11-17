@@ -194,13 +194,29 @@ def confirm(db: Session, reservation_id: str) -> Reservation:
     if res.status != "held":
         raise DomainError(409, "not_held", f"Reservation is {res.status}, so it cannot be confirmed")
     if res.expires_at < utcnow():
-        _release(db, res, "expired")
-        db.commit()
-        raise DomainError(409, "hold_expired", "The 10-minute hold ran out; the items are back on sale")
-    res.status = "confirmed"
+        if _release(db, res, "expired"):
+            db.commit()
+            raise DomainError(409, "hold_expired", "The 10-minute hold ran out; the items are back on sale")
+        return _lost_race_to_confirm(db, res)
+    # Conditional, like `reserve`: if the sweeper or a cancel changed the hold since we read it, this changes nothing,
+    # so a payment landing at the same instant as the expiry either wins cleanly or loses cleanly.
+    if not _change_status(db, res, "held", "confirmed"):
+        return _lost_race_to_confirm(db, res)
     events.publish(db, "order.paid", res.store_id, {"order_id": res.order_id, "reservation_id": res.id})
     db.commit()
     return res
+
+
+def _lost_race_to_confirm(db: Session, res: Reservation) -> Reservation:
+    """Another request changed the hold while `confirm` was working. A payment that already went through is fine
+    (retries are safe); anything else is reported as the state the hold ended in."""
+    db.rollback()
+    db.refresh(res)
+    if res.status in ("confirmed", "fulfilled"):
+        return res
+    if res.status == "expired":
+        raise DomainError(409, "hold_expired", "The 10-minute hold ran out; the items are back on sale")
+    raise DomainError(409, "not_held", f"Reservation is {res.status}, so it cannot be confirmed")
 
 
 def release(db: Session, reservation_id: str) -> Reservation:
@@ -211,29 +227,53 @@ def release(db: Session, reservation_id: str) -> Reservation:
     if res.status != "held":
         raise DomainError(409, "already_paid",
                           "This order is already paid. Cancelling after payment is not built yet.")
-    _release(db, res, "released")
+    if not _release(db, res, "released"):
+        db.rollback()                         # someone else got there first; report what they did
+        db.refresh(res)
+        if res.status not in ("released", "expired"):
+            raise DomainError(409, "already_paid",
+                              "This order is already paid. Cancelling after payment is not built yet.")
+        return res
     db.commit()
     return res
 
 
 def sweep_expired(db: Session) -> int:
-    """Release every hold whose time has run out. Returns how many were released."""
+    """Release every hold whose time has run out. Returns how many this call released; holds that a cancel,
+    a payment or another sweeper got to first are not counted. Runs on a timer (app/background.py)."""
     stale = db.scalars(
         select(Reservation).where(Reservation.status == "held", Reservation.expires_at < utcnow())
     ).all()
-    for res in stale:
-        _release(db, res, "expired")
+    released = sum(1 for res in stale if _release(db, res, "expired"))
     db.commit()
-    return len(stale)
+    return released
 
 
-def _release(db: Session, res: Reservation, new_status: str) -> None:
+def _change_status(db: Session, res: Reservation, old: str, new: str) -> bool:
+    """Move a reservation from `old` to `new` only if it is still `old` in the database. Returns False, and changes
+    nothing, when another request changed it first. Does not commit."""
+    changed = db.execute(
+        update(Reservation)
+        .where(Reservation.id == res.id, Reservation.status == old)
+        .values(status=new)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if changed:
+        res.status = new
+    return changed == 1
+
+
+def _release(db: Session, res: Reservation, new_status: str) -> bool:
+    """Give a held reservation's stock back. Returns False, and gives nothing back, if the hold was already released,
+    expired or confirmed by someone else (the sweeper and a customer's cancel can race). Does not commit."""
+    if not _change_status(db, res, "held", new_status):
+        return False
     for line in res.lines:
         unreserve(db, res.store_id, line.sku_id, line.qty)
-    res.status = new_status
     db.flush()
     for line in res.lines:
         events.publish(db, "stock.changed", res.store_id, {"sku_id": line.sku_id, "cause": new_status})
+    return True
 
 
 def unreserve(db: Session, store_id: int, sku_id: int, qty: int) -> None:

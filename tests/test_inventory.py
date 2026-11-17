@@ -1,7 +1,10 @@
 """Inventory Service: holds, releases, expiry, and the no-overselling rule (HLD 9.1)."""
+import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
+from app import background, config
 from app.db import SessionLocal
 from app.errors import DomainError
 from app.models import Reservation, utcnow
@@ -170,3 +173,120 @@ def test_dashboard_counts_buffered_skus_as_out_of_stock(client, sku):
     rice = sku("Basmati rice")
     client.put(f"/v1/stores/1/stock-settings/{rice}", json={"safety_buffer": 30})
     assert client.get("/v1/stores/1/dashboard").json()["skus_out_of_stock"] == before + 1
+
+
+# --------------------------------------------------------------------------- automatic sweeper (task 1.2, HLD 9.1)
+
+
+def _back_date(db, reservation_id: str) -> None:
+    db.get(Reservation, reservation_id).expires_at = utcnow() - timedelta(minutes=1)
+    db.commit()
+
+
+def test_ten_releases_of_one_hold_give_the_stock_back_once(client, sku):
+    """The sweeper, a cancel and another instance's sweeper can all see the same hold as "held" at once.
+    Every thread reads the hold first and only then releases it, so all ten really do race."""
+    rice = sku("Basmati rice")
+    rid = hold(client, "order-1", [(rice, 5)]).json()["reservation_id"]
+    everyone_has_read = threading.Barrier(10)
+
+    def release_it(_n: int) -> bool:
+        with SessionLocal() as session:
+            res = inventory.get_reservation(session, rid)
+            assert res.status == "held"
+            everyone_has_read.wait()
+            gave_back = inventory._release(session, res, "released")
+            session.commit()
+            return gave_back
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        results = list(pool.map(release_it, range(10)))
+    assert results.count(True) == 1
+    assert atp(client, 1, rice) == 30
+    assert_stock_is_consistent()
+
+
+def test_release_through_the_api_ten_times_at_once(client, sku):
+    rice = sku("Basmati rice")
+    rid = hold(client, "order-1", [(rice, 5)]).json()["reservation_id"]
+
+    def release_it(_n: int) -> str:
+        with SessionLocal() as session:
+            return inventory.release(session, rid).status
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        assert set(pool.map(release_it, range(10))) == {"released"}
+    assert atp(client, 1, rice) == 30
+    assert_stock_is_consistent()
+
+
+def test_sweep_once_releases_a_back_dated_hold(client, db, sku):
+    rice = sku("Basmati rice")
+    old = hold(client, "order-1", [(rice, 5)]).json()["reservation_id"]
+    hold(client, "order-2", [(rice, 3)])                                     # still within its 10 minutes
+    _back_date(db, old)
+    assert background.sweep_once() == 1
+    assert atp(client, 1, rice) == 27
+    assert background.sweep_once() == 0                                     # nothing left to release
+    assert client.get(f"/v1/reservations/{old}").json()["status"] == "expired"
+    assert_stock_is_consistent()
+
+
+def test_sweep_loop_runs_on_its_own(client, db, sku, monkeypatch):
+    rice = sku("Basmati rice")
+    rid = hold(client, "order-1", [(rice, 5)]).json()["reservation_id"]
+    _back_date(db, rid)
+    monkeypatch.setattr(config, "SWEEP_INTERVAL_SECONDS", 0.05)
+
+    async def run_briefly():
+        loop = asyncio.create_task(background.sweep_loop())
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if atp(client, 1, rice) == 30:
+                break
+        loop.cancel()
+
+    asyncio.run(run_briefly())
+    assert atp(client, 1, rice) == 30
+    assert_stock_is_consistent()
+
+
+def test_payment_and_expiry_at_the_same_instant(client, sku):
+    """Confirm and release both read "held"; exactly one of them changes it, and the stock agrees with the winner."""
+    rice = sku("Basmati rice")
+    rid = hold(client, "order-1", [(rice, 5)]).json()["reservation_id"]
+    both_have_read = threading.Barrier(2)
+
+    def pay():
+        with SessionLocal() as session:
+            res = inventory.get_reservation(session, rid)
+            both_have_read.wait()
+            try:
+                return inventory._change_status(session, res, "held", "confirmed")
+            finally:
+                session.commit()
+
+    def expire():
+        with SessionLocal() as session:
+            res = inventory.get_reservation(session, rid)
+            both_have_read.wait()
+            gave_back = inventory._release(session, res, "expired")
+            session.commit()
+            return gave_back
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        paid, expired = pool.submit(pay), pool.submit(expire)
+        assert paid.result() != expired.result()                       # one winner, never both
+    final = client.get(f"/v1/reservations/{rid}").json()["status"]
+    assert atp(client, 1, rice) == (25 if final == "confirmed" else 30)
+    assert_stock_is_consistent()
+
+
+def test_confirm_after_the_sweeper_won_says_expired(client, db, sku):
+    rice = sku("Basmati rice")
+    rid = hold(client, "order-1", [(rice, 5)]).json()["reservation_id"]
+    _back_date(db, rid)
+    background.sweep_once()
+    paid = client.post(f"/v1/reservations/{rid}/confirm")
+    assert paid.status_code == 409 and paid.json()["error"]["code"] == "not_held"
+    assert atp(client, 1, rice) == 30
