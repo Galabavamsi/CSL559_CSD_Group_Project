@@ -1,12 +1,11 @@
 """Forecasting Service (HLD service 7): predict demand and set reorder points from it.
 
-The prototype model is a moving average of the last N days of sales taken from the stock ledger.
-It then applies the reorder-point formula from HLD 6.2 (in days instead of hours):
+Daily sales come from the stock ledger. Three models share one shape, model(history, target_day) -> units, so
+they can be swapped and compared by backtest (WAPE); config.FORECAST_MODEL picks the one `run` uses. The reorder
+point then follows HLD 6.2 (in days instead of hours):
 
-    reorder point = mean_daily_demand * lead_time + z * std_daily_demand * sqrt(lead_time)
-    target stock  = reorder point + mean_daily_demand * cover_days
-
-Member 3's guide covers replacing the moving average with a better model.
+    reorder point = daily_demand * lead_time + z * daily_std * sqrt(lead_time)
+    target stock  = reorder point + daily_demand * cover_days
 """
 import math
 from datetime import date, datetime, time, timedelta
@@ -74,9 +73,49 @@ def run(db: Session, store_id: int, window_days: int | None = None) -> list[dict
     return sorted(results, key=lambda r: r["sku"])
 
 
-def moving_average(history: dict[date, int], target_day: date, window: int = 7) -> float:
-    """Forecast for `target_day`: the mean of the `window` days before it. Days missing from `history` sold 0."""
-    return sum(history.get(target_day - timedelta(days=n), 0) for n in range(1, window + 1)) / window
+# Every model reads `history`, {date: units sold} for one SKU, and returns the forecast for `target_day` from the
+# days before it. A day after the SKU's first recorded sale with no sales counts as 0; days before that first sale
+# are unknown, not zero, and are left out, so a SKU with a short history still gets a fair forecast. With no day
+# left to look at, the forecast is 0.0.
+
+SMOOTHING_DAYS = 28        # exp_smoothing looks back four weeks; an older day would weigh under 0.01%
+
+
+def _known_days(history: dict[date, int], days: list[date]) -> list[date]:
+    """`days` without the ones before the SKU's first recorded sale (all of them when there is no sale at all)."""
+    if not history:
+        return []
+    first_sale = min(history)
+    return [day for day in days if day >= first_sale]
+
+
+def _mean(history: dict[date, int], days: list[date]) -> float:
+    return sum(history.get(day, 0) for day in days) / len(days) if days else 0.0
+
+
+def moving_average(history: dict[date, int], target_day: date, window: int = config.FORECAST_WINDOW_DAYS) -> float:
+    """The mean of the `window` days before `target_day`."""
+    return _mean(history, _known_days(history, [target_day - timedelta(days=n) for n in range(1, window + 1)]))
+
+
+def weekday_average(history: dict[date, int], target_day: date, weeks: int = 4) -> float:
+    """The mean of the same weekday in the last `weeks` weeks: a Saturday is forecast from Saturdays."""
+    return _mean(history, _known_days(history, [target_day - timedelta(weeks=n) for n in range(1, weeks + 1)]))
+
+
+def exp_smoothing(history: dict[date, int], target_day: date, alpha: float = 0.3) -> float:
+    """A weighted mean of the last SMOOTHING_DAYS days in which recent days count more: yesterday weighs 1 and each
+    earlier day (1 - alpha) times as much as the day after it."""
+    days = _known_days(history, [target_day - timedelta(days=n) for n in range(1, SMOOTHING_DAYS + 1)])
+    weights = [(1 - alpha) ** n for n in range(len(days))]          # days run newest first
+    return sum(w * history.get(day, 0) for w, day in zip(weights, days)) / sum(weights) if days else 0.0
+
+
+MODELS = {"moving_average": moving_average, "weekday_average": weekday_average, "exp_smoothing": exp_smoothing}
+HISTORY_DAYS = max(4 * 7, SMOOTHING_DAYS, config.FORECAST_WINDOW_DAYS)   # the most days any model looks back
+
+if config.FORECAST_MODEL not in MODELS:        # fail at start-up, not on the first forecast or KPI request
+    raise RuntimeError(f"FORECAST_MODEL is {config.FORECAST_MODEL!r}; use one of: {', '.join(MODELS)}")
 
 
 def _wape(abs_error: float, actual: int) -> float | None:

@@ -1,8 +1,11 @@
-"""Forecasting (guide task 3.2): daily sales, backtest, WAPE."""
+"""Forecasting (guide tasks 3.2 and 3.3): daily sales, the three models, backtest, WAPE."""
+import importlib
 from datetime import date, datetime, time, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app import config
 from app.main import app
 from app.models import utcnow
 from app.modules.forecasting import service as forecasting
@@ -31,11 +34,47 @@ def test_forecast_uses_the_seven_days_ending_yesterday(client, sku):
     assert rows[sku("Toned milk")]["daily_demand"] == 21.14     # seed week sums to 148; 148 / 7
 
 
+TUESDAY = date(2026, 11, 10)
+
+
+def sold(day, units_by_days_ago):
+    return {day - timedelta(days=n): units for n, units in units_by_days_ago.items()}
+
+
 def test_moving_average_is_the_mean_of_the_days_before():
-    day = date(2026, 11, 10)
-    history = {day - timedelta(days=1): 20, day - timedelta(days=2): 10, day - timedelta(days=3): 99, day: 500}
-    assert forecasting.moving_average(history, day, window=2) == 15.0
-    assert forecasting.moving_average({day - timedelta(days=1): 6}, day, window=3) == 2.0
+    history = sold(TUESDAY, {1: 20, 2: 10, 3: 99}) | {TUESDAY: 500}
+    assert forecasting.moving_average(history, TUESDAY, window=2) == 15.0
+    # After the first sale a day without sales counts as 0; days before it are unknown and left out.
+    assert forecasting.moving_average(sold(TUESDAY, {3: 6, 1: 3}), TUESDAY, window=5) == 3.0
+    assert forecasting.moving_average({}, TUESDAY) == 0.0
+
+
+def test_weekday_average_is_the_mean_of_the_same_weekdays():
+    history = sold(TUESDAY, {7: 10, 14: 20, 21: 30, 28: 40, 35: 999, 1: 500, 2: 500})
+    assert forecasting.weekday_average(history, TUESDAY) == 25.0              # (10 + 20 + 30 + 40) / 4
+    assert forecasting.weekday_average(history, TUESDAY, weeks=2) == 15.0
+    assert forecasting.weekday_average(sold(TUESDAY, {7: 12, 3: 5}), TUESDAY) == 12.0   # one Tuesday known
+    assert forecasting.weekday_average(sold(TUESDAY, {3: 5}), TUESDAY) == 0.0           # no Tuesday known yet
+
+
+def test_exp_smoothing_weighs_recent_days_more():
+    assert forecasting.exp_smoothing(sold(TUESDAY, {1: 10, 2: 20}), TUESDAY, alpha=0.5) == pytest.approx(20 / 1.5)
+    assert forecasting.exp_smoothing(sold(TUESDAY, {n: 8 for n in range(1, 60)}), TUESDAY) == pytest.approx(8.0)
+    assert forecasting.exp_smoothing({}, TUESDAY) == 0.0
+
+
+def test_every_model_has_the_same_shape():
+    assert set(forecasting.MODELS) == {"moving_average", "weekday_average", "exp_smoothing"}
+    assert config.FORECAST_MODEL in forecasting.MODELS
+    steady = sold(TUESDAY, {n: 5 for n in range(1, 43)})
+    assert {name: model(steady, TUESDAY) for name, model in forecasting.MODELS.items()} == pytest.approx(
+        {name: 5.0 for name in forecasting.MODELS})
+
+
+def test_the_app_refuses_to_start_with_an_unknown_model(monkeypatch):
+    monkeypatch.setattr(config, "FORECAST_MODEL", "crystal_ball")
+    with pytest.raises(RuntimeError, match="crystal_ball"):
+        importlib.reload(forecasting)
 
 
 def test_backtest_is_exact_for_constant_sales(db, sku):

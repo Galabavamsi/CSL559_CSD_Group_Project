@@ -18,7 +18,12 @@ RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))
 LEAD_TIME_DAYS = float(os.getenv("LEAD_TIME_DAYS", "1"))        # hub -> store delivery time
 SERVICE_LEVEL_Z = float(os.getenv("SERVICE_LEVEL_Z", "1.65"))   # 1.65 = 95% service level
 COVER_DAYS = float(os.getenv("COVER_DAYS", "3"))                # days of stock to hold above the reorder point
-FORECAST_WINDOW_DAYS = int(os.getenv("FORECAST_WINDOW_DAYS", "7"))
+# Forecasting model used by `run`: moving_average | weekday_average | exp_smoothing. The weekday average won the
+# task 3.3 comparison on generated sales (GET /v1/forecasting/compare).
+FORECAST_MODEL = os.getenv("FORECAST_MODEL", "weekday_average")
+FORECAST_WINDOW_DAYS = int(os.getenv("FORECAST_WINDOW_DAYS", "7"))    # days the moving_average model looks back
+# Recent days replayed to measure forecast errors: the backtest's default, and the errors that size safety stock.
+FORECAST_TEST_DAYS = int(os.getenv("FORECAST_TEST_DAYS", "14"))
 
 # Fulfilment: a store with more than this many unpacked orders is marked "busy" (HLD 9.2).
 BUSY_BACKLOG_THRESHOLD = int(os.getenv("BUSY_BACKLOG_THRESHOLD", "5"))
