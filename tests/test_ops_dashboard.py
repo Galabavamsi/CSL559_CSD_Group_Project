@@ -1,4 +1,5 @@
 """Ops dashboard (task 4.6, FR-13): city overview, what needs action, and every HLD 12 KPI beside its target."""
+import importlib
 import sys
 import types
 from datetime import timedelta
@@ -80,8 +81,23 @@ def test_a_failing_teammate_function_shows_not_available(client, monkeypatch):
     assert board["outbox_lag_seconds"]["available"] is True
 
 
+def test_a_teammate_module_that_breaks_on_import_shows_failed_not_missing(client, monkeypatch):
+    def broken_import(name, *args, **kwargs):
+        if name == "app.modules.inventory.counts":
+            raise ModuleNotFoundError("No module named 'scipy'", name="scipy")   # its own dependency is missing
+        return real_import(name, *args, **kwargs)
+
+    real_import = importlib.import_module
+    monkeypatch.setattr(importlib, "import_module", broken_import)
+
+    assert "failed" in kpis(client)["inventory_accuracy"]["note"]
+
+
 def test_needs_action_lists_bags_waiting_for_a_rider_stock_outs_and_stalled_orders(client, db, sku, monkeypatch):
+    place_paid_order(client, "bag-0", 1, [(sku("Tea"), 1)])
     place_paid_order(client, "bag-1", 1, [(sku("Tea"), 1)])
+    older = db.scalar(select(FulfilmentJob).where(FulfilmentJob.order_id == "bag-0"))
+    older.state, older.packed_at = "packed", utcnow() - timedelta(minutes=9)
     job = db.scalar(select(FulfilmentJob).where(FulfilmentJob.order_id == "bag-1"))
     job.state, job.packed_at = "packed", utcnow() - timedelta(minutes=4, seconds=10)
     milk = db.scalar(select(StockLevel).where(StockLevel.store_id == 1, StockLevel.sku_id == sku("Toned milk")))
@@ -92,7 +108,8 @@ def test_needs_action_lists_bags_waiting_for_a_rider_stock_outs_and_stalled_orde
 
     action = client.get("/v1/stores/1/kpis").json()["needs_action"]
 
-    assert action["waiting_for_rider"] == [{"order_id": "bag-1", "minutes_waiting": 4}]
+    assert action["waiting_for_rider"] == [{"order_id": "bag-0", "minutes_waiting": 9},     # longest wait first
+                                           {"order_id": "bag-1", "minutes_waiting": 4}]
     assert "Toned milk 500 ml" in action["out_of_stock"]
     assert action["stalled_orders"] == ["late-1"]
 

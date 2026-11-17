@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from ... import events
 from ...models import EventLog, FulfilmentJob, Reservation, StockLevel, TransferOrder, utcnow
-from ..fulfilment import service as fulfilment
 from ..inventory import service as inventory
 from ..serviceability import service as serviceability
 
@@ -128,10 +127,17 @@ class NotBuiltYet(Exception):
 
 
 def _teammate(module: str, name: str):
+    """A teammate's function, or NotBuiltYet. A module that exists but breaks on import raises its own error."""
     try:
-        return getattr(importlib.import_module(module), name)
-    except (ImportError, AttributeError):
-        raise NotBuiltYet(f"{module}.{name}") from None
+        found = importlib.import_module(module)
+    except ModuleNotFoundError as error:
+        if error.name != module:        # the module is there, but something it imports is missing
+            raise
+        raise NotBuiltYet(module) from None
+    function = getattr(found, name, None)
+    if function is None:
+        raise NotBuiltYet(f"{module}.{name}")
+    return function
 
 
 def _judged(value: float | None, meets) -> tuple:
@@ -194,13 +200,19 @@ def kpi_board(db: Session, store_id: int) -> dict:
 
 def needs_action(db: Session, store_id: int) -> dict:
     """Problems first: stalled orders (None until Member 2 builds them), bags waiting for a rider, stock-outs."""
-    stalled, _ = _guarded(db, "stalled orders", lambda: [
+    stalled, why = _guarded(db, "stalled orders", lambda: [
         job["order_id"] for job in _teammate("app.modules.fulfilment.service", "attention")(db, store_id)["stalled"]])
+    packed = db.scalars(select(FulfilmentJob)
+                        .where(FulfilmentJob.store_id == store_id, FulfilmentJob.state == "packed",
+                               FulfilmentJob.packed_at.is_not(None))
+                        .order_by(FulfilmentJob.packed_at)).all()           # longest wait first
     now = utcnow()
     return {
         "stalled_orders": stalled,
-        "waiting_for_rider": [{"order_id": job.order_id, "minutes_waiting": int((now - job.packed_at).total_seconds() // 60)}
-                              for job in fulfilment.list_jobs(db, store_id, state="packed") if job.packed_at],
+        "stalled_note": why,
+        "waiting_for_rider": [{"order_id": job.order_id,
+                               "minutes_waiting": max(0, int((now - job.packed_at).total_seconds() // 60))}
+                              for job in packed],
         "out_of_stock": [row["name"] for row in inventory.availability(db, store_id) if row["atp"] <= 0],
     }
 
@@ -218,6 +230,8 @@ def orders_per_hour(db: Session, store_id: int) -> list[dict]:
 
 def city_overview(db: Session) -> list[dict]:
     """One row per store for city-wide staff: status, orders waiting to be picked, bags waiting, low stock."""
+    # shortcut: runs store_dashboard's queries once per store; fine for a handful of stores, switch to grouped
+    # COUNT queries across all stores before the city has dozens.
     rows = []
     for store in serviceability.list_stores(db):
         d = store_dashboard(db, store["store_id"])

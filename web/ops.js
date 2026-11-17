@@ -54,14 +54,13 @@ function actionTile(label, count, detail) {
     el("div", { className: "detail" }, detail));
 }
 
-function renderActions({ stalled_orders: stalled, waiting_for_rider: waiting, out_of_stock: out }) {
-  const longest = waiting.reduce((most, bag) => (bag.minutes_waiting > most.minutes_waiting ? bag : most), waiting[0]);
+function renderActions({ stalled_orders: stalled, stalled_note: why, waiting_for_rider: waiting, out_of_stock: out }) {
   const someOut = out.slice(0, 3).join(", ") + (out.length > 3 ? ` and ${out.length - 3} more` : "");
   $("actions").replaceChildren(
     actionTile("Stalled orders", stalled === null ? null : stalled.length,
-      stalled === null ? "Not available yet (fulfilment's stall check)" : stalled.join(", ") || "None"),
-    actionTile("Bags waiting for a rider", waiting.length,
-      longest ? `Longest: ${plural(longest.minutes_waiting, "minute")} (${longest.order_id})` : "None"),
+      stalled === null ? `Not available: fulfilment's stall check ${why}` : stalled.join(", ") || "None"),
+    actionTile("Bags waiting for a rider", waiting.length, waiting.length
+      ? `Longest: ${plural(waiting[0].minutes_waiting, "minute")} (${waiting[0].order_id})` : "None"),
     actionTile("Out of stock", out.length, someOut || "None"));
 }
 
@@ -121,11 +120,17 @@ function addEvent(event) {
 // ---------------------------------------------------------------- data
 
 async function refresh() {
-  const [board, city] = await Promise.all([api(`/v1/stores/${store}/kpis`), api("/v1/dashboard/overview")]);
-  renderActions(board.needs_action);
-  renderKpis(board.kpis);
-  renderChart(board.orders_per_hour);
-  renderCity(city);
+  const shown = store;
+  const [board, city] = await Promise.allSettled([api(`/v1/stores/${shown}/kpis`), api("/v1/dashboard/overview")]);
+  if (shown !== store) return; // the store changed while loading; a newer refresh is on its way
+  if (board.status === "fulfilled") {
+    renderActions(board.value.needs_action);
+    renderKpis(board.value.kpis);
+    renderChart(board.value.orders_per_hour);
+  }
+  if (city.status === "fulfilled") renderCity(city.value);
+  const failed = [board, city].find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
   $("ops-page-message").textContent = "";
 }
 
@@ -137,7 +142,9 @@ function refreshSafely() {
 }
 
 async function loadEvents() {
-  const recent = await api(`/v1/events?store_id=${store}&limit=${EVENTS_SHOWN}`);
+  const shown = store;
+  const recent = await api(`/v1/events?store_id=${shown}&limit=${EVENTS_SHOWN}`);
+  if (shown !== store) return;
   $("events").replaceChildren(...(recent.length ? recent.map(eventItem) : [el("li", { className: "empty" }, "No events yet")]));
 }
 
@@ -153,8 +160,13 @@ async function connectLive() {
   live.socket = socket;
   socket.onopen = () => socket.send(bearer);
   socket.onmessage = (message) => {
+    if (socket !== live.socket) return; // a socket for a store no longer shown
     const event = JSON.parse(message.data);
-    if (event.type === "connected") $("live-status").textContent = "● Live";
+    if (event.type === "connected") {
+      $("live-status").textContent = "● Live";
+      loadEvents().catch(() => {}); // catch up on anything missed while disconnected
+      refreshSafely();
+    }
     if (event.type === "ping" || event.type === "connected") return;
     addEvent(event);
     clearTimeout(live.refreshTimer);
@@ -165,8 +177,14 @@ async function connectLive() {
     live.socket = null;
     token = null; // the server closes the socket when the token expires
     $("live-status").textContent = "Reconnecting…";
-    setTimeout(() => { if (generation === live.generation) connectLive().catch(() => {}); }, 3000);
+    reconnectSoon();
   };
+}
+
+// Keep trying every few seconds, also when logging in fails, until a newer connection takes over.
+function reconnectSoon() {
+  const generation = live.generation;
+  setTimeout(() => { if (generation === live.generation) connectLive().catch(reconnectSoon); }, 3000);
 }
 
 async function start() {
@@ -175,11 +193,11 @@ async function start() {
   $("store-select").onchange = () => {
     store = Number($("store-select").value);
     refreshSafely();
-    loadEvents().catch(() => {});
-    connectLive().catch(() => {});
+    connectLive().catch(reconnectSoon); // its "connected" message reloads the event list
   };
-  await Promise.all([refresh(), loadEvents()]);
-  await connectLive();
+  refreshSafely();
+  await loadEvents();
+  connectLive().catch(reconnectSoon);
   setInterval(refreshSafely, REFRESH_MS);
 }
 
