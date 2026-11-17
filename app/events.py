@@ -19,7 +19,7 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import config
+from . import config, metrics
 from .db import SessionLocal
 from .models import EventLog, utcnow
 
@@ -92,5 +92,6 @@ async def run_relay() -> None:
 def publish(db: Session, event_type: str, store_id: int | None, payload: dict) -> None:
     db.add(EventLog(type=event_type, store_id=store_id, payload=payload))
     db.flush()
+    metrics.EVENTS_PUBLISHED.labels(event_type).inc()
     for handler in _handlers[event_type]:
         handler(db, store_id, payload)

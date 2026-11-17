@@ -39,6 +39,10 @@ RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
 # An open WebSocket gets a ping this often, so a viewer that has gone away is noticed and dropped.
 LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
 
+# Monitoring (HLD 12): when set, GET /metrics answers only 'Authorization: Bearer <METRICS_TOKEN>'. Leave it empty
+# for local development; set it anywhere /metrics is reachable from outside.
+METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+
 # Serviceability: delivery zones are H3 hexagon cells mapped to stores (HLD service 1).
 # Resolution 9 cells have ~0.2 km edges (~0.1 km2), so a zone border is accurate to about 200 m and a
 # 3 km zone is ~270 rows. Resolution 8 (~0.53 km edges) would need 7x fewer rows but blur borders by ~500 m.

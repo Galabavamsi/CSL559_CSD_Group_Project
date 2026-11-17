@@ -172,4 +172,43 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | Batch picking at peak | One order per picker | Member 2 |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
 | Store edge node | Not built | Out of scope; explain it in the report |
-| Monitoring and KPIs | Basic dashboard numbers; supply KPIs from `GET /v1/stores/{id}/supply-kpis` (no screen yet) | Members 2, 3 and 4 |
+| Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); no Prometheus server or Grafana in the prototype | Members 2, 3 and 4 |
+
+## 9. Monitoring
+
+`GET /metrics` is a Prometheus scrape target (`app/metrics.py` defines the metrics, `app/monitoring.py`
+serves them):
+
+| Metric | Type | Labels | Where it is counted |
+| --- | --- | --- | --- |
+| `http_request_duration_seconds` | histogram | method, route template, status | middleware, every request |
+| `reservations_total` | counter | result: `held`, `insufficient_stock` | `inventory.reserve` |
+| `events_published_total` | counter | event type | `events.publish` |
+| `scans_total` | counter | result: `match`, `mismatch` | `pickpack.scan` |
+| `holds_in_progress` | gauge | | read from the database at scrape time |
+| `outbox_lag_seconds` | gauge | | read at scrape time; same number as the dashboard tile |
+| `store_seconds_since_last_event` | gauge | store id | read at scrape time |
+
+The latency histogram is labelled with the route template (`/v1/stores/{store_id}/availability`), not the
+raw path, so the number of series does not grow with the number of stores; an HTTP method outside the usual
+seven is labelled `other`. The counters go up when the code runs, before the transaction commits, so a
+rolled-back request still counts: fine for rates and alerts, not for exact totals. Set `METRICS_TOKEN` and
+`/metrics` answers only `Authorization: Bearer <METRICS_TOKEN>`; with it unset (local development) it is open.
+
+Every request gets an id: the caller's `X-Request-ID` if it is at most 64 letters, digits, `.`, `_` or `-`,
+otherwise a new one. It is returned in the `X-Request-ID` response header and written on every log line
+made while the request is handled. The app logs one JSON object per line to stderr, including one line per
+request with its method, route, status and time in milliseconds.
+
+### Alert rules (HLD 12)
+
+| Alert | Metric | Fires when (PromQL) |
+| --- | --- | --- |
+| Spike in failed reservations | `reservations_total` | more than 20% of holds fail over 5 minutes: `sum(rate(reservations_total{result="insufficient_stock"}[5m])) / sum(rate(reservations_total[5m])) > 0.2` |
+| Event lag | `outbox_lag_seconds` | above 30 s for 1 minute: `outbox_lag_seconds > 30` |
+| Slow reads | `http_request_duration_seconds` | read p99 above the 100 ms target: `histogram_quantile(0.99, sum by (le, route) (rate(http_request_duration_seconds_bucket{method="GET"}[5m]))) > 0.1` |
+| Cache and database disagree | Member 1's stock audit (task 1.8) | any mismatch; not wired up until the audit exists |
+| Store offline | `store_seconds_since_last_event` | above 15 minutes during opening hours: `store_seconds_since_last_event > 900` |
+
+The thresholds (20%, 15 minutes) are first guesses to tune with real traffic. Prometheus and Grafana
+themselves are not part of the prototype; the rules above are what you would load into Prometheus.

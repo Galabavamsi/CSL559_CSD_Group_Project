@@ -47,6 +47,7 @@ Then open:
 - **http://localhost:8000** for the demo screens (customer, picker and store ops side by side)
 - **http://localhost:8000/ops.html** for the ops dashboard (KPIs against HLD 12 targets, updated live)
 - **http://localhost:8000/docs** for the interactive API reference
+- **http://localhost:8000/metrics** for Prometheus metrics (alert rules in `docs/ARCHITECTURE.md`, section 9)
 
 Run the tests with `python -m pytest -q`. Reset the demo data with the button on the ops desk,
 or with `python -m app.seed`.
