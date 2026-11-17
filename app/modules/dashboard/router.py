@@ -20,6 +20,18 @@ def dashboard(store_id: int, db: Session = Depends(get_db),
     return service.store_dashboard(db, store_id)
 
 
+@router.get("/v1/dashboard/overview", summary="One row per store, for city-wide staff")
+def overview(db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    check_store(staff, None)
+    return service.city_overview(db)
+
+
+@router.get("/v1/stores/{store_id}/kpis", summary="What needs action, and every HLD 12 KPI beside its target")
+def kpis(store_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    check_store(staff, store_id)
+    return service.kpi_board(db, store_id)
+
+
 @router.get("/v1/events")
 def events(store_id: int | None = None, limit: int = 20, db: Session = Depends(get_db),
            staff: dict = Depends(current_staff)):

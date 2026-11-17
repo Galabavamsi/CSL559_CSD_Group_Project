@@ -22,7 +22,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Pack and hand off | Packing commits the sale; a rider handoff closes the order |
 | Restock | Low items are reordered from the hub; a received truck is put away and sellable at once |
 | Forecast | Reorder points are recalculated from a weekday-aware forecast; three models are compared by measured error (WAPE) |
-| Watch | A dashboard, the stock table and a live event feed for each store |
+| Watch | An ops dashboard with problems first and every HLD 12 KPI beside its target, plus a live event feed for each store |
 
 Automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
 
@@ -45,6 +45,7 @@ python -m uvicorn app.main:app --reload
 Then open:
 
 - **http://localhost:8000** for the demo screens (customer, picker and store ops side by side)
+- **http://localhost:8000/ops.html** for the ops dashboard (KPIs against HLD 12 targets, updated live)
 - **http://localhost:8000/docs** for the interactive API reference
 
 Run the tests with `python -m pytest -q`. Reset the demo data with the button on the ops desk,
