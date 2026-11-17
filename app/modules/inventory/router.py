@@ -1,10 +1,11 @@
 """HTTP endpoints for the Inventory Service (HLD section 8.1)."""
 import h3
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ... import config
+from ...idempotency import run_once
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
 from . import service
@@ -85,9 +86,16 @@ def release_reservation(reservation_id: str, db: Session = Depends(get_db)):
 
 @router.post("/v1/stock-adjustments")
 def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db),
-                      staff: dict = Depends(require_role("manager"))):
+                      staff: dict = Depends(require_role("manager")),
+                      idempotency_key: str | None = Header(
+                          None, min_length=1, max_length=80,
+                          description="Any unique string. A retry with the same key does not change stock again; "
+                                      "it returns the first answer.")):
+    """Correct the count. Send an Idempotency-Key so a double-click or a network retry writes off only once."""
     check_store(staff, body.store_id)
-    return service.adjust(db, body.store_id, body.sku_id, body.delta, body.reason, body.bin_id, body.actor)
+    return run_once(db, "stock-adjustment", idempotency_key, body.model_dump(),
+                    lambda: service.adjust(db, body.store_id, body.sku_id, body.delta, body.reason, body.bin_id,
+                                           body.actor, commit=False))
 
 
 @router.get("/v1/stores/{store_id}/stock")
