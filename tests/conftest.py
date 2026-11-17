@@ -1,6 +1,7 @@
 """Shared test setup: every test runs against a fresh copy of the demo data in a temporary database."""
 import os
 import tempfile
+from datetime import date, datetime, time, timedelta
 
 # Must be set before anything from `app` is imported, because the engine is created at import time.
 os.environ["DARKSTORE_DB"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
@@ -12,7 +13,8 @@ from sqlalchemy import func, select  # noqa: E402
 from app import auth, seed  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import SKU, StockItem, StockLedger, StockLevel  # noqa: E402
+from app.models import SKU, StockItem, StockLedger, StockLevel, utcnow  # noqa: E402
+from scripts.generate_sales import clear_history, write_history  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -83,3 +85,15 @@ def assert_stock_is_consistent():
             assert level.qty_on_hand == in_bins, f"{where}: on_hand {level.qty_on_hand} != bins {in_bins}"
             assert level.qty_on_hand == in_ledger, f"{where}: on_hand {level.qty_on_hand} != ledger {in_ledger}"
             assert 0 <= level.qty_reserved <= level.qty_on_hand, f"{where}: reserved {level.qty_reserved}"
+
+
+def plant_sales(db, sales: dict[int, dict[int, int]], store_id: int = 1) -> date:
+    """Replace one store's sales history with {sku_id: {days_ago: units}}, each sale at noon UTC, and return today.
+    Zero-unit days are left out, as the generator does."""
+    today = utcnow().date()
+    clear_history(db, store_id)
+    write_history(db, store_id, [(sku_id, datetime.combine(today - timedelta(days=n), time(12)), units)
+                                 for sku_id, by_day in sales.items() for n, units in by_day.items() if units])
+    db.commit()
+    assert_stock_is_consistent()
+    return today

@@ -111,13 +111,18 @@ def seed(db: Session) -> None:
             on_hand = sum(qty for _, _, _, qty in placements)
             db.add(StockLevel(store_id=store.id, sku_id=sku.id, qty_on_hand=on_hand, qty_reserved=0,
                               reorder_point=10, target_stock=40))
-            for position, (bin_, batch, expiry, qty) in enumerate(placements):
+            for bin_, batch, expiry, qty in placements:
                 db.add(StockItem(store_id=store.id, sku_id=sku.id, bin_id=bin_.id, batch_no=batch,
                                  expiry_date=expiry, qty=qty))
-                # Opening receipt, dated before the sales history so the ledger adds up to today's stock.
-                opening = qty + (sum(history) if position == 0 else 0)
-                db.add(StockLedger(store_id=store.id, sku_id=sku.id, bin_id=bin_.id, delta=opening,
+                # Opening receipt: the units in this bin today.
+                db.add(StockLedger(store_id=store.id, sku_id=sku.id, bin_id=bin_.id, delta=qty,
                                    reason="receipt", reference="opening-stock", actor="seed",
+                                   ts=utcnow() - timedelta(days=8)))
+            if history:
+                # The units sold in the history arrived in a receipt of their own, tagged like the sales, so the
+                # history rows always sum to zero and can be deleted together (scripts/generate_sales.py does).
+                db.add(StockLedger(store_id=store.id, sku_id=sku.id, bin_id=home.id, delta=sum(history),
+                                   reason="receipt", reference="history", actor="seed",
                                    ts=utcnow() - timedelta(days=8)))
             for days_ago, units in zip(range(len(history), 0, -1), history):
                 db.add(StockLedger(store_id=store.id, sku_id=sku.id, bin_id=home.id, delta=-units,

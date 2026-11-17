@@ -10,7 +10,7 @@ git clone <your-repo-url>
 cd darkstore
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m pytest -q                                   # must print "45 passed" before you start
+python -m pytest -q                                   # every test must pass before you start
 ```
 
 ## Daily workflow

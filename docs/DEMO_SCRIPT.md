@@ -7,7 +7,11 @@ to say. Rehearse it twice; press **Reset demo data** on the ops desk before ever
 
 ```bash
 python -m uvicorn app.main:app
+python scripts/generate_sales.py     # in a second terminal, after every reset
 ```
+
+The generator gives the forecast in section 7 two months of sales; the demo data alone has one week, too
+little to forecast from the same weekday or to measure forecast error.
 
 Open http://localhost:8000 in **two browser windows** side by side (you need the second one for
 step 3). Keep the store selector on *DS-01 Central*.
@@ -93,7 +97,9 @@ This is the centrepiece. The demo data has exactly **one** vanilla ice cream in 
 5. Customer station: bread now shows the new quantity.
 6. Press **Recalculate forecasts**. Reorder points for the items with sales history change.
 
-> "Reorder points come from the last seven days of sales using the formula in section 6.2 of the HLD."
+> "Each item's demand is forecast from the same weekday over the last four weeks, the model that won our
+> backtest. Reorder points follow the formula in section 6.2 of the HLD, and the safety stock covers how wrong
+> the forecast was over the last two weeks."
 
 ## 8. A busy store (30 seconds, optional)
 
