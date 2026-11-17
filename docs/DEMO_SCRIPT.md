@@ -112,9 +112,10 @@ Place and pay for six small orders without picking them. The store tile turns to
 
 Open http://localhost:8000/docs.
 
-> "Every action you saw is one of these API calls. The code has one module per service in our HLD,
-> and 25 automated tests. What you saw is a prototype: SQLite instead of PostgreSQL, an event table
-> instead of Kafka, and no logins yet. Each of those gaps is a planned task for one of us."
+> "Every action you saw is one of these API calls, and every staff call carries a login with a role and a
+> store. The code has one module per service in our HLD, and one automated test walks this whole script
+> through the API, from order to a final stock audit. What you saw is a prototype: SQLite instead of
+> PostgreSQL and an event table instead of Kafka."
 
 ## If something goes wrong
 
