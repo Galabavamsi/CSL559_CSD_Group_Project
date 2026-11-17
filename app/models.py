@@ -200,9 +200,9 @@ class Forecast(Base):
     __tablename__ = "forecasts"
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), primary_key=True)
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"), primary_key=True)
-    daily_demand: Mapped[float] = mapped_column(Float, default=0.0)
-    daily_std: Mapped[float] = mapped_column(Float, default=0.0)
-    model: Mapped[str] = mapped_column(String(30), default="moving_average")
+    daily_demand: Mapped[float] = mapped_column(Float, default=0.0)  # forecast units for the day it was made
+    daily_std: Mapped[float] = mapped_column(Float, default=0.0)     # spread of the model's recent daily errors
+    model: Mapped[str] = mapped_column(String(30), default="moving_average")   # which model made it
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

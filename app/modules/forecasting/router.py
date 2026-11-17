@@ -9,11 +9,10 @@ from . import service
 router = APIRouter(tags=["forecasting"])
 
 
-@router.post("/v1/forecasting/run")
-def run(store_id: int, window_days: int | None = None, db: Session = Depends(get_db),
-        staff: dict = Depends(require_role("manager"))):
+@router.post("/v1/forecasting/run", summary="Recalculate forecasts and reorder points with the model in use")
+def run(store_id: int, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
     check_store(staff, store_id)
-    return service.run(db, store_id, window_days)
+    return service.run(db, store_id)
 
 
 @router.get("/v1/forecasts")

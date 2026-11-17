@@ -40,14 +40,20 @@ def daily_sales(db: Session, store_id: int, days_back: int) -> dict[int, dict[da
     return sales
 
 
-def run(db: Session, store_id: int, window_days: int | None = None) -> list[dict]:
-    """Recalculate forecasts for one store from the `window_days` days ending yesterday, and update reorder
-    points for SKUs that have sales (FR-7)."""
+def run(db: Session, store_id: int) -> list[dict]:
+    """Recalculate every forecast for one store with config.FORECAST_MODEL, update the reorder points of SKUs that
+    are selling (FR-7), and commit.
+
+    daily_demand is the model's forecast for today. daily_std is the standard deviation of the model's errors over
+    the last config.FORECAST_TEST_DAYS days, not of raw sales: safety stock should cover what the forecast gets
+    wrong, not variation it already predicts (such as busier weekends).
+    """
     inventory.get_store(db, store_id)
-    window = window_days or config.FORECAST_WINDOW_DAYS
-    sales = daily_sales(db, store_id, window)
+    name = config.FORECAST_MODEL
+    forecast_for = MODELS[name]
+    sales = daily_sales(db, store_id, config.FORECAST_TEST_DAYS + HISTORY_DAYS)
+    test_dates = _recent_days(config.FORECAST_TEST_DAYS)
     today = utcnow().date()
-    window_dates = [today - timedelta(days=n) for n in range(window, 0, -1)]
     lead = config.LEAD_TIME_DAYS
     results = []
     levels = db.scalars(
@@ -55,21 +61,21 @@ def run(db: Session, store_id: int, window_days: int | None = None) -> list[dict
     ).all()
     for level in levels:
         history = sales.get(level.sku_id, {})
-        series = [history.get(d, 0) for d in window_dates]
-        mean = sum(series) / window
-        std = pstdev(series)
+        demand = forecast_for(history, today)
+        errors = _errors(history, test_dates, forecast_for)
+        std = pstdev(errors) if errors else 0.0
         forecast = db.get(Forecast, (store_id, level.sku_id))
         if forecast is None:
             forecast = Forecast(store_id=store_id, sku_id=level.sku_id)
             db.add(forecast)
-        forecast.daily_demand, forecast.daily_std, forecast.updated_at = mean, std, utcnow()
-        if mean > 0:        # no sales history -> keep the manually set reorder point
-            level.reorder_point = math.ceil(mean * lead + config.SERVICE_LEVEL_Z * std * math.sqrt(lead))
-            level.target_stock = level.reorder_point + max(1, math.ceil(mean * config.COVER_DAYS))
-        results.append({"sku_id": level.sku_id, "sku": level.sku.name, "daily_demand": round(mean, 2),
-                        "daily_std": round(std, 2), "reorder_point": level.reorder_point,
-                        "target_stock": level.target_stock})
-    events.publish(db, "forecast.updated", store_id, {"skus": len(results), "window_days": window})
+        forecast.daily_demand, forecast.daily_std, forecast.model, forecast.updated_at = demand, std, name, utcnow()
+        if demand > 0:      # no sales to go on -> keep the manually set reorder point
+            level.reorder_point = math.ceil(demand * lead + config.SERVICE_LEVEL_Z * std * math.sqrt(lead))
+            level.target_stock = level.reorder_point + max(1, math.ceil(demand * config.COVER_DAYS))
+        results.append({"sku_id": level.sku_id, "sku": level.sku.name, "model": name,
+                        "daily_demand": round(demand, 2), "daily_std": round(std, 2),
+                        "reorder_point": level.reorder_point, "target_stock": level.target_stock})
+    events.publish(db, "forecast.updated", store_id, {"skus": len(results), "model": name})
     db.commit()
     return sorted(results, key=lambda r: r["sku"])
 

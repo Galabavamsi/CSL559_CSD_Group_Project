@@ -30,9 +30,27 @@ def test_daily_sales_counts_whole_days_ending_yesterday(db, sku):
         milk: {today - timedelta(days=1): 7, today - timedelta(days=7): 9}}
 
 
-def test_forecast_uses_the_seven_days_ending_yesterday(client, sku):
+def test_forecast_uses_the_seven_days_ending_yesterday(client, sku, monkeypatch):
+    monkeypatch.setattr(config, "FORECAST_MODEL", "moving_average")
     rows = {r["sku_id"]: r for r in client.post("/v1/forecasting/run", params={"store_id": 1}).json()}
     assert rows[sku("Toned milk")]["daily_demand"] == 21.14     # seed week sums to 148; 148 / 7
+
+
+def test_forecast_sizes_safety_stock_from_forecast_errors(client, db, sku, monkeypatch):
+    monkeypatch.setattr(config, "FORECAST_MODEL", "weekday_average")
+    milk = sku("Toned milk")
+    plant(db, milk, {n: 20 if n == 1 else 10 for n in range(1, 43)})
+    row = next(r for r in client.post("/v1/forecasting/run", params={"store_id": 1}).json() if r["sku_id"] == milk)
+    # Every replayed day was forecast at 10, so the only error is yesterday's +10: pstdev([0] * 13 + [10]) = 2.5754.
+    # Reorder point = ceil(10 x 1 + 1.65 x 2.5754) = 15; target = 15 + 10 x 3 = 45.
+    assert (row["model"], row["daily_demand"], row["daily_std"]) == ("weekday_average", 10.0, 2.58)
+    assert (row["reorder_point"], row["target_stock"]) == (15, 45)
+
+
+def test_forecasts_show_the_model_that_made_them(client):
+    client.post("/v1/forecasting/run", params={"store_id": 1})
+    rows = client.get("/v1/forecasts", params={"store_id": 1}).json()
+    assert len(rows) == 16 and {row["model"] for row in rows} == {config.FORECAST_MODEL}
 
 
 TUESDAY = date(2026, 11, 10)
