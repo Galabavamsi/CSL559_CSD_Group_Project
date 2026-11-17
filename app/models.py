@@ -230,6 +230,37 @@ class Forecast(Base):
 
 # --------------------------------------------------------------------------- events
 
+class CycleCount(Base):
+    """A blind count of one bin (FR-11). open -> submitted -> approved | rejected; a small difference goes straight
+    from open to approved. The counter is told which SKUs to look for, never how many the system expects."""
+    __tablename__ = "cycle_counts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id"), index=True)
+    status: Mapped[str] = mapped_column(String(10), default="open", index=True)
+    reason: Mapped[str] = mapped_column(String(20), default="manual")         # manual | not_found (a picker found it short)
+    created_by: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    submitted_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    difference_value: Mapped[float | None] = mapped_column(Float, nullable=True)   # sum of |counted - system| x price
+    decided_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    bin: Mapped[Bin] = relationship()
+    lines: Mapped[list["CycleCountLine"]] = relationship(cascade="all, delete-orphan", order_by="CycleCountLine.id")
+
+
+class CycleCountLine(Base):
+    """One SKU in a counted bin. `system_qty` is what the records said at the moment the count was submitted."""
+    __tablename__ = "cycle_count_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    count_id: Mapped[int] = mapped_column(ForeignKey("cycle_counts.id"), index=True)
+    sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
+    system_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    counted_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sku: Mapped[SKU] = relationship()
+
+
 class IdempotencyRecord(Base):
     """The first answer to a write request that carried an Idempotency-Key header (HLD 8). A retry with the same
     key gets this answer back instead of doing the write again. Saved in the same transaction as the write."""

@@ -16,6 +16,9 @@ RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))
 # The sweeper runs this often (app/background.py). BACKGROUND_JOBS=off stops every timed job (the tests do).
 SWEEP_INTERVAL_SECONDS = float(os.getenv("SWEEP_INTERVAL_SECONDS", "30"))
 BACKGROUND_JOBS = os.getenv("BACKGROUND_JOBS", "on") == "on"
+# Cycle counts (FR-11, HLD 10): a count whose differences are worth at most this much (|counted - system| x price,
+# summed) is applied at once; a bigger one waits for a manager.
+COUNT_AUTO_APPROVE_VALUE = float(os.getenv("COUNT_AUTO_APPROVE_VALUE", "500"))
 # Expiry (FR-10): expired batches are written off this often, and batches expiring within NEAR_EXPIRY_DAYS are
 # flagged with an item.near_expiry event, at most once per batch per day.
 EXPIRY_INTERVAL_SECONDS = float(os.getenv("EXPIRY_INTERVAL_SECONDS", "3600"))

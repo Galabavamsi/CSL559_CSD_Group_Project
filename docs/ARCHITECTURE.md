@@ -94,8 +94,9 @@ rolls back, so does the event. This is the "transactional outbox" from HLD 9.2, 
 
 | Event | Published by | Handled by (today) |
 | --- | --- | --- |
-| `stock.changed` | inventory, pickpack | replenishment (raises `stock.low`) |
+| `stock.changed` | inventory, pickpack | replenishment (raises `stock.low`); inventory counts (opens a count of the bin when the cause is `not_found`) |
 | `stock.low` | replenishment | nobody yet |
+| `count.needs_approval` | inventory counts (difference above `COUNT_AUTO_APPROVE_VALUE`) | nobody yet (live feed shows it) |
 | `item.near_expiry` | inventory (hourly job, once per batch per day) | nobody yet (live feed shows it) |
 | `order.paid` | inventory | fulfilment (creates the job) |
 | `fulfilment.state_changed` | fulfilment, pickpack | nobody yet |
