@@ -13,7 +13,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Flow | What you can do |
 | --- | --- |
 | Find a store | Give a location, get the serving store and an ETA, or "not serviceable" |
-| Shop | See only the items that store can deliver right now (available = on hand − held) |
+| Shop | See only the items that store can deliver right now (available = on hand − held − a small safety buffer) |
 | Checkout | Hold a whole cart for 10 minutes; the cart is held whole or not at all |
 | Pay or cancel | Paying creates a pick job; cancelling or timing out gives the stock back |
 | Pick | A picker claims the next order and gets lines in walking order, oldest batch first |
@@ -138,7 +138,7 @@ docs/                architecture notes, team plan and one guide per team member
 | --- | --- | --- | --- |
 | 1 Serviceability | `serviceability` | H3 cell to store lookup, ETA, zone shrinks when the store is busy | Zones are rebuilt by hand (`POST /v1/admin/rebuild-zones`); a cell has one store, so a busy or closed store's customers are not passed to a neighbour |
 | 2 Assortment | `assortment` | List and add SKUs per store | No demand-based recommendations |
-| 3 Inventory | `inventory` | ATP, atomic holds, confirm, release, expiry sweep, adjustments, ledger, FEFO allocation | Sweep is triggered by hand; no cache; no safety buffer |
+| 3 Inventory | `inventory` | ATP with a per-SKU safety buffer (`PUT /v1/stores/{id}/stock-settings/{sku_id}`), atomic holds, confirm, release, expiry sweep, adjustments, ledger, FEFO allocation | Sweep is triggered by hand; no cache |
 | 4 Fulfilment Orchestrator | `fulfilment` | Job per paid order, pick tasks, state machine, store busy flag | No cancellation after payment |
 | 5 Pick & Pack | `pickpack` | Claim next order, scan check, empty-shelf fallback, pack | One order per picker; no substitutes |
 | 6 Slotting | `slotting` | Suggest a bin in the right temperature zone | No velocity or affinity rules |
