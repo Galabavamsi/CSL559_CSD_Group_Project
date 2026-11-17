@@ -22,7 +22,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Pack and hand off | Packing commits the sale; a rider handoff closes the order |
 | Restock | Low items are reordered from the hub; a received truck is put away and sellable at once |
 | Forecast | Reorder points are recalculated from a weekday-aware forecast; three models are compared by measured error (WAPE) |
-| Watch | A dashboard, the stock table and a live event feed for each store |
+| Watch | A dashboard, the stock table and a live event feed for each store, and the five supply KPIs against their HLD targets |
 
 39 automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
 
@@ -134,7 +134,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 5 Pick & Pack | `pickpack` | Claim next order, scan check, empty-shelf fallback, pack | One order per picker; no substitutes |
 | 6 Slotting | `slotting` | Suggest a bin in the right temperature zone | No velocity or affinity rules |
 | 7 Forecasting | `forecasting` | Moving average, weekday average and exponential smoothing compared by WAPE backtest; reorder points with safety stock from forecast errors | Daily, not hourly; no weather or festivals |
-| 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock | Run by hand; no bin-capacity cap |
+| 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock, supply KPIs (`GET /v1/stores/{id}/supply-kpis`) | Run by hand; no bin-capacity cap |
 | 9 Inbound | `inbound` | Goods receipt against a transfer order, shortfall report, putaway | One call does receive and putaway |
 | 10 Network Planning | `network_planning` | Coverage report and one suggested site | Uses points you pass in, not real orders |
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |

@@ -1,6 +1,6 @@
 """Forecasting (guide tasks 3.2 and 3.3): daily sales, the three models, backtest, WAPE."""
 import importlib
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,17 +10,14 @@ from app.errors import DomainError
 from app.main import app
 from app.models import utcnow
 from app.modules.forecasting import service as forecasting
-from scripts.generate_sales import clear_history, write_history
+from scripts.generate_sales import clear_history
+
+from .conftest import plant_sales
 
 
 def plant(db, sku_id, units_by_days_ago, store_id=1):
     """Replace the store's history with {days_ago: units} sales of one SKU, each at noon UTC."""
-    today = utcnow().date()
-    clear_history(db, store_id)
-    write_history(db, store_id, [(sku_id, datetime.combine(today - timedelta(days=n), time(12)), units)
-                                 for n, units in units_by_days_ago.items()])
-    db.commit()
-    return today
+    return plant_sales(db, {sku_id: units_by_days_ago}, store_id)
 
 
 def test_daily_sales_counts_whole_days_ending_yesterday(db, sku):
