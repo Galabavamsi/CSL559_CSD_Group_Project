@@ -21,10 +21,10 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Empty shelf | The count is corrected, the line moves to another bin, or is dropped if none is left |
 | Pack and hand off | Packing commits the sale; a rider handoff closes the order |
 | Restock | Low items are reordered from the hub; a received truck is put away and sellable at once |
-| Forecast | Reorder points are recalculated from the last 7 days of sales |
+| Forecast | Reorder points are recalculated from a weekday-aware forecast; three models are compared by measured error (WAPE) |
 | Watch | A dashboard, the stock table and a live event feed for each store |
 
-39 automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
+Automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
 
 ## Quick start
 
@@ -49,6 +49,10 @@ Then open:
 
 Run the tests with `python -m pytest -q`. Reset the demo data with the button on the ops desk,
 or with `python -m app.seed`.
+
+The demo data has one week of sales, too little to judge a forecast model: its accuracy shows as not
+available. To try the models on two months of history, run `python scripts/generate_sales.py`, then call
+`GET /v1/forecasting/compare?store_id=1` in `/docs`.
 
 ### With Docker
 
@@ -130,8 +134,8 @@ docs/                architecture notes, team plan and one guide per team member
 | 4 Fulfilment Orchestrator | `fulfilment` | Job per paid order, pick tasks, state machine, store busy flag | No cancellation after payment |
 | 5 Pick & Pack | `pickpack` | Claim next order, scan check, empty-shelf fallback, pack | One order per picker; no substitutes |
 | 6 Slotting | `slotting` | Suggest a bin in the right temperature zone | No velocity or affinity rules |
-| 7 Forecasting | `forecasting` | Moving average, reorder-point formula, WAPE backtest | Daily, not hourly; no weather or festivals |
-| 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock | Run by hand; no bin-capacity cap |
+| 7 Forecasting | `forecasting` | Moving average, weekday average and exponential smoothing compared by WAPE backtest; reorder points with safety stock from forecast errors | Daily, not hourly; no weather or festivals |
+| 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock, supply KPIs (`GET /v1/stores/{id}/supply-kpis`) | Run by hand; no bin-capacity cap |
 | 9 Inbound | `inbound` | Goods receipt against a transfer order, shortfall report, putaway | One call does receive and putaway |
 | 10 Network Planning | `network_planning` | Coverage report and one suggested site | Uses points you pass in, not real orders |
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |

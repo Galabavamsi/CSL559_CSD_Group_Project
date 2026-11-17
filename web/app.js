@@ -409,7 +409,8 @@ async function runReplenishment() {
 async function runForecast() {
   const rows = await api("POST", `/v1/forecasting/run?store_id=${state.opsStore}`, undefined, manager());
   const updated = rows.filter((r) => r.daily_demand > 0).length;
-  say($("ops-message"), `Forecasts recalculated from the last 7 days of sales. Reorder points updated for ${updated} ${updated === 1 ? "item" : "items"}.`);
+  const model = rows.length ? rows[0].model.replaceAll("_", " ") : "forecast";
+  say($("ops-message"), `Forecasts recalculated with the ${model} model. Reorder points updated for ${updated} ${updated === 1 ? "item" : "items"}.`);
   await refreshOps();
 }
 
