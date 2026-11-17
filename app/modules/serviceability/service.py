@@ -4,14 +4,18 @@ Delivery zones are H3 hexagon cells. `rebuild_zones` works out once which store 
 `check` then turns the customer's location into a cell and looks up that one row, instead of
 measuring the distance to every store on every request.
 """
+import logging
 import math
 
 import h3
 from sqlalchemy import delete, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ... import config
 from ...models import ServiceabilityMiss, Store, StoreZone
+
+log = logging.getLogger(__name__)
 
 
 def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -70,8 +74,12 @@ def check(db: Session, lat: float, lng: float) -> dict:
                     "distance_km": round(zone.distance_km, 2), "eta_minutes": eta_minutes(store, zone.distance_km),
                     "h3_cell": cell}
     # shortcut: any caller can add misses by repeating lookups; rate limiting (task 4.7) is the cure.
-    db.add(ServiceabilityMiss(h3_cell=cell))
-    db.commit()
+    try:
+        db.add(ServiceabilityMiss(h3_cell=cell))
+        db.commit()
+    except SQLAlchemyError:     # a lost miss costs a little planning data; the customer still gets an answer
+        db.rollback()
+        log.exception("Could not save a serviceability miss")
     # Not serviceable: say how far the nearest store is. This is the rare path, so measuring is fine here.
     stores = db.scalars(select(Store).where(Store.status != "closed")).all()
     ranked = sorted(((distance_km(lat, lng, s.lat, s.lng), s) for s in stores), key=lambda pair: pair[0])

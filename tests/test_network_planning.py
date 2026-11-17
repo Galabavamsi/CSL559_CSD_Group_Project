@@ -3,7 +3,7 @@ import h3
 from sqlalchemy import select
 
 from app import config
-from app.models import Reservation, ServiceabilityMiss
+from app.models import Reservation, ServiceabilityMiss, Store, StoreZone
 from app.modules.network_planning import service as planning
 from app.modules.serviceability.service import distance_km
 from scripts.generate_demand import look_up
@@ -39,6 +39,12 @@ def test_order_keeps_the_cell_of_its_address_and_refuses_a_bad_one(client, db, s
     assert hold(client, "geo-4", sku("Tea"), None).status_code == 201                        # the cell is optional
 
     assert db.scalar(select(Reservation.h3_cell).where(Reservation.order_id == "geo-1")) == cell(*CENTRAL)
+
+
+def test_order_cell_is_stored_in_one_spelling(client, db, sku):
+    assert hold(client, "geo-upper", sku("Tea"), cell(*CENTRAL).upper()).status_code == 201
+
+    assert db.scalar(select(Reservation.h3_cell).where(Reservation.order_id == "geo-upper")) == cell(*CENTRAL)
 
 
 def test_heatmap_counts_paid_orders_and_misses_per_cell(client, sku):
@@ -77,6 +83,18 @@ def test_a_no_go_cell_is_never_suggested(db, monkeypatch):
 
     assert best not in [site["h3_cell"] for site in suggestions]
     assert suggestions[0]["demand_gained"] == 40                   # a neighbouring cell still covers the cluster
+
+
+def test_no_site_is_suggested_inside_an_existing_zone(db):
+    # A busy store serves only the inner 70% of its zone, so customers in the outer ring are turned away.
+    store = db.get(Store, 1)
+    store.status = "busy"
+    db.commit()
+    ring = {"name": "outer ring", "lat": store.lat + 2.6 / 111.32, "lng": store.lng, "spread_km": 0.1, "lookups": 10}
+
+    assert look_up(db, [ring], seed=1)["misses"] > 0
+    zoned = set(db.scalars(select(StoreZone.h3_cell)))
+    assert all(site["h3_cell"] not in zoned for site in planning.suggest_sites(db, k=3))
 
 
 def test_planning_endpoints_are_for_ops(client_as, db):

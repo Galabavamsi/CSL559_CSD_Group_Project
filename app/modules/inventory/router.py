@@ -29,7 +29,7 @@ class ReservationIn(BaseModel):
     def _cell_of_the_zone_size(cls, cell: str | None) -> str | None:
         if cell is not None and not (h3.is_valid_cell(cell) and h3.get_resolution(cell) == config.H3_RESOLUTION):
             raise ValueError(f"must be an H3 cell at resolution {config.H3_RESOLUTION}")
-        return cell
+        return None if cell is None else h3.int_to_str(h3.str_to_int(cell))   # one spelling, so counts add up
 
 
 class AdjustmentIn(BaseModel):

@@ -56,7 +56,7 @@ async function load() {
 
   for (const s of stores) {
     L.circle([s.lat, s.lng], { radius: s.radius_km * 1000, color: colour("--map-zone"), weight: 3, fillOpacity: 0.08 })
-      .bindTooltip(`${s.name} (${s.status})`, { permanent: true, direction: "center" })
+      .bindTooltip(el("span", {}, `${s.name} (${s.status})`), { permanent: true, direction: "center" }) // text, not HTML
       .addTo(layers);
   }
   drawCells(cells, "orders", colour("--map-orders"));
