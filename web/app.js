@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   opsStore: 1,      // store shown on the picker and ops stations
   shopStore: null,  // store serving the customer's address
+  shopCell: null,   // H3 cell of that address
   products: [],
   cart: {},         // sku_id -> quantity
   hold: null,       // the current reservation, if any
@@ -82,6 +83,7 @@ async function checkLocation() {
   const result = await api("GET", `/v1/serviceability?lat=${lat}&lng=${lng}`);
   say($("customer-message"), "");
   state.cart = {};
+  state.shopCell = result.h3_cell; // sent with the order for network planning: a hexagon, not the address
   if (!result.serviceable) {
     state.shopStore = null;
     $("shop").hidden = true;
@@ -152,7 +154,8 @@ async function checkout() {
   const lines = Object.entries(state.cart).map(([skuId, qty]) => ({ sku_id: Number(skuId), qty }));
   const orderId = "ORD-" + Date.now().toString(36).toUpperCase();
   try {
-    state.hold = await api("POST", "/v1/reservations", { order_id: orderId, store_id: state.shopStore, lines });
+    state.hold = await api("POST", "/v1/reservations",
+      { order_id: orderId, store_id: state.shopStore, h3_cell: state.shopCell, lines });
   } catch (error) {
     if (error.code !== "insufficient_stock") throw error;
     const short = error.details.lines.map((l) => `${skuName(l.sku_id)} (${l.available} left)`).join(", ");

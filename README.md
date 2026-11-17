@@ -55,6 +55,9 @@ The demo data has one week of sales, too little to judge a forecast model: its a
 available. To try the models on two months of history, run `python scripts/generate_sales.py`, then call
 `GET /v1/forecasting/compare?store_id=1` in `/docs`.
 
+To see where a new store should go, run `python scripts/generate_demand.py`, then open
+**http://localhost:8000/network.html**.
+
 ### With Docker
 
 If you have Docker, one command builds and starts the app on http://localhost:8000
@@ -138,7 +141,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 7 Forecasting | `forecasting` | Moving average, weekday average and exponential smoothing compared by WAPE backtest; reorder points with safety stock from forecast errors | Daily, not hourly; no weather or festivals |
 | 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock, supply KPIs (`GET /v1/stores/{id}/supply-kpis`) | Run by hand; no bin-capacity cap |
 | 9 Inbound | `inbound` | Goods receipt against a transfer order, shortfall report, putaway | One call does receive and putaway |
-| 10 Network Planning | `network_planning` | Coverage report and one suggested site | Uses points you pass in, not real orders |
+| 10 Network Planning | `network_planning` | Orders and turned-away lookups per H3 cell, greedy max-coverage site suggestions, no-go cells, map at `/network.html` | Demand is generated (`scripts/generate_demand.py`); no-go cells are a config list, not a zoning check |
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |
 | Kafka | `events.py` | Events written to an outbox table; a relay pushes them to sinks (a WebSocket feed per store) and marks them published; lag shown on the dashboard | No broker yet; the relay runs inside the app |
 | PostgreSQL + Redis | `db.py` | SQLite | One file, no sharding, no cache |
