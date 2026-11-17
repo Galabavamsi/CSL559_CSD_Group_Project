@@ -38,7 +38,7 @@ def test_expire_stock_writes_off_the_expired_batch(client, db, sku):
 
     rows = db.scalars(select(StockLedger).where(StockLedger.sku_id == milk, StockLedger.reason == "expiry")).all()
     assert [(r.delta, r.bin_id, r.reference) for r in rows] == [(-6, old.bin_id, "batch:M-OLD")]
-    assert atp(client, 1, milk) == 24
+    assert atp(client, 1, milk) == 22                                    # 24 left, less the seeded buffer of 2
     assert client.post("/v1/admin/expire-stock").json() == {"units_written_off": 0}   # nothing left the second time
     causes = [e.payload["cause"] for e in db.scalars(select(EventLog).where(EventLog.type == "stock.changed"))]
     assert causes == ["expiry"]
@@ -61,7 +61,7 @@ def test_units_already_in_a_tote_are_not_written_off(client, db, sku):
     assert inventory.expire_stock(db) == 0
     packed = client.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"})
     assert packed.status_code == 200, packed.text
-    assert atp(client, 1, milk) == 22
+    assert atp(client, 1, milk) == 20                                    # 22 left, less the seeded buffer of 2
     assert_stock_is_consistent()
 
 

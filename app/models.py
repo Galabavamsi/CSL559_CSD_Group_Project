@@ -91,12 +91,15 @@ class Staff(Base):
 # --------------------------------------------------------------------------- stock
 
 class StockLevel(Base):
-    """Totals per store + SKU. ATP (available to promise) = qty_on_hand - qty_reserved."""
+    """Totals per store + SKU. ATP (available to promise) = qty_on_hand - qty_reserved - safety_buffer, never below 0.
+    The safety buffer (HLD 7.1) hides a few units from customers so small counting errors do not become failed orders;
+    the units are still physically there, so replenishment does not subtract it."""
     __tablename__ = "stock_levels"
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), primary_key=True)
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"), primary_key=True)
     qty_on_hand: Mapped[int] = mapped_column(Integer, default=0)
     qty_reserved: Mapped[int] = mapped_column(Integer, default=0)
+    safety_buffer: Mapped[int] = mapped_column(Integer, default=0)
     reorder_point: Mapped[int] = mapped_column(Integer, default=10)
     target_stock: Mapped[int] = mapped_column(Integer, default=40)
     version: Mapped[int] = mapped_column(Integer, default=0)

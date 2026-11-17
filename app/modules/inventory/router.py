@@ -32,6 +32,10 @@ class ReservationIn(BaseModel):
         return None if cell is None else h3.int_to_str(h3.str_to_int(cell))   # one spelling, so counts add up
 
 
+class StockSettingsIn(BaseModel):
+    safety_buffer: int = Field(ge=0, le=1000, description="Units hidden from customers to absorb small count errors")
+
+
 class AdjustmentIn(BaseModel):
     store_id: int
     sku_id: int
@@ -39,6 +43,15 @@ class AdjustmentIn(BaseModel):
     reason: str = Field(pattern="^(damage|expiry|theft|count)$")
     bin_id: int | None = None
     actor: str = "manager"
+
+
+@router.put("/v1/stores/{store_id}/stock-settings/{sku_id}",
+            summary="Set the safety buffer for one SKU in one store")
+def update_stock_settings(store_id: int, sku_id: int, body: StockSettingsIn, db: Session = Depends(get_db),
+                          staff: dict = Depends(require_role("manager"))):
+    """ATP becomes on hand - reserved - safety buffer. Existing holds are not affected."""
+    check_store(staff, store_id)
+    return service.set_safety_buffer(db, store_id, sku_id, body.safety_buffer)
 
 
 @router.get("/v1/stores/{store_id}/availability")
