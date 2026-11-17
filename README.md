@@ -47,8 +47,11 @@ Then open:
 - **http://localhost:8000** for the demo screens (customer, picker and store ops side by side)
 - **http://localhost:8000/docs** for the interactive API reference
 
-Run the tests with `python -m pytest -q`. Reset the demo data with the button on the ops desk,
-or with `python -m app.seed`.
+Run the tests with `python -m pytest -q`; `tests/test_end_to_end.py` walks the whole demo script through
+the API with real logins. Reset the demo data with the button on the ops desk, or with `python -m app.seed`.
+
+To load-test a running app (about 90% reads, 10% checkout holds, a fifth of them paid) and see p50 and p99
+per endpoint against the HLD's 100 ms read target, run `python scripts/load_test.py --seconds 60 --reset`.
 
 The demo data has one week of sales, too little to judge a forecast model: its accuracy shows as not
 available. To try the models on two months of history, run `python scripts/generate_sales.py`, then call
