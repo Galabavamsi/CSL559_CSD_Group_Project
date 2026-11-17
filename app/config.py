@@ -13,6 +13,9 @@ DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo")
 
 # Inventory: how long a checkout hold lasts before the sweeper releases it (HLD 9.1).
 RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))
+# The sweeper runs this often (app/background.py). BACKGROUND_JOBS=off stops every timed job (the tests do).
+SWEEP_INTERVAL_SECONDS = float(os.getenv("SWEEP_INTERVAL_SECONDS", "30"))
+BACKGROUND_JOBS = os.getenv("BACKGROUND_JOBS", "on") == "on"
 
 # Replenishment / forecasting (HLD 6.2). The prototype works in days, the HLD in hours.
 LEAD_TIME_DAYS = float(os.getenv("LEAD_TIME_DAYS", "1"))        # hub -> store delivery time
