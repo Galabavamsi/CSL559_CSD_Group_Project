@@ -230,6 +230,17 @@ class Forecast(Base):
 
 # --------------------------------------------------------------------------- events
 
+class IdempotencyRecord(Base):
+    """The first answer to a write request that carried an Idempotency-Key header (HLD 8). A retry with the same
+    key gets this answer back instead of doing the write again. Saved in the same transaction as the write."""
+    __tablename__ = "idempotency_records"
+    scope: Mapped[str] = mapped_column(String(40), primary_key=True)        # which endpoint, e.g. "stock-adjustment"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64))                   # catches one key reused for another request
+    response: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class EventLog(Base):
     """Every event published on the in-process bus. Stands in for Kafka in the prototype."""
     __tablename__ = "event_log"

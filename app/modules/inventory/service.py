@@ -344,11 +344,12 @@ def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batc
 
 
 def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin_id: int | None = None,
-           actor: str = "manager", reference: str | None = None) -> dict:
+           actor: str = "manager", reference: str | None = None, commit: bool = True) -> dict:
     """Correct the stock count (FR-11): damage, expiry, theft, or a cycle-count difference.
 
     Negative delta removes units (from `bin_id` if given, otherwise earliest-expiry first).
     Positive delta adds found units and needs a `bin_id`.
+    `commit=False` leaves the transaction open, so the caller can save an idempotency record with it.
     """
     if delta == 0:
         raise DomainError(422, "bad_quantity", "delta cannot be 0")
@@ -390,7 +391,8 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
     db.flush()
     _change_on_hand(db, store_id, sku_id, delta)
     events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": reason})
-    db.commit()
+    if commit:
+        db.commit()
     level = get_level(db, store_id, sku_id)
     return {"sku_id": sku_id, "on_hand": level.qty_on_hand, "reserved": level.qty_reserved,
             "atp": atp_of(level)}
