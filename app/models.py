@@ -61,6 +61,14 @@ class SKU(Base):
     price: Mapped[float] = mapped_column(Float)
 
 
+class StoreZone(Base):
+    """Delivery zones: which store serves each H3 cell. Rebuilt by serviceability.rebuild_zones."""
+    __tablename__ = "store_zones"
+    h3_cell: Mapped[str] = mapped_column(String(16), primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    distance_km: Mapped[float] = mapped_column(Float)                 # store to the centre of the cell
+
+
 class Staff(Base):
     """Someone who can log in (HLD 10). `store_id` is empty for city-wide roles (ops, admin)."""
     __tablename__ = "staff"
