@@ -39,6 +39,13 @@ RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
 # An open WebSocket gets a ping this often, so a viewer that has gone away is noticed and dropped.
 LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
 
+# Serviceability: delivery zones are H3 hexagon cells mapped to stores (HLD service 1).
+# Resolution 9 cells have ~0.2 km edges (~0.1 km2), so a zone border is accurate to about 200 m and a
+# 3 km zone is ~270 rows. Resolution 8 (~0.53 km edges) would need 7x fewer rows but blur borders by ~500 m.
+H3_RESOLUTION = int(os.getenv("H3_RESOLUTION", "9"))
+# A busy store serves only cells within this share of its radius (HLD 9.2: "the delivery radius shrinks").
+BUSY_RADIUS_FACTOR = float(os.getenv("BUSY_RADIUS_FACTOR", "0.7"))
+
 # Serviceability: simple ETA model = pack time + travel time (+ penalty when the store is busy).
 PACK_MINUTES = 2
 MINUTES_PER_KM = 3
