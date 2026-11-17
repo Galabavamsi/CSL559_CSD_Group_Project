@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ops dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Ops dashboard</h1>
+      <p>Problems first, then every KPI from HLD 12 beside its target. Updates live as events arrive.</p>
+    </div>
+    <div class="topbar-controls">
+      <label for="store-select">Store</label>
+      <select id="store-select"></select>
+      <span id="live-status" class="live-status" role="status">Connecting…</span>
+      <a class="quiet-link" href="/">Stations</a>
+    </div>
+  </header>
+
+  <main class="ops-page">
+    <p id="ops-page-message" class="message" role="alert"></p>
+
+    <section aria-labelledby="action-title">
+      <h2 id="action-title" class="ops-heading">Needs action now</h2>
+      <div id="actions" class="action-tiles"></div>
+    </section>
+
+    <section aria-labelledby="kpi-title">
+      <h2 id="kpi-title" class="ops-heading">KPIs against HLD 12 targets</h2>
+      <div id="kpis" class="kpi-grid"></div>
+    </section>
+
+    <div class="ops-columns">
+      <section aria-labelledby="chart-title" class="station">
+        <h2 id="chart-title" class="ops-heading">Paid orders per hour</h2>
+        <p id="chart-total" class="note"></p>
+        <div id="chart" class="bars" role="img"></div>
+        <div id="chart-hours" class="bar-labels" aria-hidden="true"></div>
+        <table class="visually-hidden"><thead><tr><th>Hour</th><th>Paid orders</th></tr></thead>
+          <tbody id="chart-table"></tbody></table>
+      </section>
+
+      <section aria-labelledby="events-title" class="station">
+        <h2 id="events-title" class="ops-heading">Live events</h2>
+        <ul id="events" class="event-list" aria-live="polite"></ul>
+      </section>
+    </div>
+
+    <section aria-labelledby="city-title" class="station">
+      <h2 id="city-title" class="ops-heading">All stores</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Store</th><th>Status</th><th class="num">Orders waiting</th><th class="num">Bags waiting</th>
+            <th class="num">Low stock</th><th class="num">Out of stock</th></tr></thead>
+          <tbody id="city"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="ops.js"></script>
+</body>
+</html>
