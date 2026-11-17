@@ -24,7 +24,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Forecast | Reorder points are recalculated from a weekday-aware forecast; three models are compared by measured error (WAPE) |
 | Watch | A dashboard, the stock table and a live event feed for each store, and the five supply KPIs against their HLD targets |
 
-39 automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
+Automated tests cover these flows and the permission rules, including twenty buyers racing for the last unit.
 
 ## Quick start
 

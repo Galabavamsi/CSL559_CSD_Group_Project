@@ -107,7 +107,9 @@ def test_command_line_writes_every_store_and_reports_errors(capsys):
     assert out.startswith("Store 1: 60 days, 16 SKUs") and "Store 2: 60 days, 16 SKUs" in out
     assert main(["--store", "99"]) == 1
     assert "Store 99 does not exist" in capsys.readouterr().err
+    assert_stock_is_consistent()
 
 
 def test_each_store_gets_its_own_history(db):
     assert generate(1, db=db)["units"] != generate(2, db=db)["units"]
+    assert_stock_is_consistent()

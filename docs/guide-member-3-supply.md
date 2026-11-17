@@ -95,7 +95,8 @@ because slow sellers (forecast 1, sold 2 = "100% wrong") do not swamp the result
 
 **The ledger must always add up.** If you insert historical `sale` rows for testing, you must also
 insert a matching earlier `receipt`, or `assert_stock_is_consistent()` fails. `app/seed.py` shows
-how: the opening receipt is today's stock *plus* everything "sold" in the history.
+how: the history gets a `receipt` row of its own for everything it "sold", tagged `reference="history"`
+like the sales, so the history rows always add up to zero.
 
 ---
 
