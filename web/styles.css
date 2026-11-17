@@ -173,3 +173,19 @@ td.held { color: var(--hold); font-weight: 600; }
 .event-type { font-weight: 600; }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- network planning map (network.html) ---------- */
+.network {
+  --map-zone: #2f6db5; --map-orders: #1f8a5b; --map-misses: #c7392b; --map-site: #ffc72c; --map-ink: #1a1a1a;
+  display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 1rem; padding: 1rem 1.5rem; }
+.network-map { min-height: 70vh; border: 1px solid var(--line); border-radius: var(--radius); }
+.legend li { justify-content: flex-start; }
+.swatch { display: inline-block; width: 1rem; height: 1rem; border-radius: 3px; flex: none; }
+.swatch-zone { border: 3px solid var(--map-zone); }
+.swatch-orders { background: var(--map-orders); }
+.swatch-misses { background: var(--map-misses); }
+.swatch-site { background: var(--map-site); border: 2px dashed var(--map-ink); }
+@media (max-width: 800px) {
+  .network { grid-template-columns: 1fr; padding: 1rem; }
+  .network-map { min-height: 55vh; }
+}

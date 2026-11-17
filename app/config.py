@@ -40,6 +40,11 @@ H3_RESOLUTION = int(os.getenv("H3_RESOLUTION", "9"))
 # A busy store serves only cells within this share of its radius (HLD 9.2: "the delivery radius shrinks").
 BUSY_RADIUS_FACTOR = float(os.getenv("BUSY_RADIUS_FACTOR", "0.7"))
 
+# Network planning (FR-12): a suggested new store would serve this radius, like the seeded stores.
+NEW_SITE_RADIUS_KM = float(os.getenv("NEW_SITE_RADIUS_KM", "3.0"))
+# H3 cells where no store may open, comma-separated. Stands in for the zoning check in HLD 13.2.
+NO_GO_CELLS = [cell.strip() for cell in os.getenv("NO_GO_CELLS", "").split(",") if cell.strip()]
+
 # Serviceability: simple ETA model = pack time + travel time (+ penalty when the store is busy).
 PACK_MINUTES = 2
 MINUTES_PER_KM = 3
