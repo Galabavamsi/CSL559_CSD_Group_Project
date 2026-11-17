@@ -71,9 +71,12 @@ def place_paid_order(client, order_id: str, store_id: int, lines: list[tuple[int
     return paid.json()
 
 
-def assert_stock_is_consistent():
+def assert_stock_is_consistent(holds_may_exceed_stock: bool = False):
     """The three records of stock must always agree:
-    StockLevel.on_hand == units in bins == sum of the ledger, and holds never exceed stock."""
+    StockLevel.on_hand == units in bins == sum of the ledger, and holds never exceed stock.
+
+    `holds_may_exceed_stock=True` is only for the moment after an expiry write-off took units a paid order was
+    holding (see inventory.expire_stock); the empty-shelf path settles it when the picker reaches the line."""
     with SessionLocal() as session:
         for level in session.scalars(select(StockLevel)).all():
             in_bins = session.scalar(
@@ -85,7 +88,9 @@ def assert_stock_is_consistent():
             where = f"store {level.store_id} sku {level.sku_id}"
             assert level.qty_on_hand == in_bins, f"{where}: on_hand {level.qty_on_hand} != bins {in_bins}"
             assert level.qty_on_hand == in_ledger, f"{where}: on_hand {level.qty_on_hand} != ledger {in_ledger}"
-            assert 0 <= level.qty_reserved <= level.qty_on_hand, f"{where}: reserved {level.qty_reserved}"
+            assert level.qty_reserved >= 0, f"{where}: reserved {level.qty_reserved}"
+            if not holds_may_exceed_stock:
+                assert level.qty_reserved <= level.qty_on_hand, f"{where}: reserved {level.qty_reserved}"
 
 
 def plant_sales(db, sales: dict[int, dict[int, int]], store_id: int = 1) -> date:

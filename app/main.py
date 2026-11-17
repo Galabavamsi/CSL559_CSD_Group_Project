@@ -41,13 +41,12 @@ async def lifespan(_app: FastAPI):
     with SessionLocal() as db:
         seed.seed_if_empty(db)
     relay = asyncio.create_task(events.run_relay())
-    sweeper = asyncio.create_task(background.sweep_loop()) if config.BACKGROUND_JOBS else None
+    jobs = background.start_all() if config.BACKGROUND_JOBS else []
     yield
-    for task in (relay, sweeper):
-        if task is not None:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+    for task in (relay, *jobs):
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(
