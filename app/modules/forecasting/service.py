@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ... import config, events
+from ...errors import DomainError
 from ...models import Forecast, StockLedger, StockLevel, utcnow
 from ..inventory import service as inventory
 
@@ -122,29 +123,63 @@ def _wape(abs_error: float, actual: int) -> float | None:
     return round(abs_error / actual, 4) if actual else None
 
 
-def backtest(db: Session, store_id: int, test_days: int = 14, window: int = 7) -> dict:
-    """How wrong would the moving average have been over the `test_days` days ending yesterday? Read-only.
+def _model(name: str):
+    """The model function called `name`, or a 422 that lists the models there are."""
+    if name not in MODELS:
+        raise DomainError(422, "unknown_model", f"Unknown forecast model {name!r}; use one of: {', '.join(MODELS)}",
+                          {"models": list(MODELS)})
+    return MODELS[name]
 
-    For each of those days and each SKU the store carries, the forecast is the moving average of the `window`
-    days before it, and the actual is what sold. WAPE = sum of |actual - forecast| / sum of actual (HLD 12
-    target: 30% or lower); weighting by volume stops slow sellers swamping the score. WAPE is None when
-    nothing sold.
-    """
-    inventory.get_store(db, store_id)
-    sales = daily_sales(db, store_id, test_days + window)
+
+def _recent_days(n: int) -> list[date]:
+    """The `n` whole days ending yesterday, oldest first."""
     today = utcnow().date()
-    test_dates = [today - timedelta(days=n) for n in range(test_days, 0, -1)]
+    return [today - timedelta(days=k) for k in range(n, 0, -1)]
+
+
+def _errors(history: dict[date, int], days: list[date], forecast) -> list[float]:
+    """Actual minus forecast on each of `days`: positive when the model forecast too little."""
+    return [history.get(day, 0) - forecast(history, day) for day in days]
+
+
+def backtest(db: Session, store_id: int, test_days: int | None = None, model: str | None = None) -> dict:
+    """How wrong would `model` have been over the `test_days` days ending yesterday? Read-only.
+
+    Defaults: config.FORECAST_TEST_DAYS days and config.FORECAST_MODEL. For each of those days and each SKU the
+    store carries, the model forecasts the day from the days before it, and the actual is what sold.
+    WAPE = sum of |actual - forecast| / sum of actual (HLD 12 target: 30% or lower); weighting by volume stops
+    slow sellers swamping the score. WAPE is None when nothing sold. The demo data has one week of sales, so run
+    `python scripts/generate_sales.py` first for numbers worth reading.
+    """
+    name = model or config.FORECAST_MODEL
+    forecast = _model(name)
+    test_days = config.FORECAST_TEST_DAYS if test_days is None else test_days
+    if test_days < 1:
+        raise DomainError(422, "bad_test_days", "test_days must be at least 1")
+    inventory.get_store(db, store_id)
+    sales = daily_sales(db, store_id, test_days + HISTORY_DAYS)
+    test_dates = _recent_days(test_days)
     per_sku, total_error, total_actual = [], 0.0, 0
     for level in db.scalars(select(StockLevel).where(StockLevel.store_id == store_id)).all():
         history = sales.get(level.sku_id, {})
         actual = sum(history.get(d, 0) for d in test_dates)
-        error = sum(abs(history.get(d, 0) - moving_average(history, d, window)) for d in test_dates)
+        error = sum(abs(e) for e in _errors(history, test_dates, forecast))
         total_error += error
         total_actual += actual
         per_sku.append({"sku_id": level.sku_id, "sku": level.sku.name, "actual_units": actual,
                         "abs_error": round(error, 2), "wape": _wape(error, actual)})
-    return {"store_id": store_id, "model": "moving_average", "window": window, "test_days": test_days,
+    return {"store_id": store_id, "model": name, "test_days": test_days,
             "wape": _wape(total_error, total_actual), "per_sku": sorted(per_sku, key=lambda row: row["sku"])}
+
+
+def compare_models(db: Session, store_id: int, test_days: int | None = None) -> dict:
+    """Backtest every model over the same days and return the WAPE of each, the best one (lowest WAPE; None when
+    nothing sold) and the one `run` uses. Read-only."""
+    test_days = config.FORECAST_TEST_DAYS if test_days is None else test_days
+    wape = {name: backtest(db, store_id, test_days, name)["wape"] for name in MODELS}
+    scored = [name for name in MODELS if wape[name] is not None]
+    return {"store_id": store_id, "test_days": test_days, "wape": wape,
+            "best": min(scored, key=wape.get) if scored else None, "in_use": config.FORECAST_MODEL}
 
 
 def list_forecasts(db: Session, store_id: int) -> list[dict]:

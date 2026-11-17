@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config
+from app.errors import DomainError
 from app.main import app
 from app.models import utcnow
 from app.modules.forecasting import service as forecasting
@@ -79,21 +80,41 @@ def test_the_app_refuses_to_start_with_an_unknown_model(monkeypatch):
 
 def test_backtest_is_exact_for_constant_sales(db, sku):
     milk = sku("Toned milk")
-    plant(db, milk, {n: 10 for n in range(1, 22)})
-    result = forecasting.backtest(db, 1, test_days=14, window=7)
-    by_sku = {row["sku_id"]: row for row in result["per_sku"]}
-    assert result["wape"] == 0.0 and by_sku[milk]["wape"] == 0.0
-    assert by_sku[sku("Basmati rice")]["wape"] is None           # nothing sold: no ratio, no crash
+    plant(db, milk, {n: 10 for n in range(1, 43)})
+    for model in forecasting.MODELS:
+        result = forecasting.backtest(db, 1, test_days=14, model=model)
+        by_sku = {row["sku_id"]: row for row in result["per_sku"]}
+        assert (result["model"], result["wape"], by_sku[milk]["wape"]) == (model, 0.0, 0.0)
+        assert by_sku[sku("Basmati rice")]["wape"] is None           # nothing sold: no ratio, no crash
 
 
 def test_backtest_matches_hand_arithmetic(db, sku):
     milk = sku("Toned milk")
     plant(db, milk, {4: 10, 3: 20, 2: 30, 1: 40})
-    # day -2: forecast (10+20)/2 = 15, sold 30 -> 15 off; day -1: forecast 25, sold 40 -> 15 off
-    result = forecasting.backtest(db, 1, test_days=2, window=2)
+    # Moving average of the known days before each day (the first sale was 4 days ago):
+    # day -2: (10 + 20) / 2 = 15, sold 30 -> 15 off; day -1: (10 + 20 + 30) / 3 = 20, sold 40 -> 20 off
+    result = forecasting.backtest(db, 1, test_days=2, model="moving_average")
     row = next(r for r in result["per_sku"] if r["sku_id"] == milk)
-    assert (row["actual_units"], row["abs_error"]) == (70, 30.0)
-    assert result["wape"] == row["wape"] == 0.4286                # 30 / 70
+    assert (row["actual_units"], row["abs_error"]) == (70, 35.0)
+    assert result["wape"] == row["wape"] == 0.5                   # 35 / 70
+
+
+def test_weekday_average_beats_moving_average_on_a_weekend_pattern(db, sku):
+    today = utcnow().date()
+    plant(db, sku("Toned milk"), {n: 30 if (today - timedelta(days=n)).weekday() >= 5 else 10 for n in range(1, 43)})
+    result = forecasting.compare_models(db, 1)
+    assert result["wape"]["weekday_average"] == 0.0
+    assert result["wape"]["moving_average"] > 0.3                # forecasts ~15.7 every day
+    assert (result["best"], result["in_use"], result["test_days"]) == ("weekday_average", config.FORECAST_MODEL, 14)
+
+
+def test_backtest_rejects_an_unknown_model_or_no_days(db):
+    with pytest.raises(DomainError) as unknown:
+        forecasting.backtest(db, 1, model="crystal_ball")
+    with pytest.raises(DomainError) as no_days:
+        forecasting.backtest(db, 1, test_days=0)
+    assert (unknown.value.status, unknown.value.code) == (422, "unknown_model")
+    assert (no_days.value.status, no_days.value.code) == (422, "bad_test_days")
 
 
 def test_backtest_with_no_sales_has_no_wape(db):
@@ -116,7 +137,18 @@ def test_backtest_endpoint_is_for_staff_of_that_store(client_as):
 
 def test_backtest_endpoint_checks_its_parameters(client):
     assert client.get(URL, params={"store_id": 1, "test_days": 0}).status_code == 422
-    assert client.get(URL, params={"store_id": 1, "window": 0}).status_code == 422
+    assert client.get(URL, params={"store_id": 1, "model": "crystal_ball"}).status_code == 422
     assert client.get(URL, params={"store_id": 99}).status_code == 404
     body = client.get(URL, params={"store_id": 1}).json()
-    assert body["model"] == "moving_average" and (body["test_days"], body["window"]) == (14, 7)
+    assert (body["model"], body["test_days"]) == (config.FORECAST_MODEL, 14)
+    assert client.get(URL, params={"store_id": 1, "model": "exp_smoothing"}).json()["model"] == "exp_smoothing"
+
+
+def test_compare_endpoint_is_for_staff_of_that_store(client_as):
+    compare = "/v1/forecasting/compare"
+    with TestClient(app) as anonymous:
+        assert anonymous.get(compare, params={"store_id": 1}).status_code == 401
+    picker = client_as("picker", 1)
+    body = picker.get(compare, params={"store_id": 1}).json()
+    assert set(body["wape"]) == set(forecasting.MODELS) and body["test_days"] == 14
+    assert picker.get(compare, params={"store_id": 2}).status_code == 403
