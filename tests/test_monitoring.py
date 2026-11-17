@@ -4,7 +4,7 @@ import logging
 
 from prometheus_client import REGISTRY
 
-from app import monitoring
+from app import config, monitoring
 
 from .conftest import place_paid_order
 
@@ -97,3 +97,19 @@ def test_time_since_each_stores_last_event_is_exposed_for_the_store_offline_aler
     client.get("/metrics")
 
     assert 0 <= REGISTRY.get_sample_value("store_seconds_since_last_event", {"store_id": "1"}) < 60
+
+
+def test_made_up_http_methods_share_one_label(client):
+    client.request("FOO1", "/health")
+    client.request("FOO2", "/health")
+
+    text = client.get("/metrics").text
+
+    assert 'method="FOO1"' not in text and 'method="other"' in text
+
+
+def test_metrics_need_the_scrape_token_when_one_is_set(client, monkeypatch):
+    monkeypatch.setattr(config, "METRICS_TOKEN", "scrape-secret")
+
+    assert client.get("/metrics").status_code == 401           # the admin's login token is not the scrape token
+    assert client.get("/metrics", headers={"Authorization": "Bearer scrape-secret"}).status_code == 200

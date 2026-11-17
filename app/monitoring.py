@@ -5,6 +5,7 @@ back in the response and written on every log line made while the request is han
 can be followed through the logs.
 """
 import contextvars
+import hmac
 import json
 import logging
 import re
@@ -17,14 +18,16 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import metrics
+from . import config, metrics
 from .db import get_db
+from .errors import DomainError
 from .models import EventLog, Reservation, utcnow
 from .modules.dashboard.service import outbox_lag_seconds
 
 log = logging.getLogger("app.requests")
 request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
+KNOWN_METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}   # anything else is labelled "other"
 
 router = APIRouter(tags=["admin"])
 
@@ -49,6 +52,7 @@ def setup_logging() -> None:
         handler.setFormatter(JsonFormatter())
         app_log.addHandler(handler)
     app_log.setLevel(logging.INFO)
+    app_log.propagate = False        # written once, as JSON, even if the root logger has a handler too
 
 
 async def observe(request: Request, call_next):
@@ -67,19 +71,24 @@ async def observe(request: Request, call_next):
         seconds = time.perf_counter() - started
         # The template (/v1/stores/{store_id}/...), not the raw path, or every store gets its own series.
         route = getattr(request.scope.get("route"), "path", "other")
-        metrics.REQUEST_SECONDS.labels(request.method, route, str(status)).observe(seconds)
+        method = request.method if request.method in KNOWN_METHODS else "other"   # callers can invent methods
+        metrics.REQUEST_SECONDS.labels(method, route, str(status)).observe(seconds)
         log.info("request", extra={"fields": {"method": request.method, "route": route, "status": status,
                                               "ms": round(seconds * 1000, 1)}})
         request_id.reset(token)
 
 
 @router.get("/metrics", include_in_schema=False)
-def metrics_endpoint(db: Session = Depends(get_db)) -> Response:
+def metrics_endpoint(request: Request, db: Session = Depends(get_db)) -> Response:
     """Prometheus scrape target. The gauges are read from the database at scrape time."""
+    expected = f"Bearer {config.METRICS_TOKEN}".encode()
+    if config.METRICS_TOKEN and not hmac.compare_digest(request.headers.get("authorization", "").encode(), expected):
+        raise DomainError(401, "bad_scrape_token", "Send the scrape token as 'Authorization: Bearer <METRICS_TOKEN>'")
     metrics.HOLDS_IN_PROGRESS.set(
         db.scalar(select(func.count()).select_from(Reservation).where(Reservation.status == "held")))
     metrics.OUTBOX_LAG.set(outbox_lag_seconds(db))
     now = utcnow()
+    metrics.STORE_SILENCE.clear()    # so a store that has gone (after a reset) does not keep its old value
     for store_id, last in db.execute(select(EventLog.store_id, func.max(EventLog.ts))
                                      .where(EventLog.store_id.is_not(None)).group_by(EventLog.store_id)):
         metrics.STORE_SILENCE.labels(str(store_id)).set((now - last).total_seconds())

@@ -39,6 +39,10 @@ RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
 # An open WebSocket gets a ping this often, so a viewer that has gone away is noticed and dropped.
 LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
 
+# Monitoring (HLD 12): when set, GET /metrics answers only 'Authorization: Bearer <METRICS_TOKEN>'. Leave it empty
+# for local development; set it anywhere /metrics is reachable from outside.
+METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+
 # Serviceability: simple ETA model = pack time + travel time (+ penalty when the store is busy).
 PACK_MINUTES = 2
 MINUTES_PER_KM = 3

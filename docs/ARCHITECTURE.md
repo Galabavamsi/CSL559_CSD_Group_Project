@@ -190,7 +190,10 @@ serves them):
 | `store_seconds_since_last_event` | gauge | store id | read at scrape time |
 
 The latency histogram is labelled with the route template (`/v1/stores/{store_id}/availability`), not the
-raw path, so the number of series does not grow with the number of stores.
+raw path, so the number of series does not grow with the number of stores; an HTTP method outside the usual
+seven is labelled `other`. The counters go up when the code runs, before the transaction commits, so a
+rolled-back request still counts: fine for rates and alerts, not for exact totals. Set `METRICS_TOKEN` and
+`/metrics` answers only `Authorization: Bearer <METRICS_TOKEN>`; with it unset (local development) it is open.
 
 Every request gets an id: the caller's `X-Request-ID` if it is at most 64 letters, digits, `.`, `_` or `-`,
 otherwise a new one. It is returned in the `X-Request-ID` response header and written on every log line
