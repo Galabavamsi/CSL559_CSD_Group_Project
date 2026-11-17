@@ -11,7 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ... import config
-from ...models import Store, StoreZone
+from ...models import ServiceabilityMiss, Store, StoreZone
 
 
 def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -57,19 +57,26 @@ def check(db: Session, lat: float, lng: float) -> dict:
 
     A closed store serves nobody, and a busy store serves only the inner part of its zone.
     `distance_km` in the answer is measured to the centre of the cell, not to the exact point.
+    The answer carries the cell, which checkout sends back with the order for network planning.
+    A point no store serves is saved as a miss (cell and time only) and commits.
     """
-    zone = db.get(StoreZone, h3.latlng_to_cell(lat, lng, config.H3_RESOLUTION))
+    cell = h3.latlng_to_cell(lat, lng, config.H3_RESOLUTION)
+    zone = db.get(StoreZone, cell)
     store = db.get(Store, zone.store_id) if zone else None
     if store is not None and store.status != "closed":
         reach_km = store.radius_km * (config.BUSY_RADIUS_FACTOR if store.status == "busy" else 1)
         if zone.distance_km <= reach_km:
             return {"serviceable": True, "store_id": store.id, "store": store.name, "status": store.status,
-                    "distance_km": round(zone.distance_km, 2), "eta_minutes": eta_minutes(store, zone.distance_km)}
+                    "distance_km": round(zone.distance_km, 2), "eta_minutes": eta_minutes(store, zone.distance_km),
+                    "h3_cell": cell}
+    # shortcut: any caller can add misses by repeating lookups; rate limiting (task 4.7) is the cure.
+    db.add(ServiceabilityMiss(h3_cell=cell))
+    db.commit()
     # Not serviceable: say how far the nearest store is. This is the rare path, so measuring is fine here.
     stores = db.scalars(select(Store).where(Store.status != "closed")).all()
     ranked = sorted(((distance_km(lat, lng, s.lat, s.lng), s) for s in stores), key=lambda pair: pair[0])
     nearest = ranked[0] if ranked else None
-    return {"serviceable": False, "store_id": None,
+    return {"serviceable": False, "store_id": None, "h3_cell": cell,
             "nearest_store": nearest[1].name if nearest else None,
             "nearest_distance_km": round(nearest[0], 2) if nearest else None}
 

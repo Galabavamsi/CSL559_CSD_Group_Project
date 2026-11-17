@@ -69,6 +69,15 @@ class StoreZone(Base):
     distance_km: Mapped[float] = mapped_column(Float)                 # store to the centre of the cell
 
 
+class ServiceabilityMiss(Base):
+    """A lookup no store could serve: the best evidence for a new store (task 4.4). Only the H3 cell and
+    the time are kept, never the exact location."""
+    __tablename__ = "serviceability_misses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    h3_cell: Mapped[str] = mapped_column(String(16), index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class Staff(Base):
     """Someone who can log in (HLD 10). `store_id` is empty for city-wide roles (ops, admin)."""
     __tablename__ = "staff"
@@ -131,6 +140,8 @@ class Reservation(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_id: Mapped[str] = mapped_column(String(60), unique=True)    # also the idempotency key
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    # H3 cell of the delivery address, for network planning (HLD 10: a cell, never the address itself).
+    h3_cell: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(12), default="held", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime)

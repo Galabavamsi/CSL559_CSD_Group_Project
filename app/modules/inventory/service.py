@@ -83,8 +83,10 @@ def availability(db: Session, store_id: int, sku_ids: list[int] | None = None) -
 # --------------------------------------------------------------------------- reservations (FR-3)
 
 
-def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, int]]) -> Reservation:
-    """Hold stock for a whole cart, or for none of it.
+def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, int]],
+            h3_cell: str | None = None) -> Reservation:
+    """Hold stock for a whole cart, or for none of it. `h3_cell` (optional) is the H3 cell of the delivery
+    address, kept for network planning.
 
     The no-overselling rule from HLD 9.1 lives here: each line is one conditional UPDATE that
     only succeeds if enough unreserved stock exists at that instant. If any line fails, the whole
@@ -137,6 +139,7 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
         id=str(uuid.uuid4()),
         order_id=order_id,
         store_id=store_id,
+        h3_cell=h3_cell,
         status="held",
         expires_at=utcnow() + timedelta(minutes=config.RESERVATION_TTL_MINUTES),
         lines=[ReservationLine(sku_id=s, qty=q) for s, q in wanted.items()],

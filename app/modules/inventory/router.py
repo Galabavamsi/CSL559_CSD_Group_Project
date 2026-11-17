@@ -1,8 +1,10 @@
 """HTTP endpoints for the Inventory Service (HLD section 8.1)."""
+import h3
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
+from ... import config
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
 from . import service
@@ -19,6 +21,15 @@ class ReservationIn(BaseModel):
     order_id: str = Field(min_length=1, max_length=60)
     store_id: int
     lines: list[LineIn] = Field(min_length=1)
+    h3_cell: str | None = Field(default=None, max_length=16,
+                                description="H3 cell of the delivery address, from GET /v1/serviceability")
+
+    @field_validator("h3_cell")
+    @classmethod
+    def _cell_of_the_zone_size(cls, cell: str | None) -> str | None:
+        if cell is not None and not (h3.is_valid_cell(cell) and h3.get_resolution(cell) == config.H3_RESOLUTION):
+            raise ValueError(f"must be an H3 cell at resolution {config.H3_RESOLUTION}")
+        return cell
 
 
 class AdjustmentIn(BaseModel):
@@ -39,7 +50,8 @@ def get_availability(store_id: int, skus: str | None = Query(None, description="
 
 @router.post("/v1/reservations", status_code=201)
 def create_reservation(body: ReservationIn, db: Session = Depends(get_db)):
-    res = service.reserve(db, body.order_id, body.store_id, [(line.sku_id, line.qty) for line in body.lines])
+    res = service.reserve(db, body.order_id, body.store_id, [(line.sku_id, line.qty) for line in body.lines],
+                          body.h3_cell)
     return service.reservation_view(res)
 
 
