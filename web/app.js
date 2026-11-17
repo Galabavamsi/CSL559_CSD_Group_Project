@@ -321,6 +321,7 @@ function renderTiles(d) {
     ["Holds in progress", d.active_holds, false],
     ["Items below reorder point", d.skus_below_reorder_point, d.skus_below_reorder_point > 0],
     ["Open transfer orders", d.open_transfer_orders, false],
+    ["Event relay lag", `${d.outbox_lag_seconds} s`, d.outbox_lag_seconds > 30],
   ];
   $("tiles").replaceChildren(
     ...tiles.map(([label, value, bad]) =>
@@ -437,6 +438,41 @@ async function resetDemo() {
 
 // ---------------------------------------------------------------- start-up
 
+// ---------------------------------------------------------------- live feed
+
+// The server pushes each of the ops store's events over a WebSocket (task 4.5), so the ops desk
+// refreshes as soon as something happens. If the socket is down, the 3-second poll takes over.
+const live = { socket: null, refreshTimer: null, generation: 0 };
+
+async function connectLive() {
+  const generation = ++live.generation; // a newer call (store switch, retry) makes this one give up
+  const old = live.socket;
+  live.socket = null; // set before close, so the old socket's onclose does not schedule a reconnect
+  old?.close();
+  const store = state.opsStore;
+  const token = await tokenFor(manager());
+  if (generation !== live.generation) return;
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  const socket = new WebSocket(`${scheme}://${location.host}/v1/ws/events?store_id=${store}`);
+  live.socket = socket;
+  socket.onopen = () => socket.send(token); // first message is the login: browsers cannot set headers here
+  socket.onmessage = (message) => {
+    const { type } = JSON.parse(message.data);
+    if (type === "ping" || type === "connected") return;
+    // One action can publish several events; refresh once for the burst.
+    clearTimeout(live.refreshTimer);
+    live.refreshTimer = setTimeout(() => refreshOps().catch(() => {}), 100);
+  };
+  socket.onclose = () => {
+    if (live.socket !== socket) return; // replaced on purpose (store changed)
+    live.socket = null;
+    delete tokens[manager()]; // the token may have expired: log in afresh next time
+    setTimeout(() => connectLive().catch(() => {}), 3000);
+  };
+}
+
+const liveIsOpen = () => live.socket?.readyState === WebSocket.OPEN;
+
 async function start() {
   const stores = await api("GET", "/v1/stores");
   $("store-select").replaceChildren(...stores.map((s) => el("option", { value: s.store_id }, s.name)));
@@ -445,6 +481,7 @@ async function start() {
     $("picker-id").textContent = picker();
     state.job = null;
     renderJob();
+    connectLive().catch(() => {});
     await refreshOps();
   });
 
@@ -462,9 +499,10 @@ async function start() {
 
   await refreshOps();
   await checkLocation();
+  connectLive().catch(() => {});
 
   // Keep the ops desk and the shop shelf live, so changes made in another tab show up.
-  setInterval(() => refreshOps().catch(() => {}), 3000);
+  setInterval(() => { if (!liveIsOpen()) refreshOps().catch(() => {}); }, 3000);
   setInterval(() => { if (!state.hold) loadProducts().catch(() => {}); }, 5000);
 }
 

@@ -216,3 +216,5 @@ class EventLog(Base):
     store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # Set by the relay once every sink has the event; empty means still in the outbox (HLD 9.2).
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

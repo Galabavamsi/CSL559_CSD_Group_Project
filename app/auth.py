@@ -73,15 +73,20 @@ def login(db: Session, username: str, password: str) -> dict:
 
 # --------------------------------------------------------------------------- dependencies
 
+def decode_token(token: str) -> dict:
+    """Check a token's signature and expiry and return its contents, or raise 401."""
+    try:
+        return jwt.decode(token, config.JWT_SECRET, algorithms=[ALGORITHM],
+                          options={"require": ["exp", "sub", "role"]})
+    except jwt.PyJWTError:
+        raise DomainError(401, "bad_token", "The token is invalid or has expired; log in again") from None
+
+
 def current_staff(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
     """Decode the bearer token or raise 401."""
     if credentials is None:
         raise DomainError(401, "not_logged_in", "Log in and send the token as 'Authorization: Bearer <token>'")
-    try:
-        return jwt.decode(credentials.credentials, config.JWT_SECRET, algorithms=[ALGORITHM],
-                          options={"require": ["exp", "sub", "role"]})
-    except jwt.PyJWTError:
-        raise DomainError(401, "bad_token", "The token is invalid or has expired; log in again") from None
+    return decode_token(credentials.credentials)
 
 
 def require_role(*roles: str):

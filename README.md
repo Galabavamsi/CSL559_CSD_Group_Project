@@ -139,7 +139,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 9 Inbound | `inbound` | Goods receipt against a transfer order, shortfall report, putaway | One call does receive and putaway |
 | 10 Network Planning | `network_planning` | Coverage report and one suggested site | Uses points you pass in, not real orders |
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |
-| Kafka | `events.py` | Events logged to a table and handled in-process | No broker |
+| Kafka | `events.py` | Events written to an outbox table; a relay pushes them to sinks (a WebSocket feed per store) and marks them published; lag shown on the dashboard | No broker yet; the relay runs inside the app |
 | PostgreSQL + Redis | `db.py` | SQLite | One file, no sharding, no cache |
 | Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint | No gateway or mutual TLS; customer endpoints are open; demo accounts share one password |
 

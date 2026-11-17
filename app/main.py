@@ -4,15 +4,16 @@ Run it with:   uvicorn app.main:app --reload
 Then open:     http://localhost:8000        (demo screens)
                http://localhost:8000/docs   (interactive API reference)
 """
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, seed
+from . import auth, config, events, seed
 from .db import SessionLocal, init_db
 from .errors import DomainError
 from .modules.assortment.router import router as assortment_router
@@ -38,7 +39,11 @@ async def lifespan(_app: FastAPI):
     init_db()
     with SessionLocal() as db:
         seed.seed_if_empty(db)
+    relay = asyncio.create_task(events.run_relay())
     yield
+    relay.cancel()
+    with suppress(asyncio.CancelledError):
+        await relay
 
 
 app = FastAPI(

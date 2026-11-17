@@ -33,6 +33,12 @@ FRESH_SHELF_LIFE_DAYS = int(os.getenv("FRESH_SHELF_LIFE_DAYS", "7"))
 # Fulfilment: a store with more than this many unpacked orders is marked "busy" (HLD 9.2).
 BUSY_BACKLOG_THRESHOLD = int(os.getenv("BUSY_BACKLOG_THRESHOLD", "5"))
 
+# Live event feed (HLD 8.2): the relay sends new events to the sinks this often, at most this many per pass.
+RELAY_INTERVAL_SECONDS = float(os.getenv("RELAY_INTERVAL_SECONDS", "0.2"))
+RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
+# An open WebSocket gets a ping this often, so a viewer that has gone away is noticed and dropped.
+LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
+
 # Serviceability: simple ETA model = pack time + travel time (+ penalty when the store is busy).
 PACK_MINUTES = 2
 MINUTES_PER_KM = 3
