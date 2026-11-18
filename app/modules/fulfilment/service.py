@@ -53,8 +53,18 @@ def add_pick_tasks(db: Session, job: FulfilmentJob, sku_id: int, qty: int,
     if shortfall:
         db.add(PickTask(job_id=job.id, sku_id=sku_id, qty=shortfall, status="short"))
         inventory.unreserve(db, job.store_id, sku_id, shortfall)
+        publish_line_dropped(db, job, sku_id, shortfall)
     db.flush()
     return shortfall
+
+
+def publish_line_dropped(db: Session, job: FulfilmentJob, sku_id: int, qty: int) -> None:
+    """`qty` units of a paid order will not be delivered: publish order.line_dropped so the Order service refunds
+    them (task 2.4). Does not commit."""
+    price = inventory.get_sku(db, sku_id).price
+    events.publish(db, "order.line_dropped", job.store_id,
+                   {"order_id": job.order_id, "job_id": job.id, "sku_id": sku_id, "qty": qty,
+                    "refund_amount": round(qty * price, 2)})
 
 
 def resequence(db: Session, job: FulfilmentJob) -> None:

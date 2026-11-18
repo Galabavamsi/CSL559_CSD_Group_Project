@@ -99,10 +99,24 @@ def scan(db: Session, task_id: int, barcode: str, qty: int = 1) -> dict:
     return {"match": True, "message": message, "lines_left": pending, "job": fulfilment.job_view(job)}
 
 
+def find_substitute(db: Session, store_id: int, sku_id: int, qty: int) -> dict | None:
+    """Something the customer might take instead of `qty` units that cannot be found (HLD 9.2 saga, task 2.4): same
+    category, enough that a customer could buy it (ATP, after the safety buffer), and the nearest price. Only an
+    offer: nothing is held. None when nothing fits."""
+    wanted = inventory.get_sku(db, sku_id)
+    options = [row for row in inventory.availability(db, store_id)
+               if row["category"] == wanted.category and row["sku_id"] != sku_id and row["atp"] >= qty]
+    if not options:
+        return None
+    best = min(options, key=lambda row: (abs(row["price"] - wanted.price), row["price"], row["name"]))
+    return {"sku_id": best["sku_id"], "name": best["name"], "price": best["price"]}
+
+
 def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker") -> dict:
     """The bin holds fewer units than the line needs: `found` of them were there (by default, the ones already
     scanned). The found units become a picked line of their own; for the rest, fix the count, then try another bin;
-    if none has spare units, drop them and free their hold (the refund itself belongs to the Order service)."""
+    if none has spare units, drop them, free their hold, publish order.line_dropped (the Order service refunds from
+    it) and offer a substitute (`substitute_offer`, or None)."""
     task, job = _open_task(db, task_id)
     found = task.scanned_qty if found is None else found
     if found < task.scanned_qty:
@@ -140,9 +154,13 @@ def report_short(db: Session, task_id: int, found: int | None = None, actor: str
         task.status = "reallocated"
         if lost:
             db.add(PickTask(job_id=job.id, sku_id=task.sku_id, qty=lost, status="short"))
+    offer = None
     if lost:
         inventory.unreserve(db, job.store_id, task.sku_id, lost)
+        fulfilment.publish_line_dropped(db, job, task.sku_id, lost)
     db.flush()
+    if lost:
+        offer = find_substitute(db, job.store_id, task.sku_id, lost)
     fulfilment.resequence(db, job)
     events.publish(db, "stock.changed", job.store_id,
                    {"sku_id": task.sku_id, "cause": "not_found", "bin_id": item.bin_id})   # inventory counts the bin
@@ -155,7 +173,9 @@ def report_short(db: Session, task_id: int, found: int | None = None, actor: str
         message = f"Count corrected. No other stock, so {lost} dropped from the order."
     if found:
         message = f"{found} picked. {message}"
-    return {"picked": found, "reallocated": moved, "dropped": lost, "message": message,
+    if offer:
+        message += f" Possible substitute: {offer['name']} (Rs {offer['price']:g})."
+    return {"picked": found, "reallocated": moved, "dropped": lost, "substitute_offer": offer, "message": message,
             "job": fulfilment.job_view(job)}
 
 
