@@ -8,7 +8,7 @@ from datetime import timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ... import events
+from ... import config, events
 from ...models import EventLog, FulfilmentJob, Reservation, StockLevel, TransferOrder, utcnow
 from ..inventory import service as inventory
 from ..serviceability import service as serviceability
@@ -101,8 +101,9 @@ def push_to_listeners(event: dict) -> None:
 # name when the page loads, so the page works before they exist and a bug in one never breaks the rest:
 #
 #   Member 2  app.modules.fulfilment.service.metrics(db, store_id)       -> {"seconds_to_pack_p90", "fill_rate",
-#                                                                            "items_per_picker_hour"}   (task 2.1)
-#   Member 2  app.modules.fulfilment.service.attention(db, store_id)     -> {"stalled": [{"order_id"}, ...]} (2.5)
+#                                     "items_per_picker_hour"} (task 2.1), "seconds_packed_to_handover_p90" (2.7)
+#   Member 2  app.modules.fulfilment.service.attention(db, store_id)     -> {"stalled": [{"order_id"}, ...],
+#                                     "waiting_for_rider": [{"order_id", "minutes_waiting"}, ...]} (task 2.5)
 #   Member 1  app.modules.inventory.counts.inventory_accuracy(db, sid)   -> {"value": fraction or None}  (task 1.5)
 #   Member 3  app.modules.replenishment.service.kpis(db, store_id)       -> one {"value", "met"} per KPI (task 3.8)
 
@@ -111,6 +112,9 @@ KPIS = [
     ("seconds_to_pack_p90", "Order to packed (p90)", "fulfilment", "seconds", "≤ 120 s"),
     ("fill_rate", "Fill rate", "fulfilment", "fraction", "≥ 99% of units ordered"),
     ("items_per_picker_hour", "Picker productivity", "fulfilment", "per_hour", "≥ 100 items per picker-hour"),
+    # Not in HLD 12: task 2.7's number, judged against the wait after which the page lists a bag as late.
+    ("seconds_packed_to_handover_p90", "Packed to rider (p90)", "fulfilment", "seconds",
+     f"≤ {config.RIDER_WAIT_MINUTES * 60:g} s"),
     ("inventory_accuracy", "Inventory accuracy", "inventory", "fraction", "≥ 99.5% of counted lines"),
     ("stock_out_rate", "Stock-out rate", "supply", "fraction", "≤ 2% of carried SKUs"),
     ("days_of_cover", "SKUs with the right days of cover", "supply", "fraction",
@@ -150,7 +154,9 @@ def _fulfilment_kpis(db: Session, store_id: int) -> dict:
     m = _teammate("app.modules.fulfilment.service", "metrics")(db, store_id)
     return {"seconds_to_pack_p90": _judged(m["seconds_to_pack_p90"], lambda v: v <= 120),
             "fill_rate": _judged(m["fill_rate"], lambda v: v >= 0.99),
-            "items_per_picker_hour": _judged(m["items_per_picker_hour"], lambda v: v >= 100)}
+            "items_per_picker_hour": _judged(m["items_per_picker_hour"], lambda v: v >= 100),
+            "seconds_packed_to_handover_p90": _judged(m["seconds_packed_to_handover_p90"],
+                                                      lambda v: v <= config.RIDER_WAIT_MINUTES * 60)}
 
 
 def _inventory_kpis(db: Session, store_id: int) -> dict:
@@ -201,20 +207,20 @@ def kpi_board(db: Session, store_id: int) -> dict:
 
 
 def needs_action(db: Session, store_id: int) -> dict:
-    """Problems first: stalled orders (None until Member 2 builds them), bags waiting for a rider, stock-outs."""
-    stalled, why = _guarded(db, "stalled orders", lambda: [
-        job["order_id"] for job in _teammate("app.modules.fulfilment.service", "attention")(db, store_id)["stalled"]])
-    packed = db.scalars(select(FulfilmentJob)
-                        .where(FulfilmentJob.store_id == store_id, FulfilmentJob.state == "packed",
-                               FulfilmentJob.packed_at.is_not(None))
-                        .order_by(FulfilmentJob.packed_at)).all()           # longest wait first
-    now = utcnow()
+    """Problems first: stalled orders and bags packed more than RIDER_WAIT_MINUTES ago, both from fulfilment's
+    attention list (task 2.5; None, with the reason in stalled_note, if it is missing or fails), then stock-outs."""
+    def read() -> tuple[list, list]:
+        found = _teammate("app.modules.fulfilment.service", "attention")(db, store_id)
+        return ([job["order_id"] for job in found["stalled"]],
+                [{"order_id": bag["order_id"], "minutes_waiting": int(bag["minutes_waiting"])}
+                 for bag in found["waiting_for_rider"]])                    # longest wait first
+
+    lists, why = _guarded(db, "stalled orders and late bags", read)
+    stalled, late_bags = lists or (None, None)
     return {
         "stalled_orders": stalled,
         "stalled_note": why,
-        "waiting_for_rider": [{"order_id": job.order_id,
-                               "minutes_waiting": max(0, int((now - job.packed_at).total_seconds() // 60))}
-                              for job in packed],
+        "waiting_for_rider": late_bags,
         "out_of_stock": [row["name"] for row in inventory.availability(db, store_id) if row["atp"] <= 0],
     }
 
