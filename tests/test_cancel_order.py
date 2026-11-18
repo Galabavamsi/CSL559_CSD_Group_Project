@@ -54,8 +54,11 @@ def test_cancel_before_a_picker_claims_it_gives_the_stock_back(client, sku):
     assert event["payload"] == {"order_id": "c-1", "job_id": job["job_id"], "reason": REASON}
     assert {"job_id": job["job_id"], "order_id": "c-1", "state": "cancelled"} in [
         e["payload"] for e in events_of(client, "fulfilment.state_changed")]
-    # Paying again cannot bring the order back.
+    # Paying again cannot bring the order back, and releasing the hold again is safe and changes nothing.
     assert client.post(f"/v1/reservations/{paid['reservation_id']}/confirm").status_code == 409
+    again = client.delete(f"/v1/reservations/{paid['reservation_id']}")
+    assert again.status_code == 200 and again.json()["status"] == "cancelled"
+    assert (atp(client, 1, rice), atp(client, 1, tea)) == before
     assert next_job(client) is None
     assert_stock_is_consistent()
 
