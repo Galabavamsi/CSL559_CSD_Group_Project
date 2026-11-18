@@ -53,6 +53,15 @@ def task_store_id(db: Session, task_id: int) -> int:
     return db.get(FulfilmentJob, task.job_id).store_id
 
 
+def _check_picker(db: Session, job: FulfilmentJob, picker_id: str | None) -> None:
+    """With `picker_id`, refuse to act on an order that now belongs to someone else: it sat idle and another picker
+    claimed it (task 2.5), so a handheld that comes back to life cannot scan, report or pack it."""
+    if picker_id is not None and job.picker_id != picker_id:
+        db.rollback()
+        raise DomainError(409, "not_your_order", "This order went to another picker after it sat idle; "
+                                                 "ask for your next order")
+
+
 def _open_task(db: Session, task_id: int, picker_id: str | None = None) -> tuple[PickTask, FulfilmentJob]:
     """The task and its job, taken for a change (fulfilment.hold_if_picking), so a cancel cannot slip in between.
     A job that was cancelled meanwhile answers `job_not_picking`, which the picker station explains. With
@@ -64,10 +73,7 @@ def _open_task(db: Session, task_id: int, picker_id: str | None = None) -> tuple
     job = db.get(FulfilmentJob, task.job_id)
     if not fulfilment.hold_if_picking(db, job):
         raise DomainError(409, "job_not_picking", f"Order is {job.state}; ask for your next task first")
-    if picker_id is not None and job.picker_id != picker_id:
-        db.rollback()
-        raise DomainError(409, "not_your_order", "This order went to another picker after it sat idle; "
-                                                 "ask for your next order")
+    _check_picker(db, job, picker_id)
     if task.status != "pending":
         db.rollback()
         raise DomainError(409, "task_closed", f"This line is already {task.status}")
@@ -187,7 +193,8 @@ def report_short(db: Session, task_id: int, found: int | None = None, actor: str
             "job": fulfilment.job_view(job)}
 
 
-def pack(db: Session, job_id: int, crate_slot: str, actor: str = "packer") -> FulfilmentJob:
+def pack(db: Session, job_id: int, crate_slot: str, actor: str = "packer",
+         picker_id: str | None = None) -> FulfilmentJob:
     """Mark the order packed (FR-6). This is the moment the sale is committed: units leave
     on-hand stock and the hold on them ends."""
     job = fulfilment.get_job(db, job_id)
@@ -199,6 +206,7 @@ def pack(db: Session, job_id: int, crate_slot: str, actor: str = "packer") -> Fu
         if job.state in ("packed", "handed_over"):
             return job                                      # packed by a retry of this same call
         raise DomainError(409, "job_not_picking", f"Order is {job.state}; it cannot be packed")
+    _check_picker(db, job, picker_id)
     if any(t.status == "pending" for t in job.tasks):
         db.rollback()
         raise DomainError(409, "lines_pending", "Scan or report every line before packing")

@@ -68,6 +68,9 @@ def test_an_idle_order_with_nothing_in_the_tote_goes_to_another_picker(client, d
     assert after.status_code == 409 and after.json()["error"]["code"] == "not_your_order"
     after_short = client.post(f"/v1/pick-tasks/{first['tasks'][0]['task_id']}/short", json={"picker_id": "picker-a"})
     assert after_short.status_code == 409 and after_short.json()["error"]["code"] == "not_your_order"
+    after_pack = client.post(f"/v1/fulfilment-jobs/{first['job_id']}/packed",
+                             json={"crate_slot": "S-01", "picker_id": "picker-a"})
+    assert after_pack.status_code == 409 and after_pack.json()["error"]["code"] == "not_your_order"
     assert scan(client, first["tasks"][0], qty=2, picker_id="picker-b").json()["message"] == "Picked."
     changes = [e["payload"] for e in client.get("/v1/events", params={"limit": 50}).json()
                if e["type"] == "fulfilment.state_changed"]

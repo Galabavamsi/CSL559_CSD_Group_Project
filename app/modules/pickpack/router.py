@@ -10,23 +10,28 @@ from . import service
 
 router = APIRouter(tags=["pick & pack"])
 
+# No order line is anywhere near this big; the cap turns a typo or a bad client into a 422 instead of a database error.
+MAX_UNITS = 1000
+
 
 class ScanIn(BaseModel):
     barcode: str
-    qty: int = Field(default=1, gt=0, description="Units scanned in this call: 1 per beep, or the whole line at once")
+    qty: int = Field(default=1, gt=0, le=MAX_UNITS,
+                     description="Units scanned in this call: 1 per beep, or the whole line at once")
     picker_id: str | None = Field(default=None, max_length=40,
                                   description="The handheld's picker; if given, a scan into another picker's order "
                                               "is refused (409 not_your_order)")
 
 
 class ShortIn(BaseModel):
-    found: int | None = Field(default=None, ge=0, description="Units that were in the bin; the rest are missing. "
+    found: int | None = Field(default=None, ge=0, le=MAX_UNITS, description="Units that were in the bin; the rest are missing. "
                                                             "Leave out to mean the units already scanned")
     picker_id: str | None = Field(default=None, max_length=40, description="As for scans")
 
 
 class PackedIn(BaseModel):
     crate_slot: str = Field(min_length=1, max_length=20)
+    picker_id: str | None = Field(default=None, max_length=40, description="As for scans")
 
 
 @router.get("/v1/pickers/{picker_id}/next-task")
@@ -56,4 +61,4 @@ def report_short(task_id: int, body: ShortIn | None = None, db: Session = Depend
 def packed(job_id: int, body: PackedIn, db: Session = Depends(get_db),
            staff: dict = Depends(require_role("picker", "packer"))):
     check_store(staff, fulfilment.get_job(db, job_id).store_id)
-    return fulfilment.job_view(service.pack(db, job_id, body.crate_slot))
+    return fulfilment.job_view(service.pack(db, job_id, body.crate_slot, picker_id=body.picker_id))

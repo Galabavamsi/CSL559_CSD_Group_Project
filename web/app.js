@@ -340,7 +340,7 @@ async function reportShort(task, found) {
 
 async function packJob() {
   const slot = $("crate-slot").value.trim() || "S-01";
-  const packed = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot }, picker())
+  const packed = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot, picker_id: picker() }, picker())
     .catch(explainIfOrderGone);
   if (!packed) return;
   state.job = packed;

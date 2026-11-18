@@ -180,3 +180,11 @@ def test_an_expiry_write_off_leaves_out_the_units_already_in_the_tote(client, db
     item = db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD", StockItem.store_id == 1))
 
     assert inventory._in_totes(db, item) == 2
+
+
+def test_an_absurd_quantity_is_refused_before_it_reaches_the_database(client, sku):
+    _job, line = rice_line(client, sku)
+
+    assert scan(client, line, qty=10**20).status_code == 422
+    assert short(client, line, found=10**20).status_code == 422
+    assert scan(client, line, qty=6).json()["message"] == "Picked."
