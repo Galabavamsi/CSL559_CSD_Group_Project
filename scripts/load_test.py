@@ -4,7 +4,8 @@ The mix follows the guide: about 90% reads (availability and serviceability, hal
 holds. One hold in five is paid (about 2% of all calls); the rest are released straight away, timed as
 "release", so the run does not lock up all the stock.
 
-Start the app first (uvicorn app.main:app), then from the repository root:
+Start the app first with the rate limit off (RATE_LIMIT_PER_SECOND=0 uvicorn app.main:app): this script is one
+client, and the limit would refuse most of its calls. Then, from the repository root:
 
     python scripts/load_test.py [--url http://localhost:8000] [--seconds 60] [--workers 8] [--reset]
 
@@ -104,6 +105,7 @@ def summarise(results: dict[str, list[tuple[int, float]]], seconds: float) -> li
         times_ms = [elapsed * 1000 for _, elapsed in calls]
         rows.append({"endpoint": endpoint, "requests": len(calls), "per_second": round(len(calls) / seconds, 1),
                      "out_of_stock": sum(1 for status, _ in calls if status == 409),
+                     "limited": sum(1 for status, _ in calls if status == 429),
                      "errors": sum(1 for status, _ in calls if status >= 500),
                      "p50_ms": round(percentile(times_ms, 0.50), 1), "p99_ms": round(percentile(times_ms, 0.99), 1)})
     return rows
@@ -132,10 +134,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"{args.workers} workers for {args.seconds:g} s against {args.url}\n")
-    print(f"{'endpoint':<15}{'requests':>9}{'per s':>8}{'409':>6}{'5xx':>6}{'p50 ms':>9}{'p99 ms':>9}")
+    print(f"{'endpoint':<15}{'requests':>9}{'per s':>8}{'409':>6}{'429':>6}{'5xx':>6}{'p50 ms':>9}{'p99 ms':>9}")
     for r in rows:
-        print(f"{r['endpoint']:<15}{r['requests']:>9}{r['per_second']:>8}{r['out_of_stock']:>6}{r['errors']:>6}"
-              f"{r['p50_ms']:>9}{r['p99_ms']:>9}")
+        print(f"{r['endpoint']:<15}{r['requests']:>9}{r['per_second']:>8}{r['out_of_stock']:>6}{r['limited']:>6}"
+              f"{r['errors']:>6}{r['p50_ms']:>9}{r['p99_ms']:>9}")
+    if any(r["limited"] for r in rows):    # 429s are answered before any work, so the timings say nothing
+        print("\nSome calls were refused with 429 by the rate limit, so these timings are not the app's. This script "
+              "is one client; start the app with RATE_LIMIT_PER_SECOND=0 for a load test.", file=sys.stderr)
+        return 1
     worst = max(r["p99_ms"] for r in rows if r["endpoint"] in READS)
     verdict = "meets" if worst < READ_TARGET_MS else "misses"
     print(f"\nRead p99 {worst} ms {verdict} the HLD target of {READ_TARGET_MS} ms. "

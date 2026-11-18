@@ -16,4 +16,5 @@ def test_a_short_run_times_every_kind_of_call_without_server_errors(fresh_data):
     rows = {row["endpoint"]: row for row in summarise(results, seconds=1)}
 
     assert {"availability", "serviceability", "hold"} <= rows.keys()
-    assert all(row["errors"] == 0 and row["p99_ms"] >= row["p50_ms"] > 0 for row in rows.values())
+    assert all(row["errors"] == 0 and row["limited"] == 0 and row["p99_ms"] >= row["p50_ms"] > 0
+               for row in rows.values())
