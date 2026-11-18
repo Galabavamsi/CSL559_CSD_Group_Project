@@ -39,8 +39,10 @@ def test_the_counter_is_not_told_how_many_to_expect(client, sku):
     count = start(client, rice)
     assert count["status"] == "open"
     assert [line["sku_id"] for line in count["lines"]] == [rice]
-    shown = repr(count) + repr(client.get(f"/v1/cycle-counts/{count['count_id']}").json())
-    assert "qty" not in shown and "30" not in shown
+    for view in (count, client.get(f"/v1/cycle-counts/{count['count_id']}").json()):
+        assert not [key for key in view if "qty" in key]
+        # Only the lines: a timestamp such as 13:30 or .230451 would contain "30" without revealing anything.
+        assert "qty" not in repr(view["lines"]) and "30" not in repr(view["lines"])
 
 
 def test_a_small_difference_is_applied_at_once(client, db, sku):
