@@ -14,11 +14,15 @@ router = APIRouter(tags=["pick & pack"])
 class ScanIn(BaseModel):
     barcode: str
     qty: int = Field(default=1, gt=0, description="Units scanned in this call: 1 per beep, or the whole line at once")
+    picker_id: str | None = Field(default=None, max_length=40,
+                                  description="The handheld's picker; if given, a scan into another picker's order "
+                                              "is refused (409 not_your_order)")
 
 
 class ShortIn(BaseModel):
     found: int | None = Field(default=None, ge=0, description="Units that were in the bin; the rest are missing. "
                                                             "Leave out to mean the units already scanned")
+    picker_id: str | None = Field(default=None, max_length=40, description="As for scans")
 
 
 class PackedIn(BaseModel):
@@ -37,14 +41,15 @@ def next_task(picker_id: str, store_id: int, db: Session = Depends(get_db),
 def scan(task_id: int, body: ScanIn, db: Session = Depends(get_db),
          staff: dict = Depends(require_role("picker", "packer"))):
     check_store(staff, service.task_store_id(db, task_id))
-    return service.scan(db, task_id, body.barcode, body.qty)
+    return service.scan(db, task_id, body.barcode, body.qty, picker_id=body.picker_id)
 
 
 @router.post("/v1/pick-tasks/{task_id}/short", summary="The bin has fewer units than the line needs")
 def report_short(task_id: int, body: ShortIn | None = None, db: Session = Depends(get_db),
                  staff: dict = Depends(require_role("picker", "packer"))):
     check_store(staff, service.task_store_id(db, task_id))
-    return service.report_short(db, task_id, found=body.found if body else None)
+    return service.report_short(db, task_id, found=body.found if body else None,
+                                picker_id=body.picker_id if body else None)
 
 
 @router.post("/v1/fulfilment-jobs/{job_id}/packed")

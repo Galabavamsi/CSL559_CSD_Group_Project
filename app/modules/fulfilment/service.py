@@ -107,17 +107,18 @@ def list_jobs(db: Session, store_id: int, state: str | None = None) -> list[Fulf
 
 
 def hold_if_picking(db: Session, job: FulfilmentJob) -> bool:
-    """Before changing a job that is being picked, take it, and read it again as it is now.
+    """Before changing a job that is being picked, take it, record the picker's activity, and read it again as it is
+    now.
 
     The UPDATE matches only while the job is still `picking`, and keeps the job until this transaction ends, so a
-    cancel arriving at the same moment waits for the change and then sees it. Without this, a scan, an empty-shelf
-    report or a pack that read the job just before a cancel would act on a cancelled order, and a hold could be
-    given back twice. Returns False, having changed nothing, when the job is no longer `picking`.
-    Does not commit."""
+    cancel or a stall release arriving at the same moment waits for the change and then sees it. Without this, a
+    scan, an empty-shelf report or a pack that read the job just before a cancel would act on a cancelled order, and
+    a hold could be given back twice. Setting `last_activity_at` tells recover_stalled the handheld is alive
+    (task 2.5). Returns False, having changed nothing, when the job is no longer `picking`. Does not commit."""
     taken = db.execute(
         update(FulfilmentJob)
         .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "picking")
-        .values(state="picking")      # changes nothing; task 2.5 will set last_activity_at here instead
+        .values(last_activity_at=utcnow())
         .execution_options(synchronize_session=False)
     ).rowcount == 1
     if taken:
@@ -200,6 +201,7 @@ def job_view(job: FulfilmentJob) -> dict:
         "picker_id": job.picker_id,
         "crate_slot": job.crate_slot,
         "created_at": job.created_at.isoformat() + "Z",
+        "last_activity_at": job.last_activity_at.isoformat() + "Z" if job.last_activity_at else None,
         "seconds_to_pack": seconds(job.created_at, job.packed_at),
         "tasks": [
             {
@@ -257,15 +259,79 @@ def metrics(db: Session, store_id: int) -> dict:
     }
 
 
-def attention(db: Session, store_id: int) -> dict:
-    """Orders someone should look at now: still being picked more than PICK_STALL_MINUTES after they were claimed
-    (task 2.5). The ops page lists them first.
-    shortcut: measured from the claim, not the last scan; task 2.5's last_activity_at would tell a slow picker
-    from a dead handheld."""
+# --------------------------------------------------------------------------- stuck orders (task 2.5)
+
+# When the picker last showed signs of life on a job; a job claimed before task 2.5 has only its claim time.
+_IDLE_SINCE = func.coalesce(FulfilmentJob.last_activity_at, FulfilmentJob.picking_at)
+
+
+def _stalled_jobs(db: Session, now, store_id: int | None = None) -> list[FulfilmentJob]:
+    """Jobs being picked with no claim, scan or shelf report for PICK_STALL_MINUTES, longest idle first."""
+    query = select(FulfilmentJob).where(
+        FulfilmentJob.state == "picking", _IDLE_SINCE < now - timedelta(minutes=config.PICK_STALL_MINUTES))
+    if store_id is not None:
+        query = query.where(FulfilmentJob.store_id == store_id)
+    return list(db.scalars(query.order_by(_IDLE_SINCE, FulfilmentJob.id)).all())
+
+
+def units_in_tote(job: FulfilmentJob) -> int:
+    """Units of this order already scanned into the picker's tote: every picked line, and the scanned part of a line
+    still being scanned (task 2.2)."""
+    return sum(t.qty if t.status == "picked" else t.scanned_qty for t in job.tasks if t.status in ("pending", "picked"))
+
+
+def _stall_view(job: FulfilmentJob, now) -> dict:
+    idle_since = job.last_activity_at or job.picking_at
+    return {"job_id": job.id, "order_id": job.order_id, "store_id": job.store_id, "picker_id": job.picker_id,
+            "minutes_idle": round((now - idle_since).total_seconds() / 60, 1), "units_in_tote": units_in_tote(job)}
+
+
+def recover_stalled(db: Session) -> dict:
+    """Keep a dead handheld from holding an order forever (task 2.5). Runs on a timer (app/background.py) in every
+    store. Commits.
+
+    A stalled job with nothing in its tote goes back to `created` with no picker, so the next picker to ask claims it.
+    The UPDATE is conditional, like the claim: if the picker scans at the same moment, the job is still idle only for
+    one of the two, so it is never released under a picker who just used it. A stalled job with units in a tote is
+    left alone and returned under `needs_attention`: the items are physically with someone, and a person must fetch
+    them."""
     now = utcnow()
-    jobs = db.scalars(select(FulfilmentJob).where(
-        FulfilmentJob.store_id == store_id, FulfilmentJob.state == "picking",
-        FulfilmentJob.picking_at < now - timedelta(minutes=config.PICK_STALL_MINUTES))
-        .order_by(FulfilmentJob.picking_at)).all()
-    return {"stalled": [{"job_id": j.id, "order_id": j.order_id, "picker_id": j.picker_id,
-                         "minutes_since_claim": round((now - j.picking_at).total_seconds() / 60, 1)} for j in jobs]}
+    cutoff = now - timedelta(minutes=config.PICK_STALL_MINUTES)
+    released, needs_attention = [], []
+    for job in _stalled_jobs(db, now):
+        if units_in_tote(job):
+            needs_attention.append(_stall_view(job, now))
+            continue
+        freed = db.execute(
+            update(FulfilmentJob)
+            .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "picking", _IDLE_SINCE < cutoff)
+            .values(state="created", picker_id=None, picking_at=None, last_activity_at=None)
+            .execution_options(synchronize_session=False)
+        ).rowcount == 1
+        if freed:
+            released.append({"job_id": job.id, "order_id": job.order_id, "store_id": job.store_id,
+                             "picker_id": job.picker_id})
+            events.publish(db, "fulfilment.state_changed", job.store_id,
+                           {"job_id": job.id, "order_id": job.order_id, "state": "created", "reason": "stalled",
+                            "picker_id": job.picker_id})
+    db.commit()
+    return {"released": released, "needs_attention": needs_attention}
+
+
+def attention(db: Session, store_id: int) -> dict:
+    """Orders someone should look at now (task 2.5); the ops page lists `stalled` first.
+
+    `stalled`: being picked with no claim, scan or shelf report for PICK_STALL_MINUTES. A job with nothing in its tote
+    is also handed back to the queue by recover_stalled; one with `units_in_tote` needs a person.
+    `waiting_for_rider`: packed more than RIDER_WAIT_MINUTES ago and not yet collected."""
+    now = utcnow()
+    late_bags = db.scalars(select(FulfilmentJob).where(
+        FulfilmentJob.store_id == store_id, FulfilmentJob.state == "packed",
+        FulfilmentJob.packed_at < now - timedelta(minutes=config.RIDER_WAIT_MINUTES))
+        .order_by(FulfilmentJob.packed_at)).all()
+    return {
+        "stalled": [_stall_view(job, now) for job in _stalled_jobs(db, now, store_id)],
+        "waiting_for_rider": [{"job_id": job.id, "order_id": job.order_id, "crate_slot": job.crate_slot,
+                               "minutes_waiting": round((now - job.packed_at).total_seconds() / 60, 1)}
+                              for job in late_bags],
+    }

@@ -249,15 +249,20 @@ const TASK_STATUS_TEXT = {
   cancelled: "Order cancelled: put it back",
 };
 
-/** A scan, empty-shelf report or pack was refused because the order is no longer being picked. If it was
- *  cancelled (task 2.3), tell the picker what to do with the tote; otherwise show the error as usual. */
-async function explainIfCancelled(error) {
-  if (error.code !== "job_not_picking" || !state.job) throw error;
+/** A scan, empty-shelf report or pack was refused because the order is no longer this picker's to pick: it was
+ *  cancelled (task 2.3), or it sat idle and went back to the queue or to another picker (task 2.5). Tell the
+ *  picker what to do; any other error is shown as usual. */
+async function explainIfOrderGone(error) {
+  if (!["job_not_picking", "not_your_order"].includes(error.code) || !state.job) throw error;
   const job = await api("GET", `/v1/fulfilment-jobs/${state.job.job_id}`, undefined, picker());
-  if (job.state !== "cancelled") throw error;
+  let text;
+  if (job.state === "cancelled") text = "This order was cancelled. Put the items back on their shelves.";
+  else if (error.code === "not_your_order" || job.state === "created") {
+    text = "This order sat idle, so it went back to the queue. Put back anything you took, then press Get next order.";
+  } else throw error;
   state.job = null;
   renderJob();
-  say($("picker-message"), "This order was cancelled. Put the items back on their shelves.", "bad");
+  say($("picker-message"), text, "bad");
   refreshOps();
 }
 
@@ -308,8 +313,8 @@ function renderJob() {
 }
 
 async function scanTask(task, barcode, qty) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty }, picker())
-    .catch(explainIfCancelled);
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty, picker_id: picker() }, picker())
+    .catch(explainIfOrderGone);
   if (!result) return;
   if (!result.match) {
     say($("picker-message"), result.message, "bad");
@@ -323,9 +328,9 @@ async function scanTask(task, barcode, qty) {
 }
 
 async function reportShort(task, found) {
-  const body = found === undefined ? undefined : { found };
+  const body = found === undefined ? { picker_id: picker() } : { found, picker_id: picker() };
   const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, body, picker())
-    .catch(explainIfCancelled);
+    .catch(explainIfOrderGone);
   if (!result) return;
   state.job = result.job;
   say($("picker-message"), result.message, result.dropped ? "bad" : "");
@@ -336,7 +341,7 @@ async function reportShort(task, found) {
 async function packJob() {
   const slot = $("crate-slot").value.trim() || "S-01";
   const packed = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot }, picker())
-    .catch(explainIfCancelled);
+    .catch(explainIfOrderGone);
   if (!packed) return;
   state.job = packed;
   const done = state.job.state === "packed";

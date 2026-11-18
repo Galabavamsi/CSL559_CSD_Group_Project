@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 from . import config
 from .db import SessionLocal
+from .modules.fulfilment import service as fulfilment
 from .modules.inventory import service as inventory
 
 log = logging.getLogger("darkstore.background")
@@ -28,6 +29,13 @@ def expiry_once() -> dict:
     with SessionLocal() as db:
         return {"units_written_off": inventory.expire_stock(db),
                 "near_expiry_flagged": inventory.flag_near_expiry(db, config.NEAR_EXPIRY_DAYS)}
+
+
+def recover_once() -> dict | None:
+    """Hand idle orders back to the queue in every store (task 2.5). Returns what changed, or None if nothing did."""
+    with SessionLocal() as db:
+        result = fulfilment.recover_stalled(db)
+    return result if result["released"] or result["needs_attention"] else None
 
 
 async def _repeat(name: str, job: Callable[[], object], seconds: Callable[[], float], first_run_now: bool) -> None:
@@ -53,6 +61,10 @@ def expiry_loop():
     return _repeat("expiry check", expiry_once, lambda: config.EXPIRY_INTERVAL_SECONDS, first_run_now=True)
 
 
+def stall_loop():
+    return _repeat("stalled orders", recover_once, lambda: config.STALL_CHECK_SECONDS, first_run_now=False)
+
+
 def start_all() -> list[asyncio.Task]:
     """Start every timed job; main.py cancels them on shutdown."""
-    return [asyncio.create_task(loop()) for loop in (sweep_loop, expiry_loop)]
+    return [asyncio.create_task(loop()) for loop in (sweep_loop, expiry_loop, stall_loop)]

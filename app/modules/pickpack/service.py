@@ -29,10 +29,11 @@ def next_job(db: Session, picker_id: str, store_id: int) -> FulfilmentJob | None
         )
         if candidate is None:
             return None
+        now = utcnow()
         claimed = db.execute(
             update(FulfilmentJob)
             .where(FulfilmentJob.id == candidate.id, FulfilmentJob.state == "created")
-            .values(state="picking", picker_id=picker_id, picking_at=utcnow())
+            .values(state="picking", picker_id=picker_id, picking_at=now, last_activity_at=now)
             .execution_options(synchronize_session=False)
         )
         if claimed.rowcount == 1:
@@ -52,28 +53,34 @@ def task_store_id(db: Session, task_id: int) -> int:
     return db.get(FulfilmentJob, task.job_id).store_id
 
 
-def _open_task(db: Session, task_id: int) -> tuple[PickTask, FulfilmentJob]:
+def _open_task(db: Session, task_id: int, picker_id: str | None = None) -> tuple[PickTask, FulfilmentJob]:
     """The task and its job, taken for a change (fulfilment.hold_if_picking), so a cancel cannot slip in between.
-    A job that was cancelled meanwhile answers `job_not_picking`, which the picker station explains."""
+    A job that was cancelled meanwhile answers `job_not_picking`, which the picker station explains. With
+    `picker_id`, a job that now belongs to someone else (it sat idle and another picker claimed it, task 2.5)
+    answers `not_your_order`, so a handheld that comes back to life cannot scan into another picker's order."""
     task = db.get(PickTask, task_id)
     if task is None:
         raise not_found("Pick task", task_id)
     job = db.get(FulfilmentJob, task.job_id)
     if not fulfilment.hold_if_picking(db, job):
         raise DomainError(409, "job_not_picking", f"Order is {job.state}; ask for your next task first")
+    if picker_id is not None and job.picker_id != picker_id:
+        db.rollback()
+        raise DomainError(409, "not_your_order", "This order went to another picker after it sat idle; "
+                                                 "ask for your next order")
     if task.status != "pending":
         db.rollback()
         raise DomainError(409, "task_closed", f"This line is already {task.status}")
     return task, job
 
 
-def scan(db: Session, task_id: int, barcode: str, qty: int = 1) -> dict:
+def scan(db: Session, task_id: int, barcode: str, qty: int = 1, picker_id: str | None = None) -> dict:
     """Check a barcode scan against the pick task (FR-5) and put `qty` units in the tote: one at a time as a picker
     really scans, or the whole line in one call. The line is picked when every unit is scanned. A wrong item, or more
     units than the line still needs, changes nothing."""
-    task, job = _open_task(db, task_id)
+    task, job = _open_task(db, task_id, picker_id)
     if barcode != task.sku.barcode:
-        db.rollback()
+        db.commit()                   # keeps only last_activity_at: a wrong scan still shows the handheld is alive
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
     # Conditional, like the claim: the units are added only if the line still has room for them.
@@ -84,7 +91,7 @@ def scan(db: Session, task_id: int, barcode: str, qty: int = 1) -> dict:
         .execution_options(synchronize_session=False)
     ).rowcount == 1
     if not added:
-        db.rollback()
+        db.commit()                   # keeps only last_activity_at, as above
         metrics.SCANS.labels("mismatch").inc()
         still_needed = task.qty - task.scanned_qty
         return {"match": False, "message": f"Too many. This line needs {still_needed} more, not {qty}."}
@@ -112,12 +119,13 @@ def find_substitute(db: Session, store_id: int, sku_id: int, qty: int) -> dict |
     return {"sku_id": best["sku_id"], "name": best["name"], "price": best["price"]}
 
 
-def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker") -> dict:
+def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker",
+                 picker_id: str | None = None) -> dict:
     """The bin holds fewer units than the line needs: `found` of them were there (by default, the ones already
     scanned). The found units become a picked line of their own; for the rest, fix the count, then try another bin;
     if none has spare units, drop them, free their hold, publish order.line_dropped (the Order service refunds from
     it) and offer a substitute (`substitute_offer`, or None)."""
-    task, job = _open_task(db, task_id)
+    task, job = _open_task(db, task_id, picker_id)
     found = task.scanned_qty if found is None else found
     if found < task.scanned_qty:
         db.rollback()

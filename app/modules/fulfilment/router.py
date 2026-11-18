@@ -27,6 +27,20 @@ def fulfilment_metrics(store_id: int, db: Session = Depends(get_db), staff: dict
     return service.metrics(db, store_id)
 
 
+@router.get("/v1/stores/{store_id}/attention", summary="Stalled orders and bags waiting too long for a rider")
+def attention(store_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    """`stalled`: no claim, scan or shelf report for PICK_STALL_MINUTES (`units_in_tote` > 0 needs a person).
+    `waiting_for_rider`: packed more than RIDER_WAIT_MINUTES ago."""
+    check_store(staff, store_id)
+    return service.attention(db, store_id)
+
+
+@router.post("/v1/admin/recover-stalled", dependencies=[Depends(require_role("admin"))],
+             summary="Hand idle orders back to the queue now (normally every STALL_CHECK_SECONDS)")
+def recover_stalled(db: Session = Depends(get_db)):
+    return service.recover_stalled(db)
+
+
 @router.get("/v1/fulfilment-jobs/{job_id}")
 def read_job(job_id: int, db: Session = Depends(get_db),
              staff: dict = Depends(current_staff)):
