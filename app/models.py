@@ -218,7 +218,8 @@ class PickTask(Base):
 
 
 class RiderAssignment(Base):
-    """The rider sent to collect one packed order (HLD service 11, task 2.7). assigned -> arrived -> collected."""
+    """The rider sent to collect one packed order (HLD service 11, task 2.7).
+    assigned -> arrived -> collected; checking in is optional (a handover records the arrival too)."""
     __tablename__ = "rider_assignments"
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("fulfilment_jobs.id"), unique=True)

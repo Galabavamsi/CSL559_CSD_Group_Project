@@ -126,11 +126,48 @@ def test_the_desk_of_another_store_cannot_check_riders_in(client, client_as, sku
                                         json={"order_id": "r-1"}).status_code == 403
 
 
-def test_an_order_packed_before_riders_were_assigned_says_so(client, db, sku):
+def test_an_order_packed_before_riders_were_assigned_goes_to_the_rider_who_comes(client, db, sku):
+    """No dead end: such an order (an old database) has no rider, and cancel refuses packed orders."""
     job = packed_order(client, sku)
     db.delete(db.get(FulfilmentJob, job["job_id"]).rider)            # as if packed before task 2.7
     db.commit()
 
-    res = handover(client, job, "R-11", "r-1")
+    arrived = client.post("/v1/riders/R-12/arrive", json={"order_id": "r-1"})
 
-    assert res.status_code == 409 and res.json()["error"]["code"] == "no_rider"
+    assert arrived.status_code == 200 and arrived.json()["crate_slot"] == "S-04"
+    assert client.get(f"/v1/fulfilment-jobs/{job['job_id']}").json()["rider"]["rider_id"] == "R-12"
+    assert handover(client, job, "R-12", "r-1").json()["state"] == "handed_over"
+
+
+def test_an_old_order_with_a_wrong_bag_is_refused_and_keeps_no_rider(client, db, sku):
+    job = packed_order(client, sku)
+    db.delete(db.get(FulfilmentJob, job["job_id"]).rider)
+    db.commit()
+
+    res = handover(client, job, "R-12", "someone-else")
+
+    assert res.status_code == 409 and res.json()["error"]["code"] == "wrong_bag"
+    assert client.get(f"/v1/fulfilment-jobs/{job['job_id']}").json()["rider"] is None
+
+
+def test_a_rider_handed_the_bag_without_checking_in_is_recorded_as_arrived(client, sku):
+    job = packed_order(client, sku)
+    rider = job["rider"]["rider_id"]
+
+    handed = handover(client, job, rider, "r-1").json()["rider"]
+
+    assert handed["status"] == "collected"
+    assert handed["arrived_at"] == handed["collected_at"] is not None
+
+
+def test_after_the_bag_is_gone_any_other_handover_says_so(client, sku):
+    job = packed_order(client, sku)
+    rider = job["rider"]["rider_id"]
+    stranger = next(r for r in RIDERS if r != rider)
+    handover(client, job, rider, "r-1")
+
+    late, wrong_bag = handover(client, job, stranger, "r-1"), handover(client, job, rider, "r-2")
+
+    for res in (late, wrong_bag):
+        assert res.status_code == 409 and res.json()["error"]["code"] == "already_collected"
+        assert rider in res.json()["error"]["message"]
