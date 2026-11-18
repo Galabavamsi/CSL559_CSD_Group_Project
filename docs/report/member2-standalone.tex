@@ -1,0 +1,23 @@
+% Compiles Member 2's report sections on their own:
+%   cd docs/report && pdflatex member2-standalone.tex   (run twice for the figure and table numbers)
+% In the team report, add these packages to its preamble and \input{member2-fulfilment} where the sections go.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, calc}
+\usepackage[hidelinks]{hyperref}
+% The last table ends up on a page of its own when nothing follows it: start that page at the top, not centred.
+\makeatletter\setlength{\@fptop}{0pt}\makeatother
+
+\title{Order fulfilment\\\large Report sections, Member 2}
+\author{}
+\date{19 November 2026}
+
+\begin{document}
+\maketitle
+\input{member2-fulfilment}
+\end{document}
