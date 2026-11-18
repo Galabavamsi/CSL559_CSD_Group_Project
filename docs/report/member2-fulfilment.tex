@@ -1,0 +1,243 @@
+% Member 2 report sections: order fulfilment (HLD 5 services 4, 5 and 11; HLD 6.1; one HLD 13 trade-off).
+% Body only, so the team report can \input{member2-fulfilment}. Needs: array, booktabs, tikz (arrows.meta,
+% positioning, calc).
+% member2-standalone.tex compiles these sections on their own.
+
+\section{Fulfilment Orchestrator (HLD 5, service 4)}
+
+The Fulfilment Orchestrator turns each paid order into a job and keeps it moving until a rider takes the bag, so that
+no order gets stuck or is acted on twice. It listens for \texttt{order.paid}, creates a \texttt{FulfilmentJob} with
+one pick task per bin (oldest batch first, in walking order) and owns the job's state.
+
+Every state change is one conditional \texttt{UPDATE} that names the state it expects:
+\begin{center}
+  \texttt{UPDATE fulfilment\_jobs SET state = :new WHERE id = :job AND state = :expected}
+\end{center}
+Of two requests racing for the same change, exactly one wins and the other is told what happened. This covers
+claiming, cancelling, scanning, packing, stall release and handover.
+
+\begin{figure}[ht]
+  \centering
+  \begin{tikzpicture}[
+      >={Stealth[length=2.2mm]}, node distance=17mm,
+      state/.style={draw=black!45, rounded corners=3pt, minimum width=24mm, minimum height=10mm, font=\bfseries},
+      sale/.style={state, draw=blue!70!black, fill=blue!8, line width=0.9pt},
+      edgelabel/.style={font=\small, text=black!65}]
+    \node[state] (created) {created};
+    \node[state, right=of created] (picking) {picking};
+    \node[sale, right=of picking] (packed) {packed};
+    \node[state, right=of packed] (handed) {handed over};
+    \node[state, below=16mm of $(created)!0.5!(picking)$] (cancelled) {cancelled};
+    \node[edgelabel, below=1mm of packed] {sale committed here};
+
+    \draw[->, black!55] (created) -- node[edgelabel, above] {claim} (picking);
+    \draw[->, black!55] (picking) -- node[edgelabel, above] {pack} (packed);
+    \draw[->, black!55] (packed) -- node[edgelabel, above] {scan bag} (handed);
+    \draw[->, black!55] (picking.north) -- ++(0, 7mm) -| node[edgelabel, pos=0.25, above]
+      {idle 5 min, nothing in tote} (created.north);
+    \draw[->, black!55] (created.south) |- node[edgelabel, pos=0.3, left] {cancel} (cancelled.west);
+    \draw[->, black!55] (picking.south) |- node[edgelabel, pos=0.3, right] {cancel, or nothing to pack}
+      (cancelled.east);
+  \end{tikzpicture}
+  \caption{Fulfilment job lifecycle. Stock leaves the books only at packing; every earlier exit only releases holds.}
+  \label{fig:job-lifecycle}
+\end{figure}
+
+Figure~\ref{fig:job-lifecycle} shows the lifecycle. Before packing, an order can leave the line by a cancel, or go back
+to the queue when its picker goes idle; both only release holds. After packing, the only way on is to its own rider.
+
+\begin{itemize}
+  \item \textbf{Store load.} More than 5 orders waiting marks the store \texttt{busy}, and serviceability adds
+    5 minutes to the ETA.
+  \item \textbf{Cancel after payment.} Allowed while the order is \texttt{created} or \texttt{picking}: its holds are
+    given back and nothing leaves on-hand stock. A packed order would be a return, which is out of scope.
+  \item \textbf{Stuck orders.} No claim, scan or shelf report for 5 minutes: with nothing in the tote, the order goes
+    back to the queue (checked every 60\,s); with items in a tote, it is flagged for a person. Packed bags waiting
+    over 5 minutes for a rider are flagged too.
+  \item \textbf{KPIs} over the last 30 days: order-to-packed p50 and p90, claim-to-packed p90, packed-to-handover
+    p90, fill rate (units picked $\div$ units ordered on the reservation) and items per picker-hour (a picker's
+    overlapping orders counted once).
+\end{itemize}
+
+Percentiles take the value at index $\lfloor q \times (n - 1) \rfloor$ of the sorted list, the nearest rank below.
+With few orders this errs low: the p90 of 30, 60 and 90\,s is 60\,s.
+
+\section{Pick \& Pack (HLD 5, service 5)}
+
+Pick \& Pack gives pickers work, checks every scan and packs the order. Packing is the moment the sale leaves the
+books; until then the units are only held, so a cancel never has to put stock back.
+
+\begin{itemize}
+  \item \textbf{Claiming.} Off-peak, a picker gets the oldest waiting order. With 4 or more waiting, they get the
+    3 oldest, each in its own tote (A, B, C), with one route through all their lines in walking order.
+  \item \textbf{Scanning.} Every unit is barcode-checked as it goes into the tote (``3 of 6 scanned''). A wrong item,
+    or one unit more than the line needs, changes nothing.
+  \item \textbf{Empty shelf.} The picker says how many were there, and those stay picked. For the rest, the count is
+    corrected (a \texttt{not\_found} ledger row) and the line moves to another bin with spare stock, never units
+    another customer holds. With none left it is dropped: the hold is released, \texttt{order.line\_dropped} carries
+    the refund, and a substitute is offered (same category, enough to sell, nearest price).
+  \item \textbf{Packing.} Commits the sale for every picked line (\texttt{qty\_on\_hand} and \texttt{qty\_reserved}
+    both drop) and publishes \texttt{order.ready\_for\_pickup}. An order with nothing picked is cancelled instead.
+  \item \textbf{The handheld.} \texttt{/picker.html} is a phone screen: one line at a time (``Go to bin A-01-04,
+    pick 2 $\times$ Basmati rice''), big buttons, and the tote shown at peak. A handheld that sends its picker id
+    cannot act on an order that has since gone to someone else.
+\end{itemize}
+
+\section{Rider Handoff (HLD 5, service 11)}
+
+The Rider Handoff Adapter makes sure the right bag goes to the right rider. Before it, handover was one unchecked
+call, and a rider could leave with someone else's order.
+
+\begin{enumerate}
+  \item \textbf{Assigned.} When an order is packed, the rider system sends a rider. In the prototype a stand-in picks
+    one from a fixed list (R-11 to R-15) inside the packing transaction, so a packed order always has a rider.
+  \item \textbf{Arrived.} The rider checks in at the desk for an order and is told its crate slot. Another rider's
+    order (\texttt{wrong\_rider}), or one not yet packed (\texttt{not\_ready}), is refused.
+  \item \textbf{Collected.} The desk scans the bag before handing it over. A bag from another order
+    (\texttt{wrong\_bag}) or a rider other than the assigned one (\texttt{wrong\_rider}) is refused and the order
+    stays packed; the refusal names the crate slot holding the right bag.
+\end{enumerate}
+
+The time from packed to handed over is a fulfilment KPI (p90), so slow pick-ups show up next to slow packing.
+
+\section{Order to dispatch (HLD 6.1)}
+
+A paid order reaches a rider in seven steps, and stock leaves the books only at packing. That one rule keeps every
+failure path cheap: before packing, any way out only gives a hold back.
+
+\begin{enumerate}
+  \item \textbf{Hold.} At checkout, Inventory holds the whole cart for 10 minutes, or none of it.
+  \item \textbf{Pay.} Payment confirms the hold and publishes \texttt{order.paid}. The orchestrator creates the job
+    and its pick tasks, oldest batch first, in walking order.
+  \item \textbf{Claim.} A picker claims one order, or three at peak, with a conditional \texttt{UPDATE}.
+  \item \textbf{Pick.} The picker walks the route and scans each unit into its tote.
+  \item \textbf{Pack.} At the desk the sale is committed and a rider is assigned.
+  \item \textbf{Check in.} The rider is told which crate slot holds the bag.
+  \item \textbf{Hand over.} The desk scans the bag; only this order's bag goes to this order's rider.
+\end{enumerate}
+
+\paragraph{When an item is missing} (the HLD 9.2 saga: next bin, else substitute, else refund). Units the picker
+found stay picked. The rest move to another bin with spare stock if there is one. Otherwise they are dropped and
+refunded through \texttt{order.line\_dropped}, and a substitute is offered.
+
+To accept a substitute, the demo has the picker approve it on the customer's behalf; a real app would ask the
+customer on their phone. The substitute is held in the same transaction that changes the order line
+(\texttt{inventory.swap\_line}, from Member~1). % TODO: update once swap_line lands (task 2.4, second half).
+
+\paragraph{Cancel and refunds.} Until packing, a cancel gives back every hold, and \texttt{order.cancelled} refunds
+only those units. Units dropped earlier were refunded by their own \texttt{order.line\_dropped}, so the two never add up
+to more than the order: in the tests, Rs~400 dropped plus Rs~560 cancelled is the order's Rs~960. After packing, a
+cancel would be a return, which is out of scope, so it is refused (\texttt{too\_late}).
+
+\section{Measurements}
+
+Batch picking halves the walking at peak. The timing run's times are compressed, so they compare batching with
+one order per walk; they do not test the HLD 12 time targets.
+
+\paragraph{Walking distance} (\texttt{scripts/compare\_picking.py}, task 2.6). The same 30 random paid orders were
+picked twice. One order per walk took 30 walks and 622 steps; batches of up to 3 took 12 walks and 322 steps, 48\%
+less (46--49\% on other random seeds). A walk's distance is twice the furthest bin it visits, counted in bin steps.
+
+\paragraph{Timing run} (\texttt{scripts/simulate\_orders.py}, task 2.8). 100 random paid orders, all waiting at the
+start, were picked and packed through the real API, with one walk step taking 0.05\,s (seed 7). The stock audit was
+clean after every run (Table~\ref{tab:timing-run}).
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}lrrrl@{}}
+    \toprule
+    KPI & \shortstack[r]{One order per walk\\1 picker} & \shortstack[r]{Batches\\1 picker}
+        & \shortstack[r]{Batches\\3 pickers} & HLD 12 target \\
+    \midrule
+    Walks                       & 100      & 34       & 34       &               \\
+    Time to clear the queue (s) & 113      & 55       & 19       &               \\
+    Order to packed, p90 (s)    & 103.3    & 49.6     & 17.0     & $\le 120$     \\
+    Order to packed, p50 (s)    & 58.1     & 28.6     & 9.9      &               \\
+    Claim to packed, p90 (s)    & 1.8      & 1.9      & 1.9      &               \\
+    Fill rate                   & 100\%    & 100\%    & 100\%    & $\ge 99\%$    \\
+    Items per picker-hour       & 8{,}905  & 18{,}149 & 18{,}278 & $\ge 100$     \\
+    \bottomrule
+  \end{tabular}
+  \caption{Timing run: 100 paid orders, 0.05\,s per walk step, seed 7. The time-based targets are shown for
+    reference only: with walking compressed, those rows are not a pass.}
+  \label{tab:timing-run}
+\end{table}
+
+\paragraph{What the simulation can and cannot tell us.} Its comparisons hold, because every run shares the same orders,
+store layout and walking speed: batching cut walks from 100 to 34 and halved the time to clear the queue. It also
+shows the code stays correct under load, since every order was packed and the stock audit stayed clean.
+
+Its absolute numbers do not hold. Walking is compressed, and scanning, packing and handover take no time, so 18,000
+items per picker-hour describes the code, not people. All orders arrive at once, so order-to-packed mostly measures how
+fast the pickers drain the queue.
+
+Fill rate is 100\% only because no shelf is ever empty in the simulation. Real numbers need timed pickers in a real or
+mock-up store, with orders arriving through the day.
+
+\section{Trade-off: batch picking at peak (HLD 13)}
+
+We batch orders only when at least 4 are waiting. Batching halves the walking at peak, and the threshold keeps it from
+making an order wait when the store is quiet.
+
+HLD 13.1 chose ``single-order off-peak, batch picking at peak'' because ``batching raises throughput at peak but adds
+wait when orders are few''. We measured the first half: 48\% less walking for 30 orders. With one picker, a 100-order
+queue cleared in 55\,s instead of 113\,s (compressed time).
+
+The second half is handled by design rather than measured. With fewer than 4 orders waiting, a picker takes one at
+once, so no order waits for a batch to fill. With 4 or more, a batch of 3 still leaves at least one order for the next
+picker.
+
+What batching still costs:
+\begin{itemize}
+  \item Each order waits while the picker walks to the other orders' bins. In the timing run, claim-to-packed p90
+    barely moved (1.8\,s to 1.9\,s), but on a real floor this is real walking time.
+  \item The picker must put each item in the right tote, and nothing checks the tote yet.
+  \item A batch is the 3 oldest orders, not 3 whose items sit close together, so some batches save little walking.
+\end{itemize}
+
+\section{Limits and open items}
+
+Two limits wait on Member~1's Inventory work; the rest are prototype shortcuts, each with a clear next step
+(Table~\ref{tab:limits}).
+
+\begin{table}[!htb]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}
+                  >{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+    \toprule
+    Limit & What it means & Next step \\
+    \midrule
+    A substitute is offered but cannot be accepted
+      & The customer is refunded instead of getting the substitute
+      & Accept endpoint and button once \texttt{inventory.swap\_line} exists (task 2.4) \\
+    \addlinespace[3pt]
+    Expiry write-off in the middle of a line
+      & The order cannot be packed (\texttt{stock\_mismatch}) and has to be cancelled
+      & Inventory's write-off must leave units already in a tote; passed to Member~1 \\
+    \addlinespace[3pt]
+    Units typed as ``found'' are not scanned
+      & They skip the barcode check
+      & Scan them before packing \\
+    \addlinespace[3pt]
+    The picker check is opt-in
+      & A handheld that sends no \texttt{picker\_id} can still act on an order since given to someone else
+      & The demo station and phone screen send it; make it required \\
+    \addlinespace[3pt]
+    Riders are made up
+      & A fixed list stands in for the rider system, and the desk checks riders in
+      & Connect a real rider system \\
+    \addlinespace[3pt]
+    Refunds use today's price
+      & A price change between checkout and refund would refund the wrong amount
+      & Store the price on each reservation line \\
+    \addlinespace[3pt]
+    Batches are the oldest orders
+      & Orders are not grouped by where their items sit
+      & Group by zone at peak \\
+    \bottomrule
+  \end{tabular}
+  \caption{Limits of the fulfilment prototype and what would close them.}
+  \label{tab:limits}
+\end{table}
