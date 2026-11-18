@@ -1,4 +1,5 @@
-"""Fulfilment KPIs (Member 2 guide, task 2.1) and the stalled-order list (task 2.5) that the ops page shows."""
+"""Fulfilment KPIs (Member 2 guide, task 2.1) and the stalled-order list (task 2.5) that the ops page shows.
+More on stalled orders in test_stuck_orders.py."""
 from datetime import timedelta
 
 from app import config
@@ -64,19 +65,19 @@ def test_percentile_takes_the_value_at_index_q_times_n_minus_one():
     assert fulfilment.percentile([7], 0.9) == 7
 
 
-def test_an_order_still_being_picked_long_after_its_claim_is_stalled(client, db, sku):
+def test_an_order_with_no_picker_activity_for_a_while_is_stalled(client, db, sku):
     place_paid_order(client, "s-1", 1, [(sku("Basmati rice"), 1)])
     place_paid_order(client, "s-2", 1, [(sku("Sugar"), 1)])
     client.get("/v1/pickers/picker1/next-task", params={"store_id": 1})
     client.get("/v1/pickers/picker2/next-task", params={"store_id": 1})
     late = db.query(FulfilmentJob).filter_by(order_id="s-1").one()
-    late.picking_at = utcnow() - timedelta(minutes=config.PICK_STALL_MINUTES + 1)
+    late.picking_at = late.last_activity_at = utcnow() - timedelta(minutes=config.PICK_STALL_MINUTES + 1)
     db.commit()
 
     stalled = fulfilment.attention(db, 1)["stalled"]
 
     assert [s["order_id"] for s in stalled] == ["s-1"]          # s-2 was only just claimed
-    assert stalled[0]["picker_id"] == "picker1" and stalled[0]["minutes_since_claim"] > config.PICK_STALL_MINUTES
+    assert stalled[0]["picker_id"] == "picker1" and stalled[0]["minutes_idle"] > config.PICK_STALL_MINUTES
 
 
 def test_the_ops_page_now_shows_fulfilment_numbers(client, sku):

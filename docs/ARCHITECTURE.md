@@ -175,7 +175,8 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | H3 delivery zones | H3 cells (resolution 9) mapped to stores | Member 4: done |
 | Hourly forecasts, ML model | Daily forecast: three simple models compared by WAPE, weekday average in use | Member 3 |
 | Reservation timeout sweeper | Automatic sweep every `SWEEP_INTERVAL_SECONDS`, plus the manual endpoint | Member 1: done |
-| Substitution and refund saga | Line is dropped, hold released | Member 2 |
+| Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered; accepting it waits for `inventory.swap_line` | Member 2 |
+| Stuck orders | No claim, scan or shelf report for `PICK_STALL_MINUTES`: back to the queue every `STALL_CHECK_SECONDS` (`fulfilment.recover_stalled`), or flagged if items are in a tote | Member 2: done |
 | Batch picking at peak | One order per picker | Member 2 |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
 | Store edge node | Not built; design note and an outage experiment in [`EDGE_NODE.md`](EDGE_NODE.md) | Member 4 (design only) |

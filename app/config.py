@@ -42,8 +42,12 @@ FRESH_SHELF_LIFE_DAYS = int(os.getenv("FRESH_SHELF_LIFE_DAYS", "7"))
 
 # Fulfilment: a store with more than this many unpacked orders is marked "busy" (HLD 9.2).
 BUSY_BACKLOG_THRESHOLD = int(os.getenv("BUSY_BACKLOG_THRESHOLD", "5"))
-# An order still being picked this many minutes after it was claimed is listed as stalled (task 2.5).
+# An order being picked with no claim, scan or shelf report for this many minutes is stalled (task 2.5). If nothing
+# is in its tote yet it goes back to the queue for another picker; otherwise it is listed for a person to sort out.
 PICK_STALL_MINUTES = float(os.getenv("PICK_STALL_MINUTES", "5"))
+STALL_CHECK_SECONDS = float(os.getenv("STALL_CHECK_SECONDS", "60"))    # how often the background job looks
+# A packed bag waiting longer than this for a rider is listed as needing attention (task 2.5).
+RIDER_WAIT_MINUTES = float(os.getenv("RIDER_WAIT_MINUTES", "5"))
 
 # Live event feed (HLD 8.2): the relay sends new events to the sinks this often, at most this many per pass.
 RELAY_INTERVAL_SECONDS = float(os.getenv("RELAY_INTERVAL_SECONDS", "0.2"))

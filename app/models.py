@@ -189,6 +189,8 @@ class FulfilmentJob(Base):
     crate_slot: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     picking_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # The picker's last sign of life on this order: claim, scan or shelf report (task 2.5).
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     packed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     handed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     tasks: Mapped[list["PickTask"]] = relationship(order_by="PickTask.seq", cascade="all, delete-orphan")
