@@ -131,8 +131,8 @@ cancel would be a return, which is out of scope, so it is refused (\texttt{too\_
 
 \section{Measurements}
 
-Batch picking halves the walking at peak, and the timing run meets every HLD 12 fulfilment target, in compressed
-time.
+Batch picking halves the walking at peak. The timing run's times are compressed, so they compare batching with
+one order per walk; they do not test the HLD 12 time targets.
 
 \paragraph{Walking distance} (\texttt{scripts/compare\_picking.py}, task 2.6). The same 30 random paid orders were
 picked twice. One order per walk took 30 walks and 622 steps; batches of up to 3 took 12 walks and 322 steps, 48\%
@@ -159,7 +159,8 @@ clean after every run (Table~\ref{tab:timing-run}).
     Items per picker-hour       & 8{,}905  & 18{,}149 & 18{,}278 & $\ge 100$     \\
     \bottomrule
   \end{tabular}
-  \caption{Timing run: 100 paid orders, 0.05\,s per walk step, seed 7.}
+  \caption{Timing run: 100 paid orders, 0.05\,s per walk step, seed 7. The time-based targets are shown for
+    reference only: with walking compressed, those rows are not a pass.}
   \label{tab:timing-run}
 \end{table}
 
