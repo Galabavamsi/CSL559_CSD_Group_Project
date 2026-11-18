@@ -84,7 +84,8 @@ def test_picker_cannot_scan_or_pack_another_stores_order(client, client_as, sku)
                          json={"barcode": task["barcode"], "qty": 1}).status_code == 403
     assert outsider.post(f"/v1/pick-tasks/{task['task_id']}/short").status_code == 403
     assert outsider.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-1"}).status_code == 403
-    assert outsider.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover").status_code == 403
+    assert outsider.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover",
+                         json={"rider_id": "R-11", "scanned_order_id": job["order_id"]}).status_code == 403
 
 
 def test_receiver_cannot_adjust_stock_but_manager_can(client_as, sku):

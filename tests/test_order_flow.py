@@ -30,7 +30,9 @@ def test_paid_order_is_picked_packed_and_handed_over(client, sku):
     row = client.get("/v1/stores/1/availability", params={"skus": str(rice)}).json()[0]
     assert (row["on_hand"], row["reserved"]) == (28, 0)
 
-    handed = client.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover").json()
+    rider = packed["rider"]["rider_id"]                     # the rider system sent someone when it was packed
+    handed = client.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover",
+                         json={"rider_id": rider, "scanned_order_id": "order-1"}).json()
     assert handed["state"] == "handed_over"
     event_types = [e["type"] for e in client.get("/v1/events", params={"limit": 50}).json()]
     assert "order.paid" in event_types and "order.ready_for_pickup" in event_types

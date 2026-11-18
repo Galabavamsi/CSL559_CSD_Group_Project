@@ -113,9 +113,10 @@ def test_a_packed_order_cannot_be_cancelled(client, sku, handed_over):
     place_paid_order(client, "c-4", 1, [(rice, 2)])
     job = next_job(client)
     scan_all(client, job)
-    client.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"})
+    packed = client.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"}).json()
     if handed_over:
-        client.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover")
+        client.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover",
+                    json={"rider_id": packed["rider"]["rider_id"], "scanned_order_id": "c-4"})
 
     res = cancel(client, job["job_id"])
 

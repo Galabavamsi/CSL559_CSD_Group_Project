@@ -1,4 +1,4 @@
-"""Fulfilment Orchestrator (HLD service 4) and Rider Handoff Adapter (service 11).
+"""Fulfilment Orchestrator (HLD service 4); the Rider Handoff Adapter (service 11) is in riders.py.
 
 Turns a paid order into a fulfilment job with pick tasks, and tracks the job until a rider
 takes the bag:   created -> picking -> packed -> handed_over   (or cancelled).
@@ -194,19 +194,15 @@ def cancel(db: Session, job_id: int, reason: str) -> FulfilmentJob:
     return job
 
 
-def handover(db: Session, job_id: int) -> FulfilmentJob:
-    """Rider Handoff: the rider has collected the packed bag."""
-    job = get_job(db, job_id)
-    if job.state == "handed_over":
-        return job
-    if job.state != "packed":
-        raise DomainError(409, "not_packed", f"Job is {job.state}; only a packed order can be handed to a rider")
-    job.state = "handed_over"
-    job.handed_at = utcnow()
-    events.publish(db, "fulfilment.state_changed", job.store_id,
-                   {"job_id": job.id, "order_id": job.order_id, "state": job.state})
-    db.commit()
-    return job
+def _rider_view(assignment) -> dict | None:
+    if assignment is None:
+        return None
+
+    def stamp(moment):
+        return moment.isoformat() + "Z" if moment else None
+
+    return {"rider_id": assignment.rider_id, "status": assignment.status, "assigned_at": stamp(assignment.assigned_at),
+            "arrived_at": stamp(assignment.arrived_at), "collected_at": stamp(assignment.collected_at)}
 
 
 def job_view(job: FulfilmentJob) -> dict:
@@ -224,6 +220,7 @@ def job_view(job: FulfilmentJob) -> dict:
         "created_at": job.created_at.isoformat() + "Z",
         "last_activity_at": job.last_activity_at.isoformat() + "Z" if job.last_activity_at else None,
         "seconds_to_pack": seconds(job.created_at, job.packed_at),
+        "rider": _rider_view(job.rider),                    # task 2.7: who collects it, and how far they are
         "tasks": [
             {
                 "task_id": t.id,
@@ -285,6 +282,7 @@ def metrics(db: Session, store_id: int) -> dict:
     packed = [j for j in finished if j.state in ("packed", "handed_over")]
     to_pack = [(j.packed_at - j.created_at).total_seconds() for j in packed]
     claim_to_pack = [(j.packed_at - j.picking_at).total_seconds() for j in packed if j.picking_at]
+    to_rider = [(j.handed_at - j.packed_at).total_seconds() for j in packed if j.handed_at]
     units_picked = db.scalar(select(func.coalesce(func.sum(PickTask.qty), 0))
                              .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
                              .where(*is_finished, PickTask.status == "picked"))
@@ -297,6 +295,7 @@ def metrics(db: Session, store_id: int) -> dict:
         "seconds_to_pack_p50": round(percentile(to_pack, 0.5), 1) if to_pack else None,
         "seconds_to_pack_p90": round(percentile(to_pack, 0.9), 1) if to_pack else None,
         "seconds_claim_to_pack_p90": round(percentile(claim_to_pack, 0.9), 1) if claim_to_pack else None,
+        "seconds_packed_to_handover_p90": round(percentile(to_rider, 0.9), 1) if to_rider else None,   # task 2.7
         "fill_rate": units_picked / units_ordered if units_ordered else None,
         "items_per_picker_hour": round(units_picked / picking_hours, 1) if picking_hours else None,
     }

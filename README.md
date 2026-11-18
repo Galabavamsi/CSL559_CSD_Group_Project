@@ -19,7 +19,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 | Pick | A picker claims the next order and gets lines in walking order, oldest batch first; when 4 or more orders wait, a picker takes 3 in one walk, one tote each |
 | Scan | Every line is checked by barcode; a wrong item is rejected; units can be scanned one at a time |
 | Empty shelf | The count is corrected, the line moves to another bin, or is dropped if none is left; if only some were there ("found 4 of 6"), those are kept |
-| Pack and hand off | Packing commits the sale; a rider handoff closes the order |
+| Pack and hand off | Packing commits the sale and assigns a rider; the rider checks in for the crate slot, and the bag is handed over only if the scanned bag is that rider's order |
 | Restock | Low items are reordered from the hub; a received truck is put away and sellable at once |
 | Forecast | Reorder points are recalculated from a weekday-aware forecast; three models are compared by measured error (WAPE) |
 | Watch | An ops dashboard with problems first and every HLD 12 KPI beside its target, plus a live event feed for each store |
@@ -179,7 +179,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock, supply KPIs (`GET /v1/stores/{id}/supply-kpis`) | Run by hand; no bin-capacity cap |
 | 9 Inbound | `inbound` | Goods receipt against a transfer order, shortfall report, putaway | One call does receive and putaway |
 | 10 Network Planning | `network_planning` | Orders and turned-away lookups per H3 cell, greedy max-coverage site suggestions, no-go cells, map at `/network.html` | Demand is generated (`scripts/generate_demand.py`); no-go cells are a config list, not a zoning check |
-| 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |
+| 11 Rider Handoff | `fulfilment` (`riders.py`) | A rider assigned when the order is packed; `POST /v1/riders/{id}/arrive` gives the crate slot; handover takes `rider_id` and `scanned_order_id` and refuses a wrong bag (`409 wrong_bag`) or rider (`409 wrong_rider`); packed-to-handover p90 in the fulfilment KPIs | No real rider system: riders are made up from a fixed list; the desk checks riders in and scans for them |
 | Kafka | `events.py` | Events written to an outbox table; a relay pushes them to sinks (a WebSocket feed per store) and marks them published; lag shown on the dashboard | No broker yet; the relay runs inside the app |
 | PostgreSQL + Redis | `db.py` | SQLite | One file, no sharding, no cache |
 | Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint; audit log of staff calls (`GET /v1/audit`); per-client rate limit on the open endpoints (`429`) | No gateway or mutual TLS; the rate limit is per process and per IP address; the audit log is never pruned and skips calls with no valid token; customer endpoints are open; demo accounts share one password |

@@ -195,6 +195,7 @@ class FulfilmentJob(Base):
     packed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     handed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     tasks: Mapped[list["PickTask"]] = relationship(order_by="PickTask.seq", cascade="all, delete-orphan")
+    rider: Mapped["RiderAssignment | None"] = relationship(uselist=False, cascade="all, delete-orphan")
 
 
 class PickTask(Base):
@@ -214,6 +215,18 @@ class PickTask(Base):
     sku: Mapped[SKU] = relationship()
     bin: Mapped[Bin | None] = relationship()
     stock_item: Mapped[StockItem | None] = relationship()
+
+
+class RiderAssignment(Base):
+    """The rider sent to collect one packed order (HLD service 11, task 2.7). assigned -> arrived -> collected."""
+    __tablename__ = "rider_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("fulfilment_jobs.id"), unique=True)
+    rider_id: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(12), default="assigned")
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    arrived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 # --------------------------------------------------------------------------- replenishment
