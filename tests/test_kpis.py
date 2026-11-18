@@ -25,6 +25,13 @@ def test_stock_out_rate_counts_skus_with_nothing_to_sell(client, sku):
     assert (store_1["value"], store_1["met"]) == (0.0, True)
 
 
+def test_a_buffer_that_hides_the_last_units_is_a_stock_out(client, sku):
+    ice_cream = sku("Vanilla ice cream")                       # exactly 1 left in store 1
+    assert client.put(f"/v1/stores/1/stock-settings/{ice_cream}", json={"safety_buffer": 1}).status_code == 200
+    out = kpis(client)["stock_out_rate"]                       # customers can no longer buy it
+    assert (out["value"], out["out_of_stock"]) == (0.0625, [{"sku_id": ice_cream, "sku": "Vanilla ice cream 500 ml"}])
+
+
 def test_writing_off_stock_raises_the_wastage_rate(client, sku):
     before = kpis(client)["wastage_rate"]
     # The seed week sold 148 milk x Rs 28, 87 bread x 45, 51 eggs x 60 and 36 chips x 30 = Rs 12,199.
@@ -66,7 +73,8 @@ def test_days_of_cover_compares_stock_with_the_forecast(client, db, sku):
     cover = kpis(client)["days_of_cover"]
     by_sku = {row["sku_id"]: row for row in cover["per_sku"]}
     milk = by_sku[sku("Toned milk")]
-    assert (milk["days"], milk["fresh"], milk["met"]) == (3.0, True, False)   # 30 / 10; fresh target is 1-2 days
+    # 30 on hand less the seeded buffer of 2 = 28 customers can buy; 28 / 10 = 2.8 days, over the fresh 1-2 days
+    assert (milk["atp"], milk["days"], milk["fresh"], milk["met"]) == (28, 2.8, True, False)
     assert by_sku[sku("White bread")]["met"] is True           # 4 / 4 = 1 day, fresh
     assert by_sku[sku("Potato chips")]["met"] is True          # 30 / 10 = 3 days: target 3-5 days
     assert by_sku[sku("Basmati rice")]["days"] is None         # no forecast demand: not measured
