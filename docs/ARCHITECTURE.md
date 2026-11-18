@@ -104,7 +104,7 @@ WebSocket feed) and marks them published; delivery is at least once.
 | `order.paid` | inventory | fulfilment (creates the job) |
 | `fulfilment.state_changed` | fulfilment, pickpack | nobody yet |
 | `order.ready_for_pickup` | pickpack | nobody yet (the rider system would) |
-| `order.cancelled` (payload: `order_id`, `job_id`, `reason`) | fulfilment | nobody yet (the Order service would refund) |
+| `order.cancelled` (payload: `order_id`, `job_id`, `reason`, `refund_amount`) | fulfilment | nobody yet (the Order service would refund `refund_amount`: the units still held; dropped units were refunded by `order.line_dropped`) |
 | `order.line_dropped` (payload: `order_id`, `job_id`, `sku_id`, `qty`, `refund_amount`) | fulfilment (when a job is created), pickpack (empty shelf) | nobody yet (the Order service would refund that line) |
 | `store.status_changed` | fulfilment | nobody yet |
 | `transfer_order.created` / `.dispatched` | replenishment | nobody yet (the hub WMS would) |
