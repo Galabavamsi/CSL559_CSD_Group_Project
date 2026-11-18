@@ -54,7 +54,7 @@ Because logic lives in `service.py`, modules can call each other directly
 | (event) | | `fulfilment.on_order_paid` → `create_job` | A `FulfilmentJob` and its `PickTask` rows are written. `inventory.allocate` chooses bins, oldest batch first |
 | Claim | `GET /v1/pickers/{id}/next-task` | `pickpack.next_job` | Conditional `UPDATE` moves the job `created → picking` for exactly one picker |
 | Scan | `POST /v1/pick-tasks/{id}/scans` | `pickpack.scan` | Barcode checked; a conditional `UPDATE` adds the units to `scanned_qty` only if the line has room; the task becomes `picked` (with `picked_at`) when every unit is scanned |
-| Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Units found (`{"found": n}`, default: those already scanned) become a `picked` line of their own; for the rest, count corrected (`not_found` ledger row), re-allocated to another bin, or dropped and its hold released |
+| Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Units found (`{"found": n}`, default: those already scanned) become a `picked` line of their own; for the rest, count corrected (`not_found` ledger row), re-allocated to another bin, or dropped: hold released, `order.line_dropped` published, and a substitute offered (`substitute_offer`) |
 | Pack | `POST /v1/fulfilment-jobs/{id}/packed` | `pickpack.pack` → `inventory.commit_sale` | `StockItem.qty`, `qty_on_hand` and `qty_reserved` all drop; `sale` ledger rows; publishes `order.ready_for_pickup` |
 | Cancel (until packed) | `POST /v1/fulfilment-jobs/{id}/cancel` | `fulfilment.cancel` → `inventory.unreserve` | Conditional `UPDATE` moves the job `created`/`picking → cancelled`; `qty_reserved` drops for every line still held; `qty_on_hand` is untouched; publishes `order.cancelled` |
 | Handoff | `POST /v1/fulfilment-jobs/{id}/handover` | `fulfilment.handover` | Job becomes `handed_over` |
@@ -105,6 +105,7 @@ WebSocket feed) and marks them published; delivery is at least once.
 | `fulfilment.state_changed` | fulfilment, pickpack | nobody yet |
 | `order.ready_for_pickup` | pickpack | nobody yet (the rider system would) |
 | `order.cancelled` (payload: `order_id`, `job_id`, `reason`) | fulfilment | nobody yet (the Order service would refund) |
+| `order.line_dropped` (payload: `order_id`, `job_id`, `sku_id`, `qty`, `refund_amount`) | fulfilment (when a job is created), pickpack (empty shelf) | nobody yet (the Order service would refund that line) |
 | `store.status_changed` | fulfilment | nobody yet |
 | `transfer_order.created` / `.dispatched` | replenishment | nobody yet (the hub WMS would) |
 | `goods.received` | inbound | nobody yet |
