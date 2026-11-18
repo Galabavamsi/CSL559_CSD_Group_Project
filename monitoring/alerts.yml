@@ -1,0 +1,31 @@
+# The alert rules from docs/ARCHITECTURE.md, section 9 (HLD 12). Thresholds are first guesses to tune with real
+# traffic. Prometheus shows them under Alerts; sending them anywhere would need an Alertmanager.
+groups:
+  - name: darkstore
+    rules:
+      - alert: ReservationFailureSpike
+        expr: sum(rate(reservations_total{result="insufficient_stock"}[5m])) / sum(rate(reservations_total[5m])) > 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: More than 20% of checkout holds fail for lack of stock
+
+      - alert: EventLag
+        expr: outbox_lag_seconds > 30
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: The oldest unsent event is more than 30 seconds old
+
+      - alert: SlowReads
+        expr: histogram_quantile(0.99, sum by (le, route) (rate(http_request_duration_seconds_bucket{method="GET"}[5m]))) > 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Read p99 on {{ $labels.route }} is above the 100 ms target"
+
+      - alert: StoreOffline
+        expr: store_seconds_since_last_event > 900
+        labels: {severity: critical}
+        annotations:
+          summary: "Store {{ $labels.store_id }} has published nothing for 15 minutes"

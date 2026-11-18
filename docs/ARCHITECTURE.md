@@ -175,7 +175,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | Batch picking at peak | One order per picker | Member 2 |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
 | Store edge node | Not built; design note and an outage experiment in [`EDGE_NODE.md`](EDGE_NODE.md) | Member 4 (design only) |
-| Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); no Prometheus server or Grafana in the prototype | Members 2, 3 and 4 |
+| Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); Prometheus with the alert rules and a Grafana dashboard in Docker Compose (`--profile monitoring`); no Alertmanager | Members 2, 3 and 4 |
 
 ## 9. Monitoring
 
@@ -221,5 +221,14 @@ connections do not pass through the HTTP middleware and are not audited.
 | Cache and database disagree | Member 1's stock audit (task 1.8) | any mismatch; not wired up until the audit exists |
 | Store offline | `store_seconds_since_last_event` | above 15 minutes during opening hours: `store_seconds_since_last_event > 900` |
 
-The thresholds (20%, 15 minutes) are first guesses to tune with real traffic. Prometheus and Grafana
-themselves are not part of the prototype; the rules above are what you would load into Prometheus.
+The thresholds (20%, 15 minutes) are first guesses to tune with real traffic. The rules are in
+`monitoring/alerts.yml`, and Prometheus evaluates them when started with `docker compose --profile monitoring up`;
+without an Alertmanager they show on Prometheus's *Alerts* page and nowhere else. "Store offline" ignores opening
+hours, and the cache rule waits for Member 1's audit.
+
+Grafana, in the same profile, opens on a *Dark store* dashboard (`monitoring/grafana/dashboards/darkstore.json`):
+requests per second and read p99 per route against the 100 ms target, checkout holds by result, 429s and 5xx,
+events by type, scans by result, outbox lag and each store's silence. A screenshot taken during a load test is in
+`docs/img/grafana-dashboard.png`; in that run every read stayed under 50 ms except the picker's
+`GET /v1/pickers/{picker_id}/next-task`, at a p99 of 250 to 500 ms. That call claims a job, so it writes, and
+probably waits on SQLite's write lock behind checkout.
