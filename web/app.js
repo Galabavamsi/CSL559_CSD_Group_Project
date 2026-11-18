@@ -12,7 +12,8 @@ const state = {
   hold: null,       // the current reservation, if any
   holdTimer: null,
   paid: null,       // the customer's last paid order, which they may still cancel until it is packed
-  job: null,        // the picker's current order
+  jobs: [],         // the picker's current orders: one, or a batch at peak (task 2.6)
+  walkSize: 0,      // how many orders this walk started with, so the last one of a batch keeps its tote name
 };
 
 // ---------------------------------------------------------------- helpers
@@ -243,11 +244,19 @@ async function cancelHold() {
 }
 
 // ---------------------------------------------------------------- picker station
+// The picker gets one order off-peak, or a batch of up to three at peak, each in its own tote (A, B, C), with every
+// line of every order in one walking order (task 2.6). Scanning and packing stay per line and per order.
 
 async function nextJob() {
-  const result = await api("GET", `/v1/pickers/${picker()}/next-task?store_id=${state.opsStore}`, undefined, picker());
-  state.job = result.job;
-  say($("picker-message"), result.job ? "" : "No paid orders are waiting in this store.");
+  const batch = await api("GET", `/v1/pickers/${picker()}/next-batch?store_id=${state.opsStore}`, undefined, picker());
+  // Asking again mid-walk returns what is left of the same walk: it stays a batch even when one order remains.
+  const sameWalk = batch.jobs.length > 0 && batch.jobs.every((j) => state.jobs.some((s) => s.job_id === j.job_id));
+  state.walkSize = sameWalk ? Math.max(state.walkSize, batch.jobs.length) : batch.jobs.length;
+  state.jobs = batch.jobs;
+  const count = batch.jobs.length;
+  say($("picker-message"),
+    count === 0 ? "No paid orders are waiting in this store."
+      : count > 1 ? `Busy store: ${count} orders in one walk. Put each item in the tote shown on its line.` : "");
   renderJob();
   refreshOps();
 }
@@ -259,114 +268,154 @@ const TASK_STATUS_TEXT = {
   cancelled: "Order cancelled: put it back",
 };
 
+// A walk is a batch if it started with more than one order (or, after a reload, still holds a tote past A).
+const inBatch = () => state.walkSize > 1 || state.jobs.some((j) => j.tote && j.tote !== "A");
+const toteLabel = (job) => (inBatch() && job.tote ? `Tote ${job.tote}: ` : "");
+const linesLeft = () => state.jobs.reduce((n, job) => n + job.tasks.filter((t) => t.status === "pending").length, 0);
+
+function updateJob(job) {
+  state.jobs = state.jobs.map((j) => (j.job_id === job.job_id ? job : j));
+}
+
+function dropJob(jobId) {
+  state.jobs = state.jobs.filter((j) => j.job_id !== jobId);
+}
+
 /** A scan, empty-shelf report or pack was refused because the order is no longer this picker's to pick: it was
  *  cancelled (task 2.3), or it sat idle and went back to the queue or to another picker (task 2.5). Tell the
- *  picker what to do; any other error is shown as usual. */
-async function explainIfOrderGone(error) {
-  if (!["job_not_picking", "not_your_order"].includes(error.code) || !state.job) throw error;
-  const job = await api("GET", `/v1/fulfilment-jobs/${state.job.job_id}`, undefined, picker());
+ *  picker what to do with it; the rest of a batch carries on. Any other error is shown as usual. */
+async function explainIfOrderGone(error, job) {
+  if (!["job_not_picking", "not_your_order"].includes(error.code) || !job) throw error;
+  const now = await api("GET", `/v1/fulfilment-jobs/${job.job_id}`, undefined, picker());
   let text;
-  if (job.state === "cancelled") text = "This order was cancelled. Put the items back on their shelves.";
-  else if (error.code === "not_your_order" || job.state === "created") {
+  if (now.state === "cancelled") text = "This order was cancelled. Put the items back on their shelves.";
+  else if (error.code === "not_your_order" || now.state === "created") {
     text = "This order sat idle, so it went back to the queue. Put back anything you took, then press Get next order.";
   } else throw error;
-  state.job = null;
+  const label = toteLabel(job);
+  dropJob(job.job_id);
   renderJob();
-  say($("picker-message"), text, "bad");
+  say($("picker-message"), label + text, "bad");
   refreshOps();
+}
+
+function renderLine(job, task) {
+  const head = el("div", { className: "task-head" },
+    ...(inBatch() && job.tote ? [el("span", { className: "tote" }, `Tote ${job.tote}`)] : []),
+    el("span", { className: "bin" }, task.bin || "no bin"),
+    el("span", { className: "task-qty" }, `${task.qty} × ${task.sku}`));
+  const item = el("li", { className: task.status === "pending" ? "" : "is-done" }, head);
+  if (task.batch_no) {
+    item.append(el("p", { className: "task-meta" }, `Batch ${task.batch_no}, expires ${task.expiry_date}`));
+  }
+  if (task.status === "pending" && job.state === "picking") {
+    const left = task.qty - task.scanned_qty;
+    if (task.qty > 1) {
+      item.append(el("p", { className: "task-meta" }, `${task.scanned_qty} of ${task.qty} scanned`));
+    }
+    // "Scan item" puts every unit still needed in the tote; "Scan 1" is one beep of a real scanner (task 2.2).
+    const scanRight = el("button", { className: "btn btn-small btn-primary", textContent: "Scan item" });
+    const scanOne = el("button", { className: "btn btn-small", textContent: "Scan 1" });
+    const scanWrong = el("button", { className: "btn btn-small", textContent: "Scan a wrong item" });
+    scanRight.onclick = guarded($("picker-message"), () => scanTask(job, task, task.barcode, left));
+    scanOne.onclick = guarded($("picker-message"), () => scanTask(job, task, task.barcode, 1));
+    scanWrong.onclick = guarded($("picker-message"), () => scanTask(job, task, "0000000000000", 1));
+    // Not on shelf, or only some of it: the number found (empty means the units already scanned).
+    const found = el("input", { type: "number", min: String(task.scanned_qty), max: String(task.qty - 1),
+                                placeholder: "Found only…", className: "found-input" });
+    found.setAttribute("aria-label", `Units of ${task.sku} found in the bin`);
+    const missing = el("button", { className: "btn btn-small", textContent: "Not on shelf" });
+    missing.onclick = guarded($("picker-message"),
+      () => reportShort(job, task, found.value === "" ? undefined : Number(found.value)));
+    item.append(el("div", { className: "row row-wrap" },
+      scanRight, ...(left > 1 ? [scanOne] : []), scanWrong, ...(task.qty > 1 ? [found] : []), missing));
+  } else {
+    item.append(el("span", { className: `task-status ${task.status}` }, TASK_STATUS_TEXT[task.status] || task.status));
+  }
+  return item;
 }
 
 function renderJob() {
-  const job = state.job;
-  $("job-panel").hidden = !job;
-  if (!job) return;
-  $("job-title").textContent = `Order ${job.order_id}`;
-  $("task-list").replaceChildren(
-    ...job.tasks.map((task) => {
-      const head = el("div", { className: "task-head" },
-        el("span", { className: "bin" }, task.bin || "no bin"),
-        el("span", { className: "task-qty" }, `${task.qty} × ${task.sku}`));
-      const item = el("li", { className: task.status === "pending" ? "" : "is-done" }, head);
-      if (task.batch_no) {
-        item.append(el("p", { className: "task-meta" }, `Batch ${task.batch_no}, expires ${task.expiry_date}`));
-      }
-      if (task.status === "pending" && job.state === "picking") {
-        const left = task.qty - task.scanned_qty;
-        if (task.qty > 1) {
-          item.append(el("p", { className: "task-meta" }, `${task.scanned_qty} of ${task.qty} scanned`));
-        }
-        // "Scan item" puts every unit still needed in the tote; "Scan 1" is one beep of a real scanner (task 2.2).
-        const scanRight = el("button", { className: "btn btn-small btn-primary", textContent: "Scan item" });
-        const scanOne = el("button", { className: "btn btn-small", textContent: "Scan 1" });
-        const scanWrong = el("button", { className: "btn btn-small", textContent: "Scan a wrong item" });
-        scanRight.onclick = guarded($("picker-message"), () => scanTask(task, task.barcode, left));
-        scanOne.onclick = guarded($("picker-message"), () => scanTask(task, task.barcode, 1));
-        scanWrong.onclick = guarded($("picker-message"), () => scanTask(task, "0000000000000", 1));
-        // Not on shelf, or only some of it: the number found (empty means the units already scanned).
-        const found = el("input", { type: "number", min: String(task.scanned_qty), max: String(task.qty - 1),
-                                    placeholder: "Found only…", className: "found-input" });
-        found.setAttribute("aria-label", `Units of ${task.sku} found in the bin`);
-        const missing = el("button", { className: "btn btn-small", textContent: "Not on shelf" });
-        missing.onclick = guarded($("picker-message"),
-          () => reportShort(task, found.value === "" ? undefined : Number(found.value)));
-        item.append(el("div", { className: "row row-wrap" },
-          scanRight, ...(left > 1 ? [scanOne] : []), scanWrong, ...(task.qty > 1 ? [found] : []), missing));
-      } else {
-        item.append(el("span", { className: `task-status ${task.status}` }, TASK_STATUS_TEXT[task.status] || task.status));
-      }
-      return item;
-    }),
-  );
-  const pending = job.tasks.some((t) => t.status === "pending");
-  $("pack-row").hidden = !(job.state === "picking" && !pending);
-  $("handover").hidden = job.state !== "packed";
+  const jobs = state.jobs;
+  $("job-panel").hidden = !jobs.length;
+  if (!jobs.length) return;
+  $("job-title").textContent = inBatch()
+    ? `Batch: ${jobs.map((j) => `tote ${j.tote} ${j.order_id}`).join(" · ")}`
+    : `Order ${jobs[0].order_id}`;
+  // One walk serves the whole batch: every line of every order, nearest bin first.
+  const lines = jobs.flatMap((job) => job.tasks.map((task) => ({ job, task })));
+  lines.sort((a, b) => (a.task.walk_seq ?? 1e6) - (b.task.walk_seq ?? 1e6)
+    || (a.job.tote || "").localeCompare(b.job.tote || "") || a.task.seq - b.task.seq);
+  $("task-list").replaceChildren(...lines.map(({ job, task }) => renderLine(job, task)));
+  const ready = jobs.find((j) => j.state === "picking" && !j.tasks.some((t) => t.status === "pending"));
+  $("pack-row").hidden = !ready;
+  $("pack").textContent = ready && inBatch() ? `Mark tote ${ready.tote} packed` : "Mark packed";
+  const bagged = jobs.find((j) => j.state === "packed");
+  $("handover").hidden = !bagged;
+  $("handover").textContent = bagged && inBatch() ? `Rider collected tote ${bagged.tote}` : "Rider collected the bag";
 }
 
-async function scanTask(task, barcode, qty) {
+async function scanTask(job, task, barcode, qty) {
   const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty, picker_id: picker() }, picker())
-    .catch(explainIfOrderGone);
+    .catch((error) => explainIfOrderGone(error, job));
   if (!result) return;
   if (!result.match) {
-    say($("picker-message"), result.message, "bad");
+    say($("picker-message"), toteLabel(job) + result.message, "bad");
     return;
   }
-  state.job = result.job;
+  updateJob(result.job);
   const lineDone = result.job.tasks.find((t) => t.task_id === task.task_id)?.status === "picked";
-  if (!lineDone) say($("picker-message"), result.message, "good");                 // "3 of 6 scanned."
-  else say($("picker-message"), result.lines_left ? `Picked. ${result.lines_left} to go.` : "All lines done. Pack the order.", "good");
+  const left = linesLeft();
+  if (!lineDone) say($("picker-message"), toteLabel(job) + result.message, "good");     // "3 of 6 scanned."
+  else say($("picker-message"), left ? `Picked. ${left} to go.` : `All lines done. Pack ${inBatch() ? "each tote" : "the order"}.`, "good");
   renderJob();
 }
 
-async function reportShort(task, found) {
+async function reportShort(job, task, found) {
   const body = found === undefined ? { picker_id: picker() } : { found, picker_id: picker() };
   const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, body, picker())
-    .catch(explainIfOrderGone);
+    .catch((error) => explainIfOrderGone(error, job));
   if (!result) return;
-  state.job = result.job;
-  say($("picker-message"), result.message, result.dropped ? "bad" : "");
+  updateJob(result.job);
+  say($("picker-message"), toteLabel(job) + result.message, result.dropped ? "bad" : "");
   renderJob();
   refreshOps();
 }
 
+/** S-01 -> S-02, so each tote of a batch gets its own crate slot without typing. */
+function nextSlot(slot) {
+  const match = slot.match(/^(.*?)(\d+)$/);
+  return match ? match[1] + String(Number(match[2]) + 1).padStart(match[2].length, "0") : slot;
+}
+
 async function packJob() {
+  const job = state.jobs.find((j) => j.state === "picking" && !j.tasks.some((t) => t.status === "pending"));
+  if (!job) return;
   const slot = $("crate-slot").value.trim() || "S-01";
-  const packed = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot, picker_id: picker() }, picker())
-    .catch(explainIfOrderGone);
+  const label = toteLabel(job);
+  const packed = await api("POST", `/v1/fulfilment-jobs/${job.job_id}/packed`, { crate_slot: slot, picker_id: picker() }, picker())
+    .catch((error) => explainIfOrderGone(error, job));
   if (!packed) return;
-  state.job = packed;
-  const done = state.job.state === "packed";
+  const done = packed.state === "packed";
+  if (done) {
+    updateJob(packed);                     // kept until the rider collects it
+    $("crate-slot").value = nextSlot(slot);
+  } else {
+    dropJob(packed.job_id);
+  }
   say($("picker-message"),
-    done ? `Packed into ${slot}. The stock has now left the books.` : "Nothing could be picked, so the order was cancelled.",
+    label + (done ? `Packed into ${slot}. The stock has now left the books.` : "Nothing could be picked, so the order was cancelled."),
     done ? "good" : "bad");
-  if (!done) state.job = null;
   renderJob();
   refreshOps();
 }
 
 async function handover() {
-  const job = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/handover`, undefined, picker());
+  const bagged = state.jobs.find((j) => j.state === "packed");
+  if (!bagged) return;
+  const job = await api("POST", `/v1/fulfilment-jobs/${bagged.job_id}/handover`, undefined, picker());
   say($("picker-message"), `Order ${job.order_id} is with the rider.`, "good");
-  state.job = null;
+  dropJob(job.job_id);
   renderJob();
   refreshOps();
 }
@@ -504,7 +553,8 @@ async function resetDemo() {
   await api("POST", "/v1/admin/reset", undefined, ADMIN);
   clearHold();
   state.cart = {};
-  state.job = null;
+  state.jobs = [];
+  state.walkSize = 0;
   renderJob();
   say($("ops-message"), "Demo data reset.");
   say($("customer-message"), "");
@@ -556,7 +606,8 @@ async function start() {
   $("store-select").onchange = guarded($("ops-message"), async () => {
     state.opsStore = Number($("store-select").value);
     $("picker-id").textContent = picker();
-    state.job = null;
+    state.jobs = [];
+    state.walkSize = 0;
     renderJob();
     connectLive().catch(() => {});
     await refreshOps();

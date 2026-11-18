@@ -53,6 +53,7 @@ Because logic lives in `service.py`, modules can call each other directly
 | Pay | `POST /v1/reservations/{id}/confirm` | `inventory.confirm` | Reservation becomes `confirmed`; publishes `order.paid` |
 | (event) | | `fulfilment.on_order_paid` → `create_job` | A `FulfilmentJob` and its `PickTask` rows are written. `inventory.allocate` chooses bins, oldest batch first |
 | Claim | `GET /v1/pickers/{id}/next-task` | `pickpack.next_job` | Conditional `UPDATE` moves the job `created → picking` for exactly one picker |
+| Claim at peak | `GET /v1/pickers/{id}/next-batch` | `pickpack.next_batch` | With `BATCH_PICK_BACKLOG` or more waiting, the same conditional `UPDATE` for up to `BATCH_SIZE` jobs, each given a `tote` letter; one route through the store for all of them |
 | Scan | `POST /v1/pick-tasks/{id}/scans` | `pickpack.scan` | Barcode checked; a conditional `UPDATE` adds the units to `scanned_qty` only if the line has room; the task becomes `picked` (with `picked_at`) when every unit is scanned |
 | Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Units found (`{"found": n}`, default: those already scanned) become a `picked` line of their own; for the rest, count corrected (`not_found` ledger row), re-allocated to another bin, or dropped: hold released, `order.line_dropped` published, and a substitute offered (`substitute_offer`) |
 | Pack | `POST /v1/fulfilment-jobs/{id}/packed` | `pickpack.pack` → `inventory.commit_sale` | `StockItem.qty`, `qty_on_hand` and `qty_reserved` all drop; `sale` ledger rows; publishes `order.ready_for_pickup` |
@@ -177,7 +178,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | Reservation timeout sweeper | Automatic sweep every `SWEEP_INTERVAL_SECONDS`, plus the manual endpoint | Member 1: done |
 | Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered; accepting it waits for `inventory.swap_line` | Member 2 |
 | Stuck orders | No claim, scan or shelf report for `PICK_STALL_MINUTES`: back to the queue every `STALL_CHECK_SECONDS` (`fulfilment.recover_stalled`), or flagged if items are in a tote | Member 2: done |
-| Batch picking at peak | One order per picker | Member 2 |
+| Batch picking at peak | Up to `BATCH_SIZE` oldest orders in one walk at peak, one tote each; not grouped by where their items are | Member 2: done |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
 | Store edge node | Not built; design note and an outage experiment in [`EDGE_NODE.md`](EDGE_NODE.md) | Member 4 (design only) |
 | Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); Prometheus with the alert rules and a Grafana dashboard in Docker Compose (`--profile monitoring`); no Alertmanager | Members 2, 3 and 4 |

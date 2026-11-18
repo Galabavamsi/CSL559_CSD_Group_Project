@@ -24,8 +24,9 @@ class ScanIn(BaseModel):
 
 
 class ShortIn(BaseModel):
-    found: int | None = Field(default=None, ge=0, le=MAX_UNITS, description="Units that were in the bin; the rest are missing. "
-                                                            "Leave out to mean the units already scanned")
+    found: int | None = Field(default=None, ge=0, le=MAX_UNITS,
+                              description="Units that were in the bin; the rest are missing. "
+                                          "Leave out to mean the units already scanned")
     picker_id: str | None = Field(default=None, max_length=40, description="As for scans")
 
 
@@ -40,6 +41,16 @@ def next_task(picker_id: str, store_id: int, db: Session = Depends(get_db),
     check_store(staff, store_id)
     job = service.next_job(db, picker_id, store_id)
     return {"job": fulfilment.job_view(job) if job else None}
+
+
+@router.get("/v1/pickers/{picker_id}/next-batch", summary="One order off-peak, or a batch picked in one walk at peak")
+def next_batch(picker_id: str, store_id: int, db: Session = Depends(get_db),
+               staff: dict = Depends(require_role("picker", "packer"))):
+    """With at least BATCH_PICK_BACKLOG orders waiting, claims up to BATCH_SIZE; with fewer, one. A picker who still
+    has orders being picked gets those back. `totes` says which order goes in which tote; `route` is every line still
+    to pick from all of them, in walking order; `jobs` are the orders, as /v1/fulfilment-jobs/{id} shows them."""
+    check_store(staff, store_id)
+    return service.batch_view(service.next_batch(db, picker_id, store_id))
 
 
 @router.post("/v1/pick-tasks/{task_id}/scans", summary="Scan units of a line into the tote")

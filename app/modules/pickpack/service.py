@@ -1,8 +1,10 @@
 """Pick & Pack Service (HLD service 5): give pickers work, check every scan, pack the order."""
+from string import ascii_uppercase
+
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ... import events, metrics
+from ... import config, events, metrics
 from ...errors import DomainError, not_found
 from ...models import FulfilmentJob, PickTask, Reservation, utcnow
 from ..fulfilment import service as fulfilment
@@ -29,20 +31,73 @@ def next_job(db: Session, picker_id: str, store_id: int) -> FulfilmentJob | None
         )
         if candidate is None:
             return None
-        now = utcnow()
-        claimed = db.execute(
-            update(FulfilmentJob)
-            .where(FulfilmentJob.id == candidate.id, FulfilmentJob.state == "created")
-            .values(state="picking", picker_id=picker_id, picking_at=now, last_activity_at=now)
-            .execution_options(synchronize_session=False)
-        )
-        if claimed.rowcount == 1:
-            db.refresh(candidate)
-            events.publish(db, "fulfilment.state_changed", candidate.store_id,
-                           {"job_id": candidate.id, "order_id": candidate.order_id, "state": "picking"})
+        if _claim(db, candidate, picker_id):
             db.commit()
             return candidate
         db.rollback()   # another picker claimed it first; look for the next one
+
+
+def _claim(db: Session, job: FulfilmentJob, picker_id: str, tote: str | None = None) -> bool:
+    """Give a waiting order to this picker: a conditional UPDATE, so two pickers asking at the same moment can never
+    get the same order. Returns False, having changed nothing, if someone else got it first. Does not commit."""
+    now = utcnow()
+    claimed = db.execute(
+        update(FulfilmentJob)
+        .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "created")
+        .values(state="picking", picker_id=picker_id, picking_at=now, last_activity_at=now, tote=tote)
+        .execution_options(synchronize_session=False)
+    ).rowcount == 1
+    if claimed:
+        db.refresh(job)
+        events.publish(db, "fulfilment.state_changed", job.store_id,
+                       {"job_id": job.id, "order_id": job.order_id, "state": "picking"})
+    return claimed
+
+
+def next_batch(db: Session, picker_id: str, store_id: int) -> list[FulfilmentJob]:
+    """Single-order picking off-peak, batch picking at peak (HLD 13.1, task 2.6). Commits.
+
+    A picker who still has orders being picked gets those back. Otherwise: with at least BATCH_PICK_BACKLOG orders
+    waiting, claim the oldest BATCH_SIZE, each with the same conditional UPDATE as next_job and its own tote letter
+    (A, B, C), so one walk through the store serves them all; with fewer waiting, claim one, so an order never waits
+    for a batch to fill. Scanning and packing stay per line and per order."""
+    mine = list(db.scalars(
+        select(FulfilmentJob)
+        .where(FulfilmentJob.store_id == store_id, FulfilmentJob.state == "picking",
+               FulfilmentJob.picker_id == picker_id)
+        .order_by(FulfilmentJob.tote, FulfilmentJob.id)).all())
+    if mine:
+        letters = iter(letter for letter in ascii_uppercase if letter not in {job.tote for job in mine})
+        for job in mine:
+            if job.tote is None:          # claimed one at a time through next-task: give it a tote too
+                job.tote = next(letters)
+        db.commit()
+        return sorted(mine, key=lambda job: job.tote)
+    waiting = db.scalars(
+        select(FulfilmentJob)
+        .where(FulfilmentJob.store_id == store_id, FulfilmentJob.state == "created")
+        .order_by(FulfilmentJob.created_at, FulfilmentJob.id)).all()
+    wanted = config.BATCH_SIZE if len(waiting) >= config.BATCH_PICK_BACKLOG else 1
+    claimed: list[FulfilmentJob] = []
+    for candidate in waiting:
+        if len(claimed) == wanted:
+            break
+        if _claim(db, candidate, picker_id, tote=ascii_uppercase[len(claimed)]):
+            claimed.append(candidate)     # a lost race changes nothing; try the next oldest
+    db.commit()
+    return claimed
+
+
+def batch_view(jobs: list[FulfilmentJob]) -> dict:
+    """What a picker's handheld shows for a batch: which order goes in which tote, and one route through the store
+    with every line still to pick from all of them, in walking order (task 2.6)."""
+    route = [{"tote": job.tote, "job_id": job.id, "order_id": job.order_id, "task_id": task.id, "bin": task.bin.code,
+              "walk_seq": task.bin.walk_seq, "sku_id": task.sku_id, "sku": task.sku.name, "barcode": task.sku.barcode,
+              "qty": task.qty, "scanned_qty": task.scanned_qty}
+             for job in jobs for task in job.tasks if task.status == "pending"]
+    route.sort(key=lambda line: (line["walk_seq"], line["tote"], line["task_id"]))
+    return {"totes": {job.tote: job.order_id for job in jobs}, "route": route,
+            "jobs": [fulfilment.job_view(job) for job in jobs]}
 
 
 def task_store_id(db: Session, task_id: int) -> int:
