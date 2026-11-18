@@ -226,13 +226,13 @@ def release(db: Session, reservation_id: str) -> Reservation:
         return res                                            # safe to retry
     if res.status != "held":
         raise DomainError(409, "already_paid",
-                          "This order is already paid. Cancelling after payment is not built yet.")
+                          "This order is already paid. Cancel it with POST /v1/fulfilment-jobs/{job_id}/cancel.")
     if not _release(db, res, "released"):
         db.rollback()                         # someone else got there first; report what they did
         db.refresh(res)
         if res.status not in ("released", "expired"):
             raise DomainError(409, "already_paid",
-                              "This order is already paid. Cancelling after payment is not built yet.")
+                              "This order is already paid. Cancel it with POST /v1/fulfilment-jobs/{job_id}/cancel.")
         return res
     db.commit()
     return res

@@ -56,6 +56,7 @@ Because logic lives in `service.py`, modules can call each other directly
 | Scan | `POST /v1/pick-tasks/{id}/scans` | `pickpack.scan` | Task becomes `picked` if the barcode and quantity match |
 | Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Count corrected (`not_found` ledger row); line re-allocated to another bin, or dropped and its hold released |
 | Pack | `POST /v1/fulfilment-jobs/{id}/packed` | `pickpack.pack` → `inventory.commit_sale` | `StockItem.qty`, `qty_on_hand` and `qty_reserved` all drop; `sale` ledger rows; publishes `order.ready_for_pickup` |
+| Cancel (until packed) | `POST /v1/fulfilment-jobs/{id}/cancel` | `fulfilment.cancel` → `inventory.unreserve` | Conditional `UPDATE` moves the job `created`/`picking → cancelled`; `qty_reserved` drops for every line still held; `qty_on_hand` is untouched; publishes `order.cancelled` |
 | Handoff | `POST /v1/fulfilment-jobs/{id}/handover` | `fulfilment.handover` | Job becomes `handed_over` |
 
 Two moments matter most:
@@ -103,6 +104,7 @@ WebSocket feed) and marks them published; delivery is at least once.
 | `order.paid` | inventory | fulfilment (creates the job) |
 | `fulfilment.state_changed` | fulfilment, pickpack | nobody yet |
 | `order.ready_for_pickup` | pickpack | nobody yet (the rider system would) |
+| `order.cancelled` (payload: `order_id`, `job_id`, `reason`) | fulfilment | nobody yet (the Order service would refund) |
 | `store.status_changed` | fulfilment | nobody yet |
 | `transfer_order.created` / `.dispatched` | replenishment | nobody yet (the hub WMS would) |
 | `goods.received` | inbound | nobody yet |

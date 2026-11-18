@@ -53,13 +53,16 @@ def task_store_id(db: Session, task_id: int) -> int:
 
 
 def _open_task(db: Session, task_id: int) -> tuple[PickTask, FulfilmentJob]:
+    """The task and its job, taken for a change (fulfilment.hold_if_picking), so a cancel cannot slip in between.
+    A job that was cancelled meanwhile answers `job_not_picking`, which the picker station explains."""
     task = db.get(PickTask, task_id)
     if task is None:
         raise not_found("Pick task", task_id)
     job = db.get(FulfilmentJob, task.job_id)
-    if job.state != "picking":
+    if not fulfilment.hold_if_picking(db, job):
         raise DomainError(409, "job_not_picking", f"Order is {job.state}; ask for your next task first")
     if task.status != "pending":
+        db.rollback()
         raise DomainError(409, "task_closed", f"This line is already {task.status}")
     return task, job
 
@@ -68,9 +71,11 @@ def scan(db: Session, task_id: int, barcode: str, qty: int) -> dict:
     """Check a barcode scan against the pick task (FR-5). A wrong item changes nothing."""
     task, job = _open_task(db, task_id)
     if barcode != task.sku.barcode:
+        db.rollback()
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
     if qty != task.qty:
+        db.rollback()
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Pick {task.qty} units for this line, not {qty}."}
     task.status = "picked"
@@ -128,9 +133,14 @@ def pack(db: Session, job_id: int, crate_slot: str, actor: str = "packer") -> Fu
     job = fulfilment.get_job(db, job_id)
     if job.state in ("packed", "handed_over"):
         return job
-    if job.state != "picking":
+    # Take the job first: a cancel at the same moment either finished before this (and nothing is sold) or waits for
+    # it (and is told the order is packed). Selling the units and giving their hold back can never both happen.
+    if not fulfilment.hold_if_picking(db, job):
+        if job.state in ("packed", "handed_over"):
+            return job                                      # packed by a retry of this same call
         raise DomainError(409, "job_not_picking", f"Order is {job.state}; it cannot be packed")
     if any(t.status == "pending" for t in job.tasks):
+        db.rollback()
         raise DomainError(409, "lines_pending", "Scan or report every line before packing")
 
     picked = [t for t in job.tasks if t.status == "picked"]
