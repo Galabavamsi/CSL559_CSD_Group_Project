@@ -16,6 +16,11 @@ def test_scripted_pickers_clear_the_queue_and_the_stock_audit_holds(fresh_data):
     assert_stock_is_consistent()
     text = report(result)
     assert "Order to packed (p90)" in text and "Stock audit: clean" in text
+    rows = {line.split("  ")[0]: line for line in text.splitlines()}
+    # Time-based KPIs are never marked as passing in compressed time; fill rate is judged.
+    assert rows["Order to packed (p90)"].endswith("n/a (compressed time)")
+    assert rows["Items per picker-hour"].endswith("n/a (compressed time)")
+    assert rows["Fill rate"].endswith("yes")
 
 
 def test_one_order_per_walk_takes_more_walks_than_batches(fresh_data):

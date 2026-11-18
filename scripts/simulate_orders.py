@@ -26,13 +26,15 @@ from pathlib import Path
 if __package__ in (None, ""):          # run as a file: make `import app` work
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# (key, label, HLD 12 target, unit, is the target met?)
+# (key, label, HLD 12 target, unit, is the target met?). A time-based KPI is never judged: with walking compressed and
+# scanning taking no time, a "yes" beside it would be quoted as a pass for a number that means nothing.
+COMPRESSED = "n/a (compressed time)"
 KPIS = [
-    ("seconds_to_pack_p90", "Order to packed (p90)", "≤ 120 s", "s", lambda v: v <= 120),
+    ("seconds_to_pack_p90", "Order to packed (p90)", "≤ 120 s", "s", COMPRESSED),
     ("seconds_to_pack_p50", "Order to packed (p50)", "", "s", None),
     ("seconds_claim_to_pack_p90", "Claim to packed (p90)", "", "s", None),
     ("fill_rate", "Fill rate", "≥ 99% of units", "%", lambda v: v >= 0.99),
-    ("items_per_picker_hour", "Items per picker-hour", "≥ 100", "", lambda v: v >= 100),
+    ("items_per_picker_hour", "Items per picker-hour", "≥ 100", "", COMPRESSED),
 ]
 
 
@@ -138,7 +140,12 @@ def report(result: dict) -> str:
              f"{'KPI':26}{'Simulated':>14}   {'HLD 12 target':16}Met"]
     for key, label, target, unit, met in KPIS:
         value = m.get(key)
-        ok = "" if met is None or value is None else ("yes" if met(value) else "NO")
+        if met is None or value is None:
+            ok = ""
+        elif met == COMPRESSED:
+            ok = COMPRESSED
+        else:
+            ok = "yes" if met(value) else "NO"
         lines.append(f"{label:26}{shown(value, unit):>14}   {target:16}{ok}")
     audit = result["stock_problems"]
     lines += ["", "Stock audit: clean" if not audit else "Stock audit FAILED:\n  " + "\n  ".join(audit), "",
