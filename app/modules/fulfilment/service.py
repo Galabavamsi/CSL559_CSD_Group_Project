@@ -3,12 +3,14 @@
 Turns a paid order into a fulfilment job with pick tasks, and tracks the job until a rider
 takes the bag:   created -> picking -> packed -> handed_over   (or cancelled).
 """
+from datetime import timedelta
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import FulfilmentJob, PickTask, Reservation, Store, utcnow
+from ...models import FulfilmentJob, PickTask, Reservation, ReservationLine, Store, utcnow
 from ..inventory import service as inventory
 
 ACTIVE_STATES = ("created", "picking")
@@ -137,3 +139,53 @@ def job_view(job: FulfilmentJob) -> dict:
             for t in sorted(job.tasks, key=lambda t: t.seq)
         ],
     }
+
+
+# --------------------------------------------------------------------------- KPIs (HLD 12, task 2.1) and attention (2.5)
+
+def percentile(values: list[float], q: float) -> float:
+    """The value at index int(q * (n - 1)) of the sorted values: the method the guide asks for (task 2.1)."""
+    ordered = sorted(values)
+    return ordered[int(q * (len(ordered) - 1))]
+
+
+def metrics(db: Session, store_id: int) -> dict:
+    """Order-to-pack time, fill rate and picker productivity for one store, over the orders that reached the pack
+    station in the last KPI_WINDOW_DAYS days. That includes an order packed as `cancelled` because nothing was
+    found: it counts as 0 units picked against everything it ordered. Units ordered come from the reservation,
+    not the pick tasks, because a re-allocated line is split over two tasks."""
+    is_finished = (FulfilmentJob.store_id == store_id,
+                   FulfilmentJob.packed_at >= utcnow() - timedelta(days=config.KPI_WINDOW_DAYS))
+    finished = db.scalars(select(FulfilmentJob).where(*is_finished)).all()
+    packed = [j for j in finished if j.state in ("packed", "handed_over")]
+    to_pack = [(j.packed_at - j.created_at).total_seconds() for j in packed]
+    claim_to_pack = [(j.packed_at - j.picking_at).total_seconds() for j in packed if j.picking_at]
+    units_picked = db.scalar(select(func.coalesce(func.sum(PickTask.qty), 0))
+                             .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
+                             .where(*is_finished, PickTask.status == "picked"))
+    units_ordered = db.scalar(select(func.coalesce(func.sum(ReservationLine.qty), 0))
+                              .join(FulfilmentJob, FulfilmentJob.reservation_id == ReservationLine.reservation_id)
+                              .where(*is_finished))
+    picking_hours = sum((j.packed_at - j.picking_at).total_seconds() for j in finished if j.picking_at) / 3600
+    return {
+        "orders_packed": len(packed),
+        "seconds_to_pack_p50": round(percentile(to_pack, 0.5), 1) if to_pack else None,
+        "seconds_to_pack_p90": round(percentile(to_pack, 0.9), 1) if to_pack else None,
+        "seconds_claim_to_pack_p90": round(percentile(claim_to_pack, 0.9), 1) if claim_to_pack else None,
+        "fill_rate": units_picked / units_ordered if units_ordered else None,
+        "items_per_picker_hour": round(units_picked / picking_hours, 1) if picking_hours else None,
+    }
+
+
+def attention(db: Session, store_id: int) -> dict:
+    """Orders someone should look at now: still being picked more than PICK_STALL_MINUTES after they were claimed
+    (task 2.5). The ops page lists them first.
+    shortcut: measured from the claim, not the last scan; task 2.5's last_activity_at would tell a slow picker
+    from a dead handheld."""
+    now = utcnow()
+    jobs = db.scalars(select(FulfilmentJob).where(
+        FulfilmentJob.store_id == store_id, FulfilmentJob.state == "picking",
+        FulfilmentJob.picking_at < now - timedelta(minutes=config.PICK_STALL_MINUTES))
+        .order_by(FulfilmentJob.picking_at)).all()
+    return {"stalled": [{"job_id": j.id, "order_id": j.order_id, "picker_id": j.picker_id,
+                         "minutes_since_claim": round((now - j.picking_at).total_seconds() / 60, 1)} for j in jobs]}

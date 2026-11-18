@@ -162,8 +162,8 @@ Open http://localhost:8000/network.html.
 Open http://localhost:8000/ops.html.
 
 1. The top tiles are problems that need someone now: stalled orders, bags waiting for a rider, items out
-   of stock. Then every HLD 12 KPI, with its target and whether it is met. A KPI whose owner has not built
-   it yet says so instead of showing a made-up number.
+   of stock. Then every HLD 12 KPI, with its target and whether it is met. A KPI with no data yet (for
+   example inventory accuracy before the first cycle count) says so instead of showing a made-up number.
 2. Switch to the terminal with the load-test table from *Before you start*.
 
 > "Thirty seconds of mostly reads with some checkouts. The read p99 is what the HLD's 100 ms target is about.
