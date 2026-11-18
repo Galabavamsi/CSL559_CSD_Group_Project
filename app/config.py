@@ -52,6 +52,8 @@ RIDER_WAIT_MINUTES = float(os.getenv("RIDER_WAIT_MINUTES", "5"))
 # BATCH_SIZE of them in one walk, one tote each; with fewer, one order at a time, so nobody waits for a batch to fill.
 BATCH_PICK_BACKLOG = int(os.getenv("BATCH_PICK_BACKLOG", "4"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "3"))
+if not 1 <= BATCH_SIZE <= 26:      # 0 would claim nothing while orders wait; past 26 there are no tote letters left
+    raise ValueError("BATCH_SIZE must be 1 to 26: one tote per order, lettered A to Z")
 
 # Live event feed (HLD 8.2): the relay sends new events to the sinks this often, at most this many per pass.
 RELAY_INTERVAL_SECONDS = float(os.getenv("RELAY_INTERVAL_SECONDS", "0.2"))

@@ -171,3 +171,19 @@ def test_batching_walks_less_than_one_order_at_a_time(fresh_data):
     assert result["batched"]["distance"] < result["one_at_a_time"]["distance"]
     assert 0 < result["saving"] < 1
     assert_stock_is_consistent()
+
+
+def test_a_batch_size_with_no_tote_letters_stops_the_app_at_startup():
+    """0 would claim nothing while orders wait, and past 26 there are no tote letters left."""
+    import os
+    import subprocess
+    import sys
+
+    def start_with(size: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-c", "import app.config"], capture_output=True, text=True,
+                              env={**os.environ, "BATCH_SIZE": size})
+
+    for bad in ("0", "27"):
+        failed = start_with(bad)
+        assert failed.returncode != 0 and "BATCH_SIZE must be 1 to 26" in failed.stderr
+    assert start_with("26").returncode == 0

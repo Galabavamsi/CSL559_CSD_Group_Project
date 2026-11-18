@@ -13,6 +13,7 @@ const state = {
   holdTimer: null,
   paid: null,       // the customer's last paid order, which they may still cancel until it is packed
   jobs: [],         // the picker's current orders: one, or a batch at peak (task 2.6)
+  walkSize: 0,      // how many orders this walk started with, so the last one of a batch keeps its tote name
 };
 
 // ---------------------------------------------------------------- helpers
@@ -248,6 +249,9 @@ async function cancelHold() {
 
 async function nextJob() {
   const batch = await api("GET", `/v1/pickers/${picker()}/next-batch?store_id=${state.opsStore}`, undefined, picker());
+  // Asking again mid-walk returns what is left of the same walk: it stays a batch even when one order remains.
+  const sameWalk = batch.jobs.length > 0 && batch.jobs.every((j) => state.jobs.some((s) => s.job_id === j.job_id));
+  state.walkSize = sameWalk ? Math.max(state.walkSize, batch.jobs.length) : batch.jobs.length;
   state.jobs = batch.jobs;
   const count = batch.jobs.length;
   say($("picker-message"),
@@ -264,7 +268,8 @@ const TASK_STATUS_TEXT = {
   cancelled: "Order cancelled: put it back",
 };
 
-const inBatch = () => state.jobs.length > 1;
+// A walk is a batch if it started with more than one order (or, after a reload, still holds a tote past A).
+const inBatch = () => state.walkSize > 1 || state.jobs.some((j) => j.tote && j.tote !== "A");
 const toteLabel = (job) => (inBatch() && job.tote ? `Tote ${job.tote}: ` : "");
 const linesLeft = () => state.jobs.reduce((n, job) => n + job.tasks.filter((t) => t.status === "pending").length, 0);
 
@@ -549,6 +554,7 @@ async function resetDemo() {
   clearHold();
   state.cart = {};
   state.jobs = [];
+  state.walkSize = 0;
   renderJob();
   say($("ops-message"), "Demo data reset.");
   say($("customer-message"), "");
@@ -601,6 +607,7 @@ async function start() {
     state.opsStore = Number($("store-select").value);
     $("picker-id").textContent = picker();
     state.jobs = [];
+    state.walkSize = 0;
     renderJob();
     connectLive().catch(() => {});
     await refreshOps();
