@@ -3,9 +3,10 @@
 Turns a paid order into a fulfilment job with pick tasks, and tracks the job until a rider
 takes the bag:   created -> picking -> packed -> handed_over   (or cancelled).
 """
+from collections import defaultdict
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ... import config, events
@@ -93,6 +94,73 @@ def list_jobs(db: Session, store_id: int, state: str | None = None) -> list[Fulf
     if state:
         query = query.where(FulfilmentJob.state == state)
     return list(db.scalars(query.order_by(FulfilmentJob.id.desc()).limit(50)).all())
+
+
+def hold_if_picking(db: Session, job: FulfilmentJob) -> bool:
+    """Before changing a job that is being picked, take it, and read it again as it is now.
+
+    The UPDATE matches only while the job is still `picking`, and keeps the job until this transaction ends, so a
+    cancel arriving at the same moment waits for the change and then sees it. Without this, a scan, an empty-shelf
+    report or a pack that read the job just before a cancel would act on a cancelled order, and a hold could be
+    given back twice. Returns False, having changed nothing, when the job is no longer `picking`.
+    Does not commit."""
+    taken = db.execute(
+        update(FulfilmentJob)
+        .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "picking")
+        .values(state="picking")      # changes nothing; task 2.5 will set last_activity_at here instead
+        .execution_options(synchronize_session=False)
+    ).rowcount == 1
+    if taken:
+        db.expire_all()               # what this session read before the job was ours may be out of date
+    else:
+        db.rollback()
+    db.refresh(job)
+    return taken
+
+
+def cancel(db: Session, job_id: int, reason: str) -> FulfilmentJob:
+    """Cancel a paid order before it is packed (task 2.3): the customer changed their mind, or the payment was
+    reversed. Commits.
+
+    Nothing leaves `qty_on_hand` until packing, so this only gives the holds back. Units already scanned into a tote
+    go back on their shelves, and the books never counted them as gone. The state change is one conditional UPDATE,
+    like the claim, so two cancels at once, or a cancel and a pack, cannot both win and no hold is given back twice.
+    Cancelling a cancelled order again is safe and returns it; a packed order is a return, which is not built."""
+    job = get_job(db, job_id)
+    won = db.execute(
+        update(FulfilmentJob)
+        .where(FulfilmentJob.id == job_id, FulfilmentJob.state.in_(ACTIVE_STATES))
+        .values(state="cancelled")
+        .execution_options(synchronize_session=False)
+    ).rowcount == 1
+    if not won:
+        db.rollback()
+        db.refresh(job)
+        if job.state == "cancelled":
+            return job                                          # safe to retry
+        raise DomainError(409, "too_late", f"This order is already {job.state.replace('_', ' ')}. Taking it back "
+                                           "would be a return, which is not built.")
+    db.expire_all()                     # read the lines as they are now that the job is ours
+
+    released: dict[int, int] = defaultdict(int)
+    for task in job.tasks:
+        # A `short` line gave its hold back when it was dropped; a `reallocated` line was replaced by new lines.
+        if task.status in ("pending", "picked"):
+            inventory.unreserve(db, job.store_id, task.sku_id, task.qty)
+            released[task.sku_id] += task.qty
+            task.status = "cancelled"
+    db.get(Reservation, job.reservation_id).status = "cancelled"
+    db.flush()
+
+    for sku_id in released:
+        events.publish(db, "stock.changed", job.store_id, {"sku_id": sku_id, "cause": "cancelled"})
+    events.publish(db, "fulfilment.state_changed", job.store_id,
+                   {"job_id": job.id, "order_id": job.order_id, "state": "cancelled"})
+    events.publish(db, "order.cancelled", job.store_id,           # the Order service refunds from this
+                   {"order_id": job.order_id, "job_id": job.id, "reason": reason})
+    refresh_store_load(db, job.store_id)
+    db.commit()
+    return job
 
 
 def handover(db: Session, job_id: int) -> FulfilmentJob:

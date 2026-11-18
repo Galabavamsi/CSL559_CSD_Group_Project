@@ -11,6 +11,7 @@ const state = {
   cart: {},         // sku_id -> quantity
   hold: null,       // the current reservation, if any
   holdTimer: null,
+  paid: null,       // the customer's last paid order, which they may still cancel until it is packed
   job: null,        // the picker's current order
 };
 
@@ -164,6 +165,7 @@ async function checkout() {
     return;
   }
   say($("customer-message"), "");
+  showPaid(null);
   showHold();
   renderProducts();
   refreshOps();
@@ -196,7 +198,28 @@ async function pay() {
   const paid = await api("POST", `/v1/reservations/${state.hold.reservation_id}/confirm`);
   state.cart = {};
   clearHold();
+  showPaid(paid);
   say($("customer-message"), `Paid. Order ${paid.order_id} is waiting for a picker.`, "good");
+  await loadProducts();
+  refreshOps();
+}
+
+function showPaid(order) {
+  state.paid = order;
+  $("paid-panel").hidden = !order;
+  if (order) $("paid-order").textContent = order.order_id;
+}
+
+async function cancelPaidOrder() {
+  const { order_id: orderId, store_id: storeId } = state.paid;
+  // In a real app the Order service makes this call; here the store manager's login stands in for it.
+  const managerOfStore = `manager${storeId}`;
+  const jobs = await api("GET", `/v1/fulfilment-jobs?store_id=${storeId}`, undefined, managerOfStore);
+  const job = jobs.find((j) => j.order_id === orderId);
+  if (!job) throw new Error(`Order ${orderId} is not in the store's list any more.`);
+  await api("POST", `/v1/fulfilment-jobs/${job.job_id}/cancel`, { reason: "Customer changed their mind" }, managerOfStore);
+  showPaid(null);
+  say($("customer-message"), `Order ${orderId} cancelled. Its items are back on sale and the payment will be refunded.`);
   await loadProducts();
   refreshOps();
 }
@@ -223,7 +246,20 @@ const TASK_STATUS_TEXT = {
   picked: "Picked",
   short: "Dropped: none left in the store",
   reallocated: "Not here: moved to another bin",
+  cancelled: "Order cancelled: put it back",
 };
+
+/** A scan, empty-shelf report or pack was refused because the order is no longer being picked. If it was
+ *  cancelled (task 2.3), tell the picker what to do with the tote; otherwise show the error as usual. */
+async function explainIfCancelled(error) {
+  if (error.code !== "job_not_picking" || !state.job) throw error;
+  const job = await api("GET", `/v1/fulfilment-jobs/${state.job.job_id}`, undefined, picker());
+  if (job.state !== "cancelled") throw error;
+  state.job = null;
+  renderJob();
+  say($("picker-message"), "This order was cancelled. Put the items back on their shelves.", "bad");
+  refreshOps();
+}
 
 function renderJob() {
   const job = state.job;
@@ -259,7 +295,9 @@ function renderJob() {
 }
 
 async function scanTask(task, barcode) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty: task.qty }, picker());
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty: task.qty }, picker())
+    .catch(explainIfCancelled);
+  if (!result) return;
   if (!result.match) {
     say($("picker-message"), result.message, "bad");
     return;
@@ -270,7 +308,9 @@ async function scanTask(task, barcode) {
 }
 
 async function reportShort(task) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, undefined, picker());
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, undefined, picker())
+    .catch(explainIfCancelled);
+  if (!result) return;
   state.job = result.job;
   say($("picker-message"), result.message, result.dropped ? "bad" : "");
   renderJob();
@@ -279,7 +319,10 @@ async function reportShort(task) {
 
 async function packJob() {
   const slot = $("crate-slot").value.trim() || "S-01";
-  state.job = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot }, picker());
+  const packed = await api("POST", `/v1/fulfilment-jobs/${state.job.job_id}/packed`, { crate_slot: slot }, picker())
+    .catch(explainIfCancelled);
+  if (!packed) return;
+  state.job = packed;
   const done = state.job.state === "packed";
   say($("picker-message"),
     done ? `Packed into ${slot}. The stock has now left the books.` : "Nothing could be picked, so the order was cancelled.",
@@ -492,6 +535,7 @@ async function start() {
   $("checkout").onclick = guarded($("customer-message"), checkout);
   $("pay").onclick = guarded($("customer-message"), pay);
   $("cancel-hold").onclick = guarded($("customer-message"), cancelHold);
+  $("cancel-paid").onclick = guarded($("customer-message"), cancelPaidOrder);
   $("next-job").onclick = guarded($("picker-message"), nextJob);
   $("pack").onclick = guarded($("picker-message"), packJob);
   $("handover").onclick = guarded($("picker-message"), handover);
