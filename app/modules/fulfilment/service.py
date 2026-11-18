@@ -202,7 +202,9 @@ def job_view(job: FulfilmentJob) -> dict:
                 "batch_no": t.stock_item.batch_no if t.stock_item else None,
                 "expiry_date": t.stock_item.expiry_date.isoformat() if t.stock_item else None,
                 "qty": t.qty,
+                "scanned_qty": t.scanned_qty,
                 "status": t.status,
+                "picked_at": t.picked_at.isoformat() + "Z" if t.picked_at else None,
             }
             for t in sorted(job.tasks, key=lambda t: t.seq)
         ],

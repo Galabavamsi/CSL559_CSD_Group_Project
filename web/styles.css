@@ -144,6 +144,7 @@ select, input {
 }
 .task-qty { font-weight: 600; }
 .task-meta { color: var(--ink-soft); font-size: 0.85rem; margin: 0.15rem 0 0.4rem; }
+.row > input.found-input { flex: 0 0 7.5rem; padding: 0.3rem 0.5rem; }   /* "Found only…" next to Not on shelf (task 2.2) */
 .task-status { font-size: 0.85rem; font-weight: 600; }
 .task-status.picked { color: var(--good); }
 .task-status.short, .task-status.reallocated { color: var(--alert); }

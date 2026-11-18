@@ -53,8 +53,8 @@ Because logic lives in `service.py`, modules can call each other directly
 | Pay | `POST /v1/reservations/{id}/confirm` | `inventory.confirm` | Reservation becomes `confirmed`; publishes `order.paid` |
 | (event) | | `fulfilment.on_order_paid` → `create_job` | A `FulfilmentJob` and its `PickTask` rows are written. `inventory.allocate` chooses bins, oldest batch first |
 | Claim | `GET /v1/pickers/{id}/next-task` | `pickpack.next_job` | Conditional `UPDATE` moves the job `created → picking` for exactly one picker |
-| Scan | `POST /v1/pick-tasks/{id}/scans` | `pickpack.scan` | Task becomes `picked` if the barcode and quantity match |
-| Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Count corrected (`not_found` ledger row); line re-allocated to another bin, or dropped and its hold released |
+| Scan | `POST /v1/pick-tasks/{id}/scans` | `pickpack.scan` | Barcode checked; a conditional `UPDATE` adds the units to `scanned_qty` only if the line has room; the task becomes `picked` (with `picked_at`) when every unit is scanned |
+| Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Units found (`{"found": n}`, default: those already scanned) become a `picked` line of their own; for the rest, count corrected (`not_found` ledger row), re-allocated to another bin, or dropped and its hold released |
 | Pack | `POST /v1/fulfilment-jobs/{id}/packed` | `pickpack.pack` → `inventory.commit_sale` | `StockItem.qty`, `qty_on_hand` and `qty_reserved` all drop; `sale` ledger rows; publishes `order.ready_for_pickup` |
 | Cancel (until packed) | `POST /v1/fulfilment-jobs/{id}/cancel` | `fulfilment.cancel` → `inventory.unreserve` | Conditional `UPDATE` moves the job `created`/`picking → cancelled`; `qty_reserved` drops for every line still held; `qty_on_hand` is untouched; publishes `order.cancelled` |
 | Handoff | `POST /v1/fulfilment-jobs/{id}/handover` | `fulfilment.handover` | Job becomes `handed_over` |
