@@ -120,11 +120,14 @@ def hold_if_picking(db: Session, job: FulfilmentJob) -> bool:
     cancel or a stall release arriving at the same moment waits for the change and then sees it. Without this, a
     scan, an empty-shelf report or a pack that read the job just before a cancel would act on a cancelled order, and
     a hold could be given back twice. Setting `last_activity_at` tells recover_stalled the handheld is alive
-    (task 2.5). Returns False, having changed nothing, when the job is no longer `picking`. Does not commit."""
+    (task 2.5), for every order the picker is holding: in a batch (task 2.6) one walk serves them all, and an order
+    whose lines are at the far end must not look idle while the picker works through the others.
+    Returns False, having changed nothing, when the job is no longer `picking`. Does not commit."""
+    now = utcnow()
     taken = db.execute(
         update(FulfilmentJob)
         .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "picking")
-        .values(last_activity_at=utcnow())
+        .values(last_activity_at=now)
         .execution_options(synchronize_session=False)
     ).rowcount == 1
     if taken:
@@ -132,6 +135,14 @@ def hold_if_picking(db: Session, job: FulfilmentJob) -> bool:
     else:
         db.rollback()
     db.refresh(job)
+    if taken and job.picker_id is not None:
+        db.execute(
+            update(FulfilmentJob)
+            .where(FulfilmentJob.store_id == job.store_id, FulfilmentJob.picker_id == job.picker_id,
+                   FulfilmentJob.state == "picking", FulfilmentJob.id != job.id)
+            .values(last_activity_at=now)
+            .execution_options(synchronize_session=False)
+        )
     return taken
 
 
@@ -209,6 +220,7 @@ def job_view(job: FulfilmentJob) -> dict:
         "state": job.state,
         "picker_id": job.picker_id,
         "crate_slot": job.crate_slot,
+        "tote": job.tote,
         "created_at": job.created_at.isoformat() + "Z",
         "last_activity_at": job.last_activity_at.isoformat() + "Z" if job.last_activity_at else None,
         "seconds_to_pack": seconds(job.created_at, job.packed_at),
@@ -220,6 +232,7 @@ def job_view(job: FulfilmentJob) -> dict:
                 "sku": t.sku.name,
                 "barcode": t.sku.barcode,
                 "bin": t.bin.code if t.bin else None,
+                "walk_seq": t.bin.walk_seq if t.bin else None,
                 "batch_no": t.stock_item.batch_no if t.stock_item else None,
                 "expiry_date": t.stock_item.expiry_date.isoformat() if t.stock_item else None,
                 "qty": t.qty,
@@ -240,6 +253,27 @@ def percentile(values: list[float], q: float) -> float:
     return ordered[int(q * (len(ordered) - 1))]
 
 
+def _picker_seconds(jobs: list[FulfilmentJob]) -> float:
+    """Time pickers spent picking these orders, from claim to packed. A picker's overlapping orders (a batch, task 2.6)
+    are one walk, so overlapping time is counted once per picker, not once per order."""
+    by_picker: dict[str | None, list[tuple]] = defaultdict(list)
+    for job in jobs:
+        if job.picking_at and job.packed_at:
+            by_picker[job.picker_id].append((job.picking_at, job.packed_at))
+    total = 0.0
+    for spans in by_picker.values():
+        spans.sort()
+        start, end = spans[0]
+        for next_start, next_end in spans[1:]:
+            if next_start > end:                      # a gap: close the stretch so far
+                total += (end - start).total_seconds()
+                start, end = next_start, next_end
+            else:
+                end = max(end, next_end)
+        total += (end - start).total_seconds()
+    return total
+
+
 def metrics(db: Session, store_id: int) -> dict:
     """Order-to-pack time, fill rate and picker productivity for one store, over the orders that reached the pack
     station in the last KPI_WINDOW_DAYS days. That includes an order packed as `cancelled` because nothing was
@@ -257,7 +291,7 @@ def metrics(db: Session, store_id: int) -> dict:
     units_ordered = db.scalar(select(func.coalesce(func.sum(ReservationLine.qty), 0))
                               .join(FulfilmentJob, FulfilmentJob.reservation_id == ReservationLine.reservation_id)
                               .where(*is_finished))
-    picking_hours = sum((j.packed_at - j.picking_at).total_seconds() for j in finished if j.picking_at) / 3600
+    picking_hours = _picker_seconds(finished) / 3600
     return {
         "orders_packed": len(packed),
         "seconds_to_pack_p50": round(percentile(to_pack, 0.5), 1) if to_pack else None,
@@ -314,7 +348,7 @@ def recover_stalled(db: Session) -> dict:
         freed = db.execute(
             update(FulfilmentJob)
             .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "picking", _IDLE_SINCE < cutoff)
-            .values(state="created", picker_id=None, picking_at=None, last_activity_at=None)
+            .values(state="created", picker_id=None, picking_at=None, last_activity_at=None, tote=None)
             .execution_options(synchronize_session=False)
         ).rowcount == 1
         if freed:

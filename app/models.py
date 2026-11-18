@@ -187,6 +187,7 @@ class FulfilmentJob(Base):
     state: Mapped[str] = mapped_column(String(12), default="created", index=True)
     picker_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     crate_slot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tote: Mapped[str | None] = mapped_column(String(2), nullable=True)      # A, B, C in a picker's batch (task 2.6)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     picking_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # The picker's last sign of life on this order: claim, scan or shelf report (task 2.5).

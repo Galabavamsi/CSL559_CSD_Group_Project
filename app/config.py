@@ -48,6 +48,10 @@ PICK_STALL_MINUTES = float(os.getenv("PICK_STALL_MINUTES", "5"))
 STALL_CHECK_SECONDS = float(os.getenv("STALL_CHECK_SECONDS", "60"))    # how often the background job looks
 # A packed bag waiting longer than this for a rider is listed as needing attention (task 2.5).
 RIDER_WAIT_MINUTES = float(os.getenv("RIDER_WAIT_MINUTES", "5"))
+# Batch picking at peak (HLD 13.1, task 2.6): with at least BATCH_PICK_BACKLOG orders waiting, a picker takes up to
+# BATCH_SIZE of them in one walk, one tote each; with fewer, one order at a time, so nobody waits for a batch to fill.
+BATCH_PICK_BACKLOG = int(os.getenv("BATCH_PICK_BACKLOG", "4"))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "3"))
 
 # Live event feed (HLD 8.2): the relay sends new events to the sinks this often, at most this many per pass.
 RELAY_INTERVAL_SECONDS = float(os.getenv("RELAY_INTERVAL_SECONDS", "0.2"))

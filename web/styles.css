@@ -143,6 +143,10 @@ select, input {
   padding: 0.1rem 0.45rem; border-radius: 3px;
 }
 .task-qty { font-weight: 600; }
+.tote {                  /* which tote of a batch the item goes in (task 2.6) */
+  border: 2px solid var(--hold); color: var(--hold);
+  font: 700 0.85rem var(--display); padding: 0 0.4rem; border-radius: 3px;
+}
 .task-meta { color: var(--ink-soft); font-size: 0.85rem; margin: 0.15rem 0 0.4rem; }
 .row > input.found-input { flex: 0 0 7.5rem; padding: 0.3rem 0.5rem; }   /* "Found only…" next to Not on shelf (task 2.2) */
 .task-status { font-size: 0.85rem; font-weight: 600; }
@@ -173,6 +177,7 @@ td.held { color: var(--hold); font-weight: 600; }
 .event-time { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .event-type { font-weight: 600; }
 
+[hidden] { display: none !important; }   /* the hidden attribute wins over display rules such as .row's flex */
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------- ops dashboard (ops.html): read from across a room - big numbers, problems first ---------- */
