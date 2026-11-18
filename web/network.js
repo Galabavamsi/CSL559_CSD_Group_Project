@@ -8,8 +8,15 @@ const colour = (name) => getComputedStyle($("map")).getPropertyValue(name).trim(
 const customers = (n) => `+${n} customer${n === 1 ? "" : "s"}`;
 
 let token = null;
+let fitted = null; // the area last fitted: the stores and the suggested sites
 const map = L.map("map");
 const layers = L.layerGroup().addTo(map);
+// Fit again whenever the map's box changes size. A fit made while the box had no size (the page laid out late,
+// a window resized for a projector) would otherwise stay zoomed out to the whole world.
+new ResizeObserver(() => {
+  map.invalidateSize();
+  if (fitted) map.fitBounds(fitted);
+}).observe($("map"));
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 18,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -82,7 +89,10 @@ async function load() {
       .map(([label, value]) => el("div", {}, el("dt", {}, label), el("dd", {}, String(value)))));
 
   const points = [...stores.map((s) => [s.lat, s.lng]), ...sites.map((s) => [s.lat, s.lng])];
-  if (points.length) map.fitBounds(L.latLngBounds(points).pad(0.4));
+  if (points.length) {
+    fitted = L.latLngBounds(points).pad(0.4);
+    map.fitBounds(fitted);
+  }
   $("network-message").textContent = "";
 }
 
