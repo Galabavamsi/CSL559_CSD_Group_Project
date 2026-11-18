@@ -78,6 +78,22 @@ class ServiceabilityMiss(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class AuditEntry(Base):
+    """One call by a logged-in staff member to a protected endpoint, refused or not (HLD 10).
+    shortcut: entries are never pruned and a demo reset wipes them; add retention before running for weeks."""
+    __tablename__ = "audit_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    username: Mapped[str] = mapped_column(String(40), index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    method: Mapped[str] = mapped_column(String(10))
+    route: Mapped[str] = mapped_column(String(200))     # the template, e.g. /v1/stores/{store_id}/dashboard
+    path: Mapped[str] = mapped_column(String(300))      # what was actually asked for, with the query string
+    status: Mapped[int] = mapped_column(Integer)
+    request_id: Mapped[str] = mapped_column(String(64))
+
+
 class Staff(Base):
     """Someone who can log in (HLD 10). `store_id` is empty for city-wide roles (ops, admin)."""
     __tablename__ = "staff"

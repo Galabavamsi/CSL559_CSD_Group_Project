@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -82,11 +82,12 @@ def decode_token(token: str) -> dict:
         raise DomainError(401, "bad_token", "The token is invalid or has expired; log in again") from None
 
 
-def current_staff(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
-    """Decode the bearer token or raise 401."""
+def current_staff(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
+    """Decode the bearer token or raise 401. The caller is kept on the request for the audit log."""
     if credentials is None:
         raise DomainError(401, "not_logged_in", "Log in and send the token as 'Authorization: Bearer <token>'")
-    return decode_token(credentials.credentials)
+    request.state.staff = decode_token(credentials.credentials)
+    return request.state.staff
 
 
 def require_role(*roles: str):

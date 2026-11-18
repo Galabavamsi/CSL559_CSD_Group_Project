@@ -99,6 +99,9 @@ Staff may act only on their own store: pickers and packers pick and pack, receiv
 receive goods, managers adjust stock and run replenishment and forecasting, `ops` can read every
 store, and `/v1/admin/*` needs `admin`.
 
+Every call a logged-in staff member makes to a protected endpoint, refused or not, is kept in an audit log.
+`admin` reads it newest first at `GET /v1/audit` (`?username=picker1&limit=50` to narrow it).
+
 ## Five-minute tour
 
 1. On the **customer** station, press *Check delivery*, add 8 milk and 1 ice cream, then *Hold my items*.
@@ -149,7 +152,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |
 | Kafka | `events.py` | Events written to an outbox table; a relay pushes them to sinks (a WebSocket feed per store) and marks them published; lag shown on the dashboard | No broker yet; the relay runs inside the app |
 | PostgreSQL + Redis | `db.py` | SQLite | One file, no sharding, no cache |
-| Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint | No gateway or mutual TLS; customer endpoints are open; demo accounts share one password |
+| Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint; audit log of staff calls (`GET /v1/audit`) | No gateway or mutual TLS; the audit log is never pruned and skips calls with no valid token; customer endpoints are open; demo accounts share one password |
 
 Every "simplified" cell is a task in one of the member guides.
 
