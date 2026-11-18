@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Picker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Picker phone screen (task 2.8): one column, one line at a time, buttons big enough for a gloved thumb. */
+    .phone { max-width: 30rem; margin: 0 auto; padding: 0 1rem 2rem; }
+    .phone-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+      padding: 0.9rem 0; border-bottom: 3px solid var(--ink); margin-bottom: 1rem;
+    }
+    .phone-bar h1 { font-size: 1.4rem; }
+    .phone-bar label { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--ink-soft); }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem; }
+    .muted { color: var(--ink-soft); }
+    .go { font: 600 1.05rem var(--display); color: var(--ink-soft); margin-top: 0.75rem; }
+    .bin-big {
+      display: inline-block; background: var(--label); color: var(--label-ink);
+      font: 700 3rem/1.1 var(--display); letter-spacing: 0.02em; padding: 0.15rem 0.8rem; border-radius: 4px;
+    }
+    .pick { font: 600 1.5rem/1.25 var(--display); margin-top: 0.75rem; }
+    .tote-big {
+      display: inline-block; margin-top: 0.75rem; padding: 0.2rem 0.7rem; border: 3px solid var(--hold);
+      color: var(--hold); border-radius: 4px; font: 700 1.3rem var(--display);
+    }
+    .big { display: block; width: 100%; min-height: 3.5rem; margin-top: 0.75rem; font-size: 1.2rem; }
+    .short-row { display: flex; gap: 0.6rem; align-items: stretch; margin-top: 0.75rem; }
+    .short-row input { width: 7rem; font-size: 1.1rem; }
+    .short-row .btn { flex: 1; min-height: 3.5rem; font-size: 1.1rem; }
+    .slot-row { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.9rem; }
+    .slot-row input { flex: 1; font-size: 1.2rem; min-height: 3rem; }
+    #message { font-size: 1.05rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="phone">
+    <header class="phone-bar">
+      <h1>Picker <span id="who" class="muted"></span></h1>
+      <label>Store
+        <select id="store">
+          <option value="1">1</option>
+          <option value="2">2</option>
+        </select>
+      </label>
+    </header>
+
+    <section id="idle" class="card">
+      <p class="pick">Ready when you are.</p>
+      <p class="muted">When the store is busy you get up to three orders in one walk, one tote each.</p>
+      <button id="next" class="btn btn-primary big">Get next order</button>
+    </section>
+
+    <section id="line" class="card" hidden aria-live="polite">
+      <p id="progress" class="muted"></p>
+      <p class="go">Go to bin</p>
+      <p id="bin" class="bin-big"></p>
+      <p id="what" class="pick"></p>
+      <p id="scanned" class="muted"></p>
+      <p id="tote" class="tote-big" hidden></p>
+      <button id="scan-one" class="btn btn-primary big">Scan 1</button>
+      <button id="scan-all" class="btn big">Scan all</button>
+      <div class="short-row">
+        <input id="found" type="number" inputmode="numeric" min="0" placeholder="Found…" aria-label="Units found in the bin">
+        <button id="short" class="btn">Not on shelf</button>
+      </div>
+    </section>
+
+    <section id="pack" class="card" hidden>
+      <p class="go">Back at the packing desk</p>
+      <p id="pack-what" class="pick"></p>
+      <div class="slot-row">
+        <label for="slot" class="muted">Crate slot</label>
+        <input id="slot" value="S-01" autocomplete="off">
+      </div>
+      <button id="pack-btn" class="btn btn-primary big">Mark packed</button>
+    </section>
+
+    <p id="message" class="message" role="status"></p>
+  </div>
+  <script src="common.js"></script>
+  <script src="picker.js"></script>
+</body>
+</html>

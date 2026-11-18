@@ -46,6 +46,7 @@ Then open:
 
 - **http://localhost:8000** for the demo screens (customer, picker and store ops side by side)
 - **http://localhost:8000/ops.html** for the ops dashboard (KPIs against HLD 12 targets, updated live)
+- **http://localhost:8000/picker.html** for the picker's phone screen: one line at a time, big buttons
 - **http://localhost:8000/docs** for the interactive API reference
 - **http://localhost:8000/metrics** for Prometheus metrics (alert rules in `docs/ARCHITECTURE.md`, section 9)
 
@@ -60,6 +61,15 @@ per endpoint against the HLD's 100 ms read target, start the app with the rate l
 The demo data has one week of sales, too little to judge a forecast model: its accuracy shows as not
 available. To try the models on two months of history, run `python scripts/generate_sales.py`, then call
 `GET /v1/forecasting/compare?store_id=1` in `/docs`.
+
+To pick on a real phone, start the app with `python -m uvicorn app.main:app --host 0.0.0.0` and open
+`http://<laptop-ip>:8000/picker.html?store=1` on a phone on the same Wi-Fi. Do this only on a network you trust:
+every demo account has the same password.
+
+Two fulfilment experiments run on a throwaway copy of the demo data, so they need no server and leave
+`darkstore.db` alone: `python scripts/compare_picking.py` compares walking with and without batch picking, and
+`python scripts/simulate_orders.py` has scripted pickers clear 100 paid orders through the API, then prints the
+fulfilment KPIs beside their HLD 12 targets (`--pickers 3`, `--single`, `--step 0.2` to change the run).
 
 To see where a new store should go, run `python scripts/generate_demand.py`, then open
 **http://localhost:8000/network.html**.
@@ -163,7 +173,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 2 Assortment | `assortment` | List and add SKUs per store | No demand-based recommendations |
 | 3 Inventory | `inventory` | ATP with a per-SKU safety buffer (`PUT /v1/stores/{id}/stock-settings/{sku_id}`), atomic holds, confirm, release (race-proof), automatic expiry sweep every `SWEEP_INTERVAL_SECONDS`, adjustments, ledger, FEFO allocation that skips expired batches, hourly expiry write-off and near-expiry report (`GET /v1/stores/{id}/near-expiry`), `Idempotency-Key` header on stock adjustments, blind cycle counts with manager approval above `COUNT_AUTO_APPROVE_VALUE` and an inventory accuracy KPI | No cache; goods receipts do not take an idempotency key yet; saved keys are never cleaned up; a write-off does not cancel a paid order holding those units (the picker's empty-shelf report settles it) |
 | 4 Fulfilment Orchestrator | `fulfilment` | Job per paid order, pick tasks, state machine, store busy flag; cancel a paid order until it is packed (`POST /v1/fulfilment-jobs/{id}/cancel`, holds given back, `order.cancelled` published); KPIs: order-to-pack p50/p90, fill rate, items per picker-hour (`GET /v1/stores/{id}/fulfilment-metrics`); stalled orders (no claim, scan or shelf report for `PICK_STALL_MINUTES`) go back to the queue every `STALL_CHECK_SECONDS`, or are flagged if items are in a tote (`GET /v1/stores/{id}/attention`, also bags waiting over `RIDER_WAIT_MINUTES`) | A packed order cannot be cancelled (that is a return, not built); the store manager stands in for the Order service that would call cancel and refund; a stalled order with items in a tote is only flagged, for a person to fetch; a revived handheld is kept out of another picker's order only if it sends `picker_id` (the demo station does) |
-| 5 Pick & Pack | `pickpack` | Claim next order, or at peak a batch of up to `BATCH_SIZE` in one walk, one tote each (`GET /v1/pickers/{id}/next-batch`; `scripts/compare_picking.py` measures the walking saved), scan check unit by unit (`scanned_qty`, `picked_at` per line), empty-shelf fallback with partial finds (`{"found": n}`), a substitute offered for dropped units (same category, nearest price) and `order.line_dropped` for the refund, pack | Batches are only the oldest orders, not grouped by where their items are; a substitute is offered but cannot be accepted yet (needs Member 1's `inventory.swap_line`); units found but not scanned are trusted without a barcode check; if the hourly expiry write-off takes a batch while one of its lines is being picked, the order cannot be packed (`409 stock_mismatch`, even after *Not on shelf*) and has to be cancelled |
+| 5 Pick & Pack | `pickpack` | Picker phone screen (`/picker.html`); claim next order, or at peak a batch of up to `BATCH_SIZE` in one walk, one tote each (`GET /v1/pickers/{id}/next-batch`; `scripts/compare_picking.py` measures the walking saved), scan check unit by unit (`scanned_qty`, `picked_at` per line), empty-shelf fallback with partial finds (`{"found": n}`), a substitute offered for dropped units (same category, nearest price) and `order.line_dropped` for the refund, pack | Batches are only the oldest orders, not grouped by where their items are; a substitute is offered but cannot be accepted yet (needs Member 1's `inventory.swap_line`); units found but not scanned are trusted without a barcode check; if the hourly expiry write-off takes a batch while one of its lines is being picked, the order cannot be packed (`409 stock_mismatch`, even after *Not on shelf*) and has to be cancelled |
 | 6 Slotting | `slotting` | Suggest a bin in the right temperature zone | No velocity or affinity rules |
 | 7 Forecasting | `forecasting` | Moving average, weekday average and exponential smoothing compared by WAPE backtest; reorder points with safety stock from forecast errors | Daily, not hourly; no weather or festivals |
 | 8 Replenishment | `replenishment` | Reorder-point check, transfer orders, in-transit stock, supply KPIs (`GET /v1/stores/{id}/supply-kpis`) | Run by hand; no bin-capacity cap |
