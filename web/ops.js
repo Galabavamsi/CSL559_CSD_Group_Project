@@ -59,8 +59,9 @@ function renderActions({ stalled_orders: stalled, stalled_note: why, waiting_for
   $("actions").replaceChildren(
     actionTile("Stalled orders", stalled === null ? null : stalled.length,
       stalled === null ? `Not available: fulfilment's stall check ${why}` : stalled.join(", ") || "None"),
-    actionTile("Bags waiting for a rider", waiting.length, waiting.length
-      ? `Longest: ${plural(waiting[0].minutes_waiting, "minute")} (${waiting[0].order_id})` : "None"),
+    actionTile("Bags waiting too long for a rider", waiting === null ? null : waiting.length,
+      waiting === null ? `Not available: fulfilment's attention list ${why}`
+        : waiting.length ? `Longest: ${plural(waiting[0].minutes_waiting, "minute")} (${waiting[0].order_id})` : "None"),
     actionTile("Out of stock", out.length, someOut || "None"));
 }
 

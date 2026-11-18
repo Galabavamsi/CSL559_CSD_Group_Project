@@ -94,7 +94,11 @@ This is the centrepiece. The demo data has exactly **one** vanilla ice cream in 
 > "Only now does On hand go down. Until this moment a cancellation only had to release a hold.
 > That is why a failed payment can never leave the stock count wrong."
 
-3. Press **Rider collected the bag**. "Handed to rider" becomes 1; the average pack time appears.
+3. Press **Rider collected the bag**. The order's rider checks in and the desk scans the bag ("Rider R-12
+   collected order … from S-01"; the rider's number varies). "Handed to rider" becomes 1; the average pack
+   time appears.
+
+> "A rider gets only the bag of the order they were assigned. Another rider, or another order's bag, is refused."
 
 ## 7. Restocking (2 minutes)
 
@@ -115,12 +119,20 @@ This is the centrepiece. The demo data has exactly **one** vanilla ice cream in 
 > backtest. Reorder points follow the formula in section 6.2 of the HLD, and the safety stock covers how wrong
 > the forecast was over the last two weeks."
 
-## 8. A busy store (30 seconds, optional)
+## 8. A busy store (2 minutes, optional)
 
-Place and pay for six small orders without picking them. The store tile turns to *Busy*, and
-**Check delivery** now quotes an ETA five minutes longer.
+1. Place and pay for six small orders without picking them. The store tile turns to *Busy*, and
+   **Check delivery** now quotes an ETA five minutes longer.
 
 > "When a store's backlog passes a threshold it protects itself by quoting a longer delivery time."
+
+2. On the picker station press **Get next order**: "Busy store: 3 orders in one walk." Each line shows its
+   tote (A, B or C), and the lines of all three orders are in one walking order.
+3. Press **Scan item** on every line, then **Mark tote A packed**, then B and C. The crate slot moves on by
+   itself.
+
+> "At peak one walk serves three customers instead of one. Our comparison script,
+> scripts/compare_picking.py, measured 48% less walking over 30 orders."
 
 ## 9. Logins: roles, stores and a safety buffer (2 minutes)
 
@@ -161,9 +173,11 @@ Open http://localhost:8000/network.html.
 
 Open http://localhost:8000/ops.html.
 
-1. The top tiles are problems that need someone now: stalled orders, bags waiting for a rider, items out
-   of stock. Then every HLD 12 KPI, with its target and whether it is met. A KPI with no data yet (for
-   example inventory accuracy before the first cycle count) says so instead of showing a made-up number.
+1. The top tiles are problems that need someone now: stalled orders, bags waiting more than 5 minutes for a
+   rider (the busy-hour totes from section 8, if you left them), items out of stock. Then every HLD 12 KPI,
+   with its target and whether it is met, plus *Packed to rider (p90)* from the rider handoff. A KPI with no
+   data yet (for example inventory accuracy before the first cycle count) says so instead of showing a
+   made-up number.
 2. Switch to the terminal with the load-test table from *Before you start*.
 
 > "Thirty seconds of mostly reads with some checkouts. The read p99 is what the HLD's 100 ms target is about.
@@ -188,5 +202,6 @@ Back on http://localhost:8000/docs.
 | Picker says no orders are waiting | The order was not paid, or the store selector is on the other store |
 | Page will not load | Check the terminal running `uvicorn`; restart it |
 | Errors such as "no such column" after a `git pull` | Stop the app, delete `darkstore.db`, start it again; the demo data is loaded afresh |
+| A screen looks or behaves as before a `git pull` | The browser kept the old script: hard-refresh each page (Ctrl+Shift+R) |
 | The map has no red cells or suggestions | Run `python scripts/generate_demand.py` (needed after every reset) |
 | A *Try it out* call in /docs says 401 | The token was not pasted into **Authorize**, or it has expired; log in again |
