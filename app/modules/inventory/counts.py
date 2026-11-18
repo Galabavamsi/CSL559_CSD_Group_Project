@@ -69,15 +69,16 @@ def start(db: Session, store_id: int, bin_id: int, created_by: str, reason: str 
 
 
 def _on_the_shelf(db: Session, bin_id: int, sku_id: int) -> int:
-    """What the records say is physically in the bin right now. Units promised to a pick task that is still pending
-    are on the shelf and are counted; units already scanned into a tote for an unpacked order are not."""
+    """What the records say is physically in the bin right now. Units promised to a pick task but not scanned yet
+    are on the shelf and are counted; units already scanned into a tote for an unpacked order are not, including
+    the first few of a line that is being scanned one at a time."""
     in_bin = db.scalar(select(func.coalesce(func.sum(StockItem.qty), 0))
                        .where(StockItem.bin_id == bin_id, StockItem.sku_id == sku_id))
     in_totes = db.scalar(
-        select(func.coalesce(func.sum(PickTask.qty), 0))
+        select(func.coalesce(func.sum(inventory.TOTE_UNITS), 0))
         .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
         .join(StockItem, StockItem.id == PickTask.stock_item_id)
-        .where(StockItem.bin_id == bin_id, StockItem.sku_id == sku_id, PickTask.status == "picked",
+        .where(StockItem.bin_id == bin_id, StockItem.sku_id == sku_id, PickTask.status.in_(inventory.TOTE_STATUSES),
                FulfilmentJob.state.in_(("created", "picking"))))
     return in_bin - in_totes
 

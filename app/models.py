@@ -195,7 +195,8 @@ class FulfilmentJob(Base):
 
 
 class PickTask(Base):
-    """Pick `qty` of one SKU from one bin. pending -> picked | short | reallocated."""
+    """Pick `qty` of one SKU from one bin. pending -> picked | short | reallocated (or cancelled with its order).
+    Units are scanned one or more at a time; the line is picked when `scanned_qty` reaches `qty`."""
     __tablename__ = "pick_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("fulfilment_jobs.id"), index=True)
@@ -203,8 +204,10 @@ class PickTask(Base):
     stock_item_id: Mapped[int | None] = mapped_column(ForeignKey("stock_items.id"), nullable=True)
     bin_id: Mapped[int | None] = mapped_column(ForeignKey("bins.id"), nullable=True)
     qty: Mapped[int] = mapped_column(Integer)
+    scanned_qty: Mapped[int] = mapped_column(Integer, default=0, server_default="0")   # units already in the tote
     seq: Mapped[int] = mapped_column(Integer, default=0)              # walking order
     status: Mapped[str] = mapped_column(String(12), default="pending")
+    picked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)        # when the last unit was scanned
     sku: Mapped[SKU] = relationship()
     bin: Mapped[Bin | None] = relationship()
     stock_item: Mapped[StockItem | None] = relationship()

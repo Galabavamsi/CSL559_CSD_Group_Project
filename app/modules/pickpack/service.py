@@ -67,28 +67,57 @@ def _open_task(db: Session, task_id: int) -> tuple[PickTask, FulfilmentJob]:
     return task, job
 
 
-def scan(db: Session, task_id: int, barcode: str, qty: int) -> dict:
-    """Check a barcode scan against the pick task (FR-5). A wrong item changes nothing."""
+def scan(db: Session, task_id: int, barcode: str, qty: int = 1) -> dict:
+    """Check a barcode scan against the pick task (FR-5) and put `qty` units in the tote: one at a time as a picker
+    really scans, or the whole line in one call. The line is picked when every unit is scanned. A wrong item, or more
+    units than the line still needs, changes nothing."""
     task, job = _open_task(db, task_id)
     if barcode != task.sku.barcode:
         db.rollback()
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
-    if qty != task.qty:
+    # Conditional, like the claim: the units are added only if the line still has room for them.
+    added = db.execute(
+        update(PickTask)
+        .where(PickTask.id == task.id, PickTask.status == "pending", PickTask.scanned_qty + qty <= PickTask.qty)
+        .values(scanned_qty=PickTask.scanned_qty + qty)
+        .execution_options(synchronize_session=False)
+    ).rowcount == 1
+    if not added:
         db.rollback()
         metrics.SCANS.labels("mismatch").inc()
-        return {"match": False, "message": f"Pick {task.qty} units for this line, not {qty}."}
-    task.status = "picked"
+        still_needed = task.qty - task.scanned_qty
+        return {"match": False, "message": f"Too many. This line needs {still_needed} more, not {qty}."}
+    db.refresh(task)
+    if task.scanned_qty == task.qty:
+        task.status = "picked"
+        task.picked_at = utcnow()
     db.commit()
     metrics.SCANS.labels("match").inc()
     pending = sum(1 for t in job.tasks if t.status == "pending")
-    return {"match": True, "message": "Picked.", "lines_left": pending, "job": fulfilment.job_view(job)}
+    message = "Picked." if task.status == "picked" else f"{task.scanned_qty} of {task.qty} scanned."
+    return {"match": True, "message": message, "lines_left": pending, "job": fulfilment.job_view(job)}
 
 
-def report_short(db: Session, task_id: int, actor: str = "picker") -> dict:
-    """The item is not in the bin. Fix the count, then try another bin; if none has spare
-    units, drop the line and free its hold (the refund itself belongs to the Order service)."""
+def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker") -> dict:
+    """The bin holds fewer units than the line needs: `found` of them were there (by default, the ones already
+    scanned). The found units become a picked line of their own; for the rest, fix the count, then try another bin;
+    if none has spare units, drop them and free their hold (the refund itself belongs to the Order service)."""
     task, job = _open_task(db, task_id)
+    found = task.scanned_qty if found is None else found
+    if found < task.scanned_qty:
+        db.rollback()
+        raise DomainError(409, "found_below_scanned",
+                          f"{task.scanned_qty} units of this line are already scanned, so at least that many "
+                          "were found")
+    if found >= task.qty:
+        db.rollback()
+        raise DomainError(409, "nothing_missing", f"This line needs {task.qty}; if all are there, scan them instead")
+    if found:
+        db.add(PickTask(job_id=job.id, sku_id=task.sku_id, stock_item_id=task.stock_item_id, bin_id=task.bin_id,
+                        qty=found, scanned_qty=found, status="picked", picked_at=utcnow()))
+        task.qty -= found             # this line is now only the missing units
+        task.scanned_qty = 0
     item = task.stock_item
     inventory.write_off_missing(db, item, task.qty, reference=f"job:{job.id}", actor=actor)
 
@@ -99,15 +128,15 @@ def report_short(db: Session, task_id: int, actor: str = "picker") -> dict:
     task.status = "short"
     db.flush()
 
-    found = 0
+    moved = 0
     if wanted:
         picks, _missing = inventory.allocate(db, job.store_id, task.sku_id, wanted, exclude_item_ids=(item.id,))
         for other, take in picks:
             db.add(PickTask(job_id=job.id, sku_id=task.sku_id, stock_item_id=other.id, bin_id=other.bin_id,
                             qty=take, status="pending"))
-            found += take
-    lost = task.qty - found
-    if found:
+            moved += take
+    lost = task.qty - moved
+    if moved:
         task.status = "reallocated"
         if lost:
             db.add(PickTask(job_id=job.id, sku_id=task.sku_id, qty=lost, status="short"))
@@ -118,13 +147,16 @@ def report_short(db: Session, task_id: int, actor: str = "picker") -> dict:
     events.publish(db, "stock.changed", job.store_id,
                    {"sku_id": task.sku_id, "cause": "not_found", "bin_id": item.bin_id})   # inventory counts the bin
     db.commit()
-    if found and not lost:
-        message = "Count corrected. Pick this line from another bin."
-    elif found:
-        message = f"Count corrected. Only {found} more found in another bin; {lost} dropped from the order."
+    if moved and not lost:
+        message = "Count corrected. Pick the rest from another bin."
+    elif moved:
+        message = f"Count corrected. Only {moved} more found in another bin; {lost} dropped from the order."
     else:
-        message = "Count corrected. No other stock, so this line is dropped from the order."
-    return {"reallocated": found, "dropped": lost, "message": message, "job": fulfilment.job_view(job)}
+        message = f"Count corrected. No other stock, so {lost} dropped from the order."
+    if found:
+        message = f"{found} picked. {message}"
+    return {"picked": found, "reallocated": moved, "dropped": lost, "message": message,
+            "job": fulfilment.job_view(job)}
 
 
 def pack(db: Session, job_id: int, crate_slot: str, actor: str = "packer") -> FulfilmentJob:

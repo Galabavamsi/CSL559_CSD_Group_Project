@@ -10,7 +10,7 @@ leave the transaction open so the caller can combine several steps and commit on
 import uuid
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -412,13 +412,19 @@ def _remove_from_item(db: Session, item: StockItem, qty: int, reason: str, refer
 # --------------------------------------------------------------------------- expiry (FR-10)
 
 
+# Units of a pick task that are already in a tote: all of a picked line, and the units scanned so far of a line
+# that is still being scanned one at a time (Pick & Pack task 2.2). Used with PickTask.status in TOTE_STATUSES.
+TOTE_UNITS = case((PickTask.status == "picked", PickTask.qty), else_=PickTask.scanned_qty)
+TOTE_STATUSES = ("pending", "picked")
+
+
 def _in_totes(db: Session, item: StockItem) -> int:
     """Units of this batch already scanned into a tote for an order that is not packed yet. They are off the shelf
     and leave the count when the order is packed, so an expiry write-off must not take them too."""
     return db.scalar(
-        select(func.coalesce(func.sum(PickTask.qty), 0))
+        select(func.coalesce(func.sum(TOTE_UNITS), 0))
         .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
-        .where(PickTask.stock_item_id == item.id, PickTask.status == "picked",
+        .where(PickTask.stock_item_id == item.id, PickTask.status.in_(TOTE_STATUSES),
                FulfilmentJob.state.in_(("created", "picking")))
     )
 

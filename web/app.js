@@ -276,13 +276,26 @@ function renderJob() {
         item.append(el("p", { className: "task-meta" }, `Batch ${task.batch_no}, expires ${task.expiry_date}`));
       }
       if (task.status === "pending" && job.state === "picking") {
+        const left = task.qty - task.scanned_qty;
+        if (task.qty > 1) {
+          item.append(el("p", { className: "task-meta" }, `${task.scanned_qty} of ${task.qty} scanned`));
+        }
+        // "Scan item" puts every unit still needed in the tote; "Scan 1" is one beep of a real scanner (task 2.2).
         const scanRight = el("button", { className: "btn btn-small btn-primary", textContent: "Scan item" });
+        const scanOne = el("button", { className: "btn btn-small", textContent: "Scan 1" });
         const scanWrong = el("button", { className: "btn btn-small", textContent: "Scan a wrong item" });
+        scanRight.onclick = guarded($("picker-message"), () => scanTask(task, task.barcode, left));
+        scanOne.onclick = guarded($("picker-message"), () => scanTask(task, task.barcode, 1));
+        scanWrong.onclick = guarded($("picker-message"), () => scanTask(task, "0000000000000", 1));
+        // Not on shelf, or only some of it: the number found (empty means the units already scanned).
+        const found = el("input", { type: "number", min: String(task.scanned_qty), max: String(task.qty - 1),
+                                    placeholder: "Found only…", className: "found-input" });
+        found.setAttribute("aria-label", `Units of ${task.sku} found in the bin`);
         const missing = el("button", { className: "btn btn-small", textContent: "Not on shelf" });
-        scanRight.onclick = guarded($("picker-message"), () => scanTask(task, task.barcode));
-        scanWrong.onclick = guarded($("picker-message"), () => scanTask(task, "0000000000000"));
-        missing.onclick = guarded($("picker-message"), () => reportShort(task));
-        item.append(el("div", { className: "row row-wrap" }, scanRight, scanWrong, missing));
+        missing.onclick = guarded($("picker-message"),
+          () => reportShort(task, found.value === "" ? undefined : Number(found.value)));
+        item.append(el("div", { className: "row row-wrap" },
+          scanRight, ...(left > 1 ? [scanOne] : []), scanWrong, ...(task.qty > 1 ? [found] : []), missing));
       } else {
         item.append(el("span", { className: `task-status ${task.status}` }, TASK_STATUS_TEXT[task.status] || task.status));
       }
@@ -294,8 +307,8 @@ function renderJob() {
   $("handover").hidden = job.state !== "packed";
 }
 
-async function scanTask(task, barcode) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty: task.qty }, picker())
+async function scanTask(task, barcode, qty) {
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/scans`, { barcode, qty }, picker())
     .catch(explainIfCancelled);
   if (!result) return;
   if (!result.match) {
@@ -303,12 +316,15 @@ async function scanTask(task, barcode) {
     return;
   }
   state.job = result.job;
-  say($("picker-message"), result.lines_left ? `Picked. ${result.lines_left} to go.` : "All lines done. Pack the order.", "good");
+  const lineDone = result.job.tasks.find((t) => t.task_id === task.task_id)?.status === "picked";
+  if (!lineDone) say($("picker-message"), result.message, "good");                 // "3 of 6 scanned."
+  else say($("picker-message"), result.lines_left ? `Picked. ${result.lines_left} to go.` : "All lines done. Pack the order.", "good");
   renderJob();
 }
 
-async function reportShort(task) {
-  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, undefined, picker())
+async function reportShort(task, found) {
+  const body = found === undefined ? undefined : { found };
+  const result = await api("POST", `/v1/pick-tasks/${task.task_id}/short`, body, picker())
     .catch(explainIfCancelled);
   if (!result) return;
   state.job = result.job;
