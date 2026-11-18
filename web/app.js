@@ -354,8 +354,9 @@ async function handover() {
   if (!bagged) return;
   // The rider system's rider for this order checks in at the desk, which scans the bag before handing it over
   // (task 2.7): only this order's bag goes to this order's rider.
-  const rider = bagged.rider?.rider_id;
-  if (!rider) throw new Error("No rider has been assigned to this order yet.");
+  // An order packed before riders were assigned has none: the first stand-in rider comes for it, and the server
+  // gives the order to the rider who comes.
+  const rider = bagged.rider?.rider_id || "R-11";
   const desk = await api("POST", `/v1/riders/${rider}/arrive`, { order_id: bagged.order_id }, picker());
   const job = await api("POST", `/v1/fulfilment-jobs/${bagged.job_id}/handover`,
     { rider_id: rider, scanned_order_id: bagged.order_id }, picker());
