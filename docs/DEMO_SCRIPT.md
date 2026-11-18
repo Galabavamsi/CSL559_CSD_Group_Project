@@ -1,20 +1,29 @@
 # Demo script
 
-A ten-minute walk through the prototype for a presentation. Each step says what to click and what
+A fifteen-minute walk through the prototype for a presentation. Each step says what to click and what
 to say. Rehearse it twice; press **Reset demo data** on the ops desk before every run.
 
 ## Before you start
 
 ```bash
 python -m uvicorn app.main:app
-python scripts/generate_sales.py     # in a second terminal, after every reset
 ```
 
-The generator gives the forecast in section 7 two months of sales; the demo data alone has one week, too
-little to forecast from the same weekday or to measure forecast error.
+Then, in a second terminal:
+
+```bash
+python scripts/load_test.py --seconds 30 --reset   # once, before the audience arrives; keep its table for section 11
+python scripts/generate_sales.py                   # after every reset
+python scripts/generate_demand.py                  # after every reset
+```
+
+The load test places real orders, so press **Reset demo data** after it and run the two generators again.
+The sales generator gives the forecast in section 7 two months of sales; the demo data alone has one week,
+too little to forecast from the same weekday or to measure forecast error. The demand generator adds the
+delivery lookups the map in section 10 needs, including ones no store could serve.
 
 Open http://localhost:8000 in **two browser windows** side by side (you need the second one for
-step 3). Keep the store selector on *DS-01 Central*.
+steps 3 and 4). Keep the store selector on *DS-01 Central*.
 
 ## 1. The three stations (30 seconds)
 
@@ -51,7 +60,12 @@ This is the centrepiece. The demo data has exactly **one** vanilla ice cream in 
 ## 4. A paid order, picked oldest-first (2 minutes)
 
 1. Customer: add 8 *Toned milk* and 2 *Basmati rice*. **Hold my items**, then **Pay now**.
-2. Ops desk: "Waiting for a picker" is 1, and the event feed shows `order.paid`.
+2. Ops desk: "Waiting for a picker" is 1, and the event feed shows `order.paid`. Point at window B: its
+   ops desk shows the same within a second, without a refresh.
+
+> "Every change is written as an event, and each store's screens are told over a live connection. If that
+> connection drops, the page falls back to checking every few seconds and reconnects on its own."
+
 3. Picker: press **Get next order**.
 
 > "The milk line is split across two bins. Six come from batch M-OLD, which expires tomorrow, and
@@ -108,14 +122,62 @@ Place and pay for six small orders without picking them. The store tile turns to
 
 > "When a store's backlog passes a threshold it protects itself by quoting a longer delivery time."
 
-## 9. Close (30 seconds)
+## 9. Logins: roles, stores and a safety buffer (2 minutes)
 
 Open http://localhost:8000/docs.
+
+1. **POST /v1/auth/login** → *Try it out* → `{"username": "picker1", "password": "demo"}` → *Execute*.
+   Copy the `access_token`.
+2. **Authorize** (top right): paste the token, *Authorize*, *Close*.
+3. **GET /v1/pickers/{picker_id}/next-task** → *Try it out* → `picker_id` *picker1*, `store_id` *2* →
+   *Execute*. Refused with 403: "You can only act on your own store".
+
+> "The picker is from store 1. The token says so, and every staff call checks the role and the store
+> before it does anything."
+
+4. Log in again as `manager1`. In **Authorize**, press *Logout*, paste the new token, *Authorize*.
+5. **PUT /v1/stores/{store_id}/stock-settings/{sku_id}** → `store_id` *1*, `sku_id` *7* (rice), body
+   `{"safety_buffer": 5}` → *Execute*. The answer shows `atp` 5 lower than `on_hand`.
+6. Back on the main screen: within five seconds the customer station shows 5 fewer rice left. (The ops
+   desk table catches up at its next refresh; reload the page to show it at once.)
+
+> "A manager can hide a few units of an item whose count is often a little off, so customers are never
+> sold the last unit that may not be on the shelf."
+
+## 10. Where to open the next store (1 minute)
+
+Open http://localhost:8000/network.html.
+
+1. The blue outlines are the two stores' delivery zones, built from H3 hexagons. Green cells are the paid
+   orders from this run.
+2. The red cells are addresses customers asked about that no store could serve.
+3. The dashed yellow cells are the suggested new sites. The list on the right says how many of those
+   turned-away customers each would reach.
+
+> "Every lookup we could not serve is recorded by hexagon. The suggestions pick, one at a time, the site that
+> reaches the most of them, outside our current zones."
+
+## 11. The ops dashboard and the load test (1 minute)
+
+Open http://localhost:8000/ops.html.
+
+1. The top tiles are problems that need someone now: stalled orders, bags waiting for a rider, items out
+   of stock. Then every HLD 12 KPI, with its target and whether it is met. A KPI whose owner has not built
+   it yet says so instead of showing a made-up number.
+2. Switch to the terminal with the load-test table from *Before you start*.
+
+> "Thirty seconds of mostly reads with some checkouts. The read p99 is what the HLD's 100 ms target is about.
+> This is one laptop and SQLite, not the HLD's cluster, so the number shows where time goes, not what
+> production would do. Prometheus can scrape the same timings from /metrics."
+
+## 12. Close (30 seconds)
+
+Back on http://localhost:8000/docs.
 
 > "Every action you saw is one of these API calls, and every staff call carries a login with a role and a
 > store. The code has one module per service in our HLD, and one automated test walks this whole script
 > through the API, from order to a final stock audit. What you saw is a prototype: SQLite instead of
-> PostgreSQL and an event table instead of Kafka."
+> PostgreSQL, and an outbox table with a relay inside the app instead of Kafka."
 
 ## If something goes wrong
 
@@ -125,3 +187,6 @@ Open http://localhost:8000/docs.
 | "The hold ran out" | **Release expired holds**, then order again |
 | Picker says no orders are waiting | The order was not paid, or the store selector is on the other store |
 | Page will not load | Check the terminal running `uvicorn`; restart it |
+| Errors such as "no such column" after a `git pull` | Stop the app, delete `darkstore.db`, start it again; the demo data is loaded afresh |
+| The map has no red cells or suggestions | Run `python scripts/generate_demand.py` (needed after every reset) |
+| A *Try it out* call in /docs says 401 | The token was not pasted into **Authorize**, or it has expired; log in again |
