@@ -110,7 +110,8 @@ def report_short(db: Session, task_id: int, actor: str = "picker") -> dict:
         inventory.unreserve(db, job.store_id, task.sku_id, lost)
     db.flush()
     fulfilment.resequence(db, job)
-    events.publish(db, "stock.changed", job.store_id, {"sku_id": task.sku_id, "cause": "not_found"})
+    events.publish(db, "stock.changed", job.store_id,
+                   {"sku_id": task.sku_id, "cause": "not_found", "bin_id": item.bin_id})   # inventory counts the bin
     db.commit()
     if found and not lost:
         message = "Count corrected. Pick this line from another bin."

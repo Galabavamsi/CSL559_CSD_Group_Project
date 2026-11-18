@@ -8,7 +8,7 @@ from ... import config
 from ...idempotency import run_once
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
-from . import service
+from . import counts, service
 
 router = APIRouter(tags=["inventory"])
 
@@ -131,3 +131,89 @@ def read_near_expiry(store_id: int, days: int = Query(2, ge=0, le=30, descriptio
                      db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
     check_store(staff, store_id)
     return service.near_expiry(db, store_id, days)
+
+
+# --------------------------------------------------------------------------- cycle counts (task 1.5, FR-11)
+
+
+class CountStartIn(BaseModel):
+    store_id: int
+    bin_id: int
+
+
+class CountedLineIn(BaseModel):
+    sku_id: int
+    counted_qty: int = Field(ge=0)
+
+
+class CountSubmitIn(BaseModel):
+    lines: list[CountedLineIn] = Field(min_length=1)
+
+    @field_validator("lines")
+    @classmethod
+    def _one_line_per_sku(cls, lines: list[CountedLineIn]) -> list[CountedLineIn]:
+        if len({line.sku_id for line in lines}) != len(lines):
+            raise ValueError("give each SKU once")
+        return lines
+
+
+COUNTERS = ("picker", "receiver", "manager")
+
+
+def _count_in_my_store(db: Session, count_id: int, staff: dict):
+    count = counts.get_count(db, count_id)
+    check_store(staff, count.store_id)
+    return count
+
+
+@router.post("/v1/cycle-counts", status_code=201, summary="Start a blind count of one bin")
+def start_count(body: CountStartIn, db: Session = Depends(get_db), staff: dict = Depends(require_role(*COUNTERS))):
+    """Returns the SKUs to look for, without quantities. A bin already being counted returns that count."""
+    check_store(staff, body.store_id)
+    return counts.count_view(counts.start(db, body.store_id, body.bin_id, created_by=staff["sub"]))
+
+
+@router.get("/v1/cycle-counts/{count_id}", summary="Read a count (no quantities while it is open)")
+def read_count(count_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    return counts.count_view(_count_in_my_store(db, count_id, staff))
+
+
+@router.post("/v1/cycle-counts/{count_id}/submit", summary="Hand in what was counted")
+def submit_count(count_id: int, body: CountSubmitIn, db: Session = Depends(get_db),
+                 staff: dict = Depends(require_role(*COUNTERS))):
+    """Small differences (worth at most COUNT_AUTO_APPROVE_VALUE) are applied at once; bigger ones wait for a
+    manager."""
+    _count_in_my_store(db, count_id, staff)
+    counted = {line.sku_id: line.counted_qty for line in body.lines}
+    return counts.count_view(counts.submit(db, count_id, counted, submitted_by=staff["sub"]))
+
+
+@router.post("/v1/cycle-counts/{count_id}/approve", summary="Apply a count's differences to stock")
+def approve_count(count_id: int, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
+    """A manager may not approve a count they submitted themselves (an admin may)."""
+    _count_in_my_store(db, count_id, staff)
+    return counts.count_view(counts.approve(db, count_id, decided_by=staff["sub"],
+                                            may_approve_own=staff["role"] == "admin"))
+
+
+@router.post("/v1/cycle-counts/{count_id}/reject", summary="Leave stock as it is")
+def reject_count(count_id: int, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
+    _count_in_my_store(db, count_id, staff)
+    return counts.count_view(counts.reject(db, count_id, decided_by=staff["sub"]))
+
+
+@router.get("/v1/stores/{store_id}/cycle-counts", summary="A store's counts, newest first")
+def list_counts(store_id: int, status: str | None = Query(None, pattern="^(open|submitted|approved|rejected)$",
+                                                           description="submitted = waiting for a manager"),
+                db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
+    check_store(staff, store_id)
+    return [counts.count_view(count) for count in counts.list_counts(db, store_id, status)]
+
+
+@router.get("/v1/stores/{store_id}/inventory-accuracy",
+            summary="Share of counted lines that matched the records (HLD 12 target: 99.5%)")
+def read_inventory_accuracy(store_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    check_store(staff, store_id)
+    service.get_store(db, store_id)
+    return counts.inventory_accuracy(db, store_id)
+
