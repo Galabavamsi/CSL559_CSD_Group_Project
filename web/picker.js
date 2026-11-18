@@ -4,9 +4,11 @@
 const phone = {
   store: Number(new URLSearchParams(location.search).get("store")) || 1,
   jobs: [],         // the orders being picked: one, or a batch at peak (task 2.6)
+  walkSize: 0,      // how many orders this walk started with, so the last one of a batch keeps its tote
 };
 const me = () => `picker${phone.store}`;
-const batch = () => phone.jobs.length > 1;
+// A walk is a batch if it started with more than one order (or, after a reload, still holds a tote past A).
+const batch = () => phone.walkSize > 1 || phone.jobs.some((j) => j.tote && j.tote !== "A");
 
 /** Lines still to pick from every order, nearest bin first: the order the picker walks them. */
 function linesToPick() {
@@ -76,6 +78,9 @@ async function orderGone(error, job) {
 
 async function nextOrder() {
   const result = await api("GET", `/v1/pickers/${me()}/next-batch?store_id=${phone.store}`, undefined, me());
+  // Asking again mid-walk returns what is left of the same walk: it stays a batch even when one order remains.
+  const sameWalk = result.jobs.length > 0 && result.jobs.every((j) => phone.jobs.some((s) => s.job_id === j.job_id));
+  phone.walkSize = sameWalk ? Math.max(phone.walkSize, result.jobs.length) : result.jobs.length;
   phone.jobs = result.jobs;
   say($("message"), !result.jobs.length ? "No paid orders are waiting."
     : batch() ? `Busy store: ${result.jobs.length} orders in one walk. Each item goes in the tote shown.` : "");
@@ -140,6 +145,7 @@ function start() {
   $("store").onchange = () => {
     phone.store = Number($("store").value);
     phone.jobs = [];
+    phone.walkSize = 0;
     history.replaceState(null, "", `?store=${phone.store}`);
     say($("message"), "");
     render();
@@ -154,6 +160,7 @@ function start() {
   api("GET", `/v1/fulfilment-jobs?store_id=${phone.store}&state=picking`, undefined, me())
     .then((jobs) => {
       phone.jobs = jobs.filter((job) => job.picker_id === me()).sort((a, b) => (a.tote || "").localeCompare(b.tote || ""));
+      phone.walkSize = phone.jobs.length;
       render();
     })
     .catch(() => {});
