@@ -106,3 +106,22 @@ def test_find_substitute_looks_only_in_the_same_category(db, sku):
     assert pickpack.find_substitute(db, 1, sku("Tea"), 1) is None               # the only Beverage
     assert pickpack.find_substitute(db, 1, sku("Frozen green peas"), 1)["sku_id"] == sku("Vanilla ice cream")
     assert pickpack.find_substitute(db, 1, sku("Frozen green peas"), 2) is None  # only 1 ice cream
+
+
+def test_dropped_lines_and_a_later_cancel_never_refund_more_than_the_order(client, sku):
+    """Dropped units are refunded by order.line_dropped; a cancel afterwards refunds only what was still held."""
+    rice, ice_cream = sku("Basmati rice"), sku("Vanilla ice cream")
+    place_paid_order(client, "s-10", 1, [(rice, 6), (ice_cream, 1)])          # 6 x 140 + 120 = Rs 960
+    job = next_job(client)
+    rice_line = next(t for t in job["tasks"] if t["sku_id"] == rice)
+    ice_line = next(t for t in job["tasks"] if t["sku_id"] == ice_cream)
+    client.post(f"/v1/pick-tasks/{ice_line['task_id']}/short")               # Rs 120 dropped
+    client.post(f"/v1/pick-tasks/{rice_line['task_id']}/short", json={"found": 4})   # 2 rice dropped: Rs 280
+
+    client.post(f"/v1/fulfilment-jobs/{job['job_id']}/cancel", json={"reason": "Customer changed their mind"})
+
+    dropped = sum(e["refund_amount"] for e in events_of(client, "order.line_dropped"))
+    [cancelled] = events_of(client, "order.cancelled")
+    assert (dropped, cancelled["refund_amount"]) == (400, 560)                 # the 4 rice in the tote
+    assert dropped + cancelled["refund_amount"] == 6 * 140 + 120
+    assert_stock_is_consistent()

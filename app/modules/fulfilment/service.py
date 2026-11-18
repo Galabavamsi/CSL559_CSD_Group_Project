@@ -58,13 +58,19 @@ def add_pick_tasks(db: Session, job: FulfilmentJob, sku_id: int, qty: int,
     return shortfall
 
 
+def refund_for(db: Session, units: dict[int, int]) -> float:
+    """What the customer paid for these units ({sku_id: qty}).
+    shortcut: priced at today's SKU.price, because ReservationLine stores no price; a price change between checkout
+    and the refund would refund the wrong amount. Nothing changes prices in the prototype yet."""
+    return round(sum(qty * inventory.get_sku(db, sku_id).price for sku_id, qty in units.items()), 2)
+
+
 def publish_line_dropped(db: Session, job: FulfilmentJob, sku_id: int, qty: int) -> None:
     """`qty` units of a paid order will not be delivered: publish order.line_dropped so the Order service refunds
     them (task 2.4). Does not commit."""
-    price = inventory.get_sku(db, sku_id).price
     events.publish(db, "order.line_dropped", job.store_id,
                    {"order_id": job.order_id, "job_id": job.id, "sku_id": sku_id, "qty": qty,
-                    "refund_amount": round(qty * price, 2)})
+                    "refund_amount": refund_for(db, {sku_id: qty})})
 
 
 def resequence(db: Session, job: FulfilmentJob) -> None:
@@ -167,8 +173,11 @@ def cancel(db: Session, job_id: int, reason: str) -> FulfilmentJob:
         events.publish(db, "stock.changed", job.store_id, {"sku_id": sku_id, "cause": "cancelled"})
     events.publish(db, "fulfilment.state_changed", job.store_id,
                    {"job_id": job.id, "order_id": job.order_id, "state": "cancelled"})
-    events.publish(db, "order.cancelled", job.store_id,           # the Order service refunds from this
-                   {"order_id": job.order_id, "job_id": job.id, "reason": reason})
+    # The Order service refunds `refund_amount`: only the units this cancel gave back. Units dropped earlier were
+    # refunded by their own order.line_dropped, so the two together never add up to more than the order.
+    events.publish(db, "order.cancelled", job.store_id,
+                   {"order_id": job.order_id, "job_id": job.id, "reason": reason,
+                    "refund_amount": refund_for(db, released)})
     refresh_store_load(db, job.store_id)
     db.commit()
     return job

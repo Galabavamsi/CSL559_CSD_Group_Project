@@ -51,11 +51,15 @@ def test_cancel_before_a_picker_claims_it_gives_the_stock_back(client, sku):
     assert (atp(client, 1, rice), atp(client, 1, tea)) == before
     assert client.get(f"/v1/reservations/{paid['reservation_id']}").json()["status"] == "cancelled"
     [event] = events_of(client, "order.cancelled")
-    assert event["payload"] == {"order_id": "c-1", "job_id": job["job_id"], "reason": REASON}
+    assert event["payload"] == {"order_id": "c-1", "job_id": job["job_id"], "reason": REASON,
+                                "refund_amount": 2 * 140 + 130}                 # rice Rs 140, tea Rs 130
     assert {"job_id": job["job_id"], "order_id": "c-1", "state": "cancelled"} in [
         e["payload"] for e in events_of(client, "fulfilment.state_changed")]
-    # Paying again cannot bring the order back.
+    # Paying again cannot bring the order back, and releasing the hold again is safe and changes nothing.
     assert client.post(f"/v1/reservations/{paid['reservation_id']}/confirm").status_code == 409
+    again = client.delete(f"/v1/reservations/{paid['reservation_id']}")
+    assert again.status_code == 200 and again.json()["status"] == "cancelled"
+    assert (atp(client, 1, rice), atp(client, 1, tea)) == before
     assert next_job(client) is None
     assert_stock_is_consistent()
 
@@ -222,4 +226,36 @@ def test_only_the_stores_manager_may_cancel(client, client_as, sku):
     assert cancel(client_as("manager", 1), job_id, reason="").status_code == 422
     assert cancel(client_as("manager", 1), job_id).status_code == 200
     assert cancel(client_as("manager", 1), 999_999).status_code == 404
+    assert_stock_is_consistent()
+
+
+def test_a_scan_and_a_cancel_at_the_same_moment_leave_the_stock_right(client, sku):
+    """Both read the order as being picked first, then act at once. Whichever wins, the hold is given back once
+    and nothing is sold."""
+    rice = sku("Basmati rice")
+    place_paid_order(client, "c-10", 1, [(rice, 2)])
+    job = next_job(client)
+    task = job["tasks"][0]
+    both_have_read = threading.Barrier(2)
+
+    def scan_it():
+        with SessionLocal() as session:
+            assert session.get(PickTask, task["task_id"]).status == "pending"
+            both_have_read.wait()
+            try:
+                return pickpack.scan(session, task["task_id"], task["barcode"], 2)["match"]
+            except DomainError as refused:
+                return refused.code
+
+    def cancel_it():
+        with SessionLocal() as session:
+            assert fulfilment.get_job(session, job["job_id"]).state == "picking"
+            both_have_read.wait()
+            return fulfilment.cancel(session, job["job_id"], REASON).state
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        scanned, cancelled = pool.submit(scan_it), pool.submit(cancel_it)
+        assert scanned.result() in (True, "job_not_picking")      # before the cancel, or refused after it
+        assert cancelled.result() == "cancelled"
+    assert stock(client, rice) == (30, 0)
     assert_stock_is_consistent()

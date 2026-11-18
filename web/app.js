@@ -216,8 +216,18 @@ async function cancelPaidOrder() {
   const managerOfStore = `manager${storeId}`;
   const jobs = await api("GET", `/v1/fulfilment-jobs?store_id=${storeId}`, undefined, managerOfStore);
   const job = jobs.find((j) => j.order_id === orderId);
-  if (!job) throw new Error(`Order ${orderId} is not in the store's list any more.`);
-  await api("POST", `/v1/fulfilment-jobs/${job.job_id}/cancel`, { reason: "Customer changed their mind" }, managerOfStore);
+  if (!job) {
+    showPaid(null);
+    throw new Error(`Order ${orderId} is not in the store's list any more.`);
+  }
+  try {
+    await api("POST", `/v1/fulfilment-jobs/${job.job_id}/cancel`, { reason: "Customer changed their mind" }, managerOfStore);
+  } catch (error) {
+    if (error.code !== "too_late") throw error;
+    showPaid(null);                        // packed already: the panel's offer no longer holds
+    say($("customer-message"), `Too late to cancel order ${orderId}: it is already packed.`, "bad");
+    return;
+  }
   showPaid(null);
   say($("customer-message"), `Order ${orderId} cancelled. Its items are back on sale and the payment will be refunded.`);
   await loadProducts();

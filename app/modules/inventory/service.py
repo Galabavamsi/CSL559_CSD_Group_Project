@@ -219,10 +219,15 @@ def _lost_race_to_confirm(db: Session, res: Reservation) -> Reservation:
     raise DomainError(409, "not_held", f"Reservation is {res.status}, so it cannot be confirmed")
 
 
+# A reservation in one of these states has nothing held any more: released or expired before payment, or a paid
+# order cancelled before packing (fulfilment.cancel). Releasing it again changes nothing.
+GIVEN_BACK = ("released", "expired", "cancelled")
+
+
 def release(db: Session, reservation_id: str) -> Reservation:
     """Payment failed or the customer cancelled before paying: give the stock back."""
     res = get_reservation(db, reservation_id)
-    if res.status in ("released", "expired"):
+    if res.status in GIVEN_BACK:
         return res                                            # safe to retry
     if res.status != "held":
         raise DomainError(409, "already_paid",
@@ -230,7 +235,7 @@ def release(db: Session, reservation_id: str) -> Reservation:
     if not _release(db, res, "released"):
         db.rollback()                         # someone else got there first; report what they did
         db.refresh(res)
-        if res.status not in ("released", "expired"):
+        if res.status not in GIVEN_BACK:
             raise DomainError(409, "already_paid",
                               "This order is already paid. Cancel it with POST /v1/fulfilment-jobs/{job_id}/cancel.")
         return res
