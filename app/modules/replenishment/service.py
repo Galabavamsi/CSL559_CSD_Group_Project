@@ -148,22 +148,24 @@ def kpis(db: Session, store_id: int) -> dict:
 
 
 def _stock_out_rate(levels: list[StockLevel]) -> dict:
-    """Carried SKUs with nothing to sell (ATP <= 0) / carried SKUs."""
-    out = sorted((lv for lv in levels if lv.qty_on_hand - lv.qty_reserved <= 0), key=lambda lv: lv.sku.name)
+    """Carried SKUs customers cannot buy / carried SKUs. Uses inventory.atp_of, so units hidden by the safety
+    buffer do not count as stock, as on the dashboard."""
+    out = sorted((lv for lv in levels if inventory.atp_of(lv) <= 0), key=lambda lv: lv.sku.name)
     value = _ratio(len(out), len(levels))
     return _kpi(value, "≤ 2% of carried SKUs", None if value is None else value <= STOCK_OUT_TARGET,
                 carried=len(levels), out_of_stock=[{"sku_id": lv.sku_id, "sku": lv.sku.name} for lv in out])
 
 
 def _days_of_cover(db: Session, store_id: int, levels: list[StockLevel]) -> dict:
-    """Per SKU: ATP / forecast daily demand. The value is the share of SKUs with a forecast whose cover is within
-    target: 1-2 days for a fresh SKU (shelf life up to config.FRESH_SHELF_LIFE_DAYS), 3-5 days for the rest; met
-    when every one of them is. SKUs without forecast demand are not measured."""
+    """Per SKU: ATP (what customers can buy, inventory.atp_of) / forecast daily demand. The value is the share of
+    SKUs with a forecast whose cover is within target: 1-2 days for a fresh SKU (shelf life up to
+    config.FRESH_SHELF_LIFE_DAYS), 3-5 days for the rest; met when every one of them is. SKUs without forecast
+    demand are not measured."""
     demand = {row["sku_id"]: row["daily_demand"] for row in forecasting.list_forecasts(db, store_id)}
     rows = []
     for level in levels:
         daily = demand.get(level.sku_id, 0)
-        atp = level.qty_on_hand - level.qty_reserved
+        atp = inventory.atp_of(level)
         fresh = level.sku.shelf_life_days <= config.FRESH_SHELF_LIFE_DAYS
         days = atp / daily if daily > 0 else None
         low, high = COVER_DAYS_FRESH if fresh else COVER_DAYS_OTHER
