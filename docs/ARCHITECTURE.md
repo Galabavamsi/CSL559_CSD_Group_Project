@@ -201,6 +201,14 @@ otherwise a new one. It is returned in the `X-Request-ID` response header and wr
 made while the request is handled. The app logs one JSON object per line to stderr, including one line per
 request with its method, route, status and time in milliseconds.
 
+The same middleware keeps the audit log. `auth.current_staff` puts the decoded token on the request; after
+the response, if one is there, the middleware writes an `audit_entries` row: who (username, role, store),
+what (method, route template, path with query string), the status they got and the request id. Refusals are
+kept too, so a picker trying another store shows up as a 403. Calls with no valid token have nobody to name
+and are only in the request log. The row is written in its own session after the handler has finished, so
+it records what the caller was told, and a failed write is logged without failing the call. WebSocket
+connections do not pass through the HTTP middleware and are not audited.
+
 ### Alert rules (HLD 12)
 
 | Alert | Metric | Fires when (PromQL) |

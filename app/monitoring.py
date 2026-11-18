@@ -13,15 +13,17 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from . import config, metrics
-from .db import get_db
+from .auth import require_role
+from .db import SessionLocal, get_db
 from .errors import DomainError
-from .models import EventLog, Reservation, utcnow
+from .models import AuditEntry, EventLog, Reservation, utcnow
 from .modules.dashboard.service import outbox_lag_seconds
 
 log = logging.getLogger("app.requests")
@@ -75,7 +77,38 @@ async def observe(request: Request, call_next):
         metrics.REQUEST_SECONDS.labels(method, route, str(status)).observe(seconds)
         log.info("request", extra={"fields": {"method": request.method, "route": route, "status": status,
                                               "ms": round(seconds * 1000, 1)}})
+        await run_in_threadpool(_audit, request, route, status, rid)   # a slow or locked database must not stall other requests
         request_id.reset(token)
+
+
+def _audit(request: Request, route: str, status: int, rid: str) -> None:
+    """Record a call by a logged-in staff member (current_staff put them on the request). Calls that need no
+    login, or had no valid token, have nobody to name and are not recorded. A failed write is logged, and the
+    caller still gets their answer."""
+    staff = getattr(request.state, "staff", None)
+    if staff is None:
+        return
+    path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    try:
+        with SessionLocal() as db:
+            db.add(AuditEntry(username=staff["sub"], role=staff["role"], store_id=staff.get("store_id"),
+                              method=request.method[:10], route=route, path=path[:300], status=status,
+                              request_id=rid))
+            db.commit()
+    except Exception:   # whatever goes wrong here, the caller still gets the answer they were given
+        log.exception("audit write failed")
+
+
+@router.get("/v1/audit", summary="Who called which protected endpoint, newest first (admin only)")
+def audit_log(username: str | None = None, limit: int = Query(100, ge=1, le=500),
+              db: Session = Depends(get_db), staff: dict = Depends(require_role("admin"))) -> list[dict]:
+    query = select(AuditEntry)
+    if username is not None:
+        query = query.where(AuditEntry.username == username)
+    rows = db.scalars(query.order_by(AuditEntry.id.desc()).limit(limit))
+    return [{"ts": e.ts.isoformat() + "Z", "username": e.username, "role": e.role, "store_id": e.store_id,
+             "method": e.method, "route": e.route, "path": e.path, "status": e.status, "request_id": e.request_id}
+            for e in rows]
 
 
 @router.get("/metrics", include_in_schema=False)
