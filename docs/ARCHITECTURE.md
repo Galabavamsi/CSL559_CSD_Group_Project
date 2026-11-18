@@ -90,7 +90,9 @@ test that moves stock. If it fails, some code changed one record without the oth
 
 `events.publish(db, type, store_id, payload)` writes a row to `event_log` **inside the caller's
 transaction** and then calls any subscribed handlers in the same transaction. If the stock change
-rolls back, so does the event. This is the "transactional outbox" from HLD 9.2, minus the relay.
+rolls back, so does the event. This is the "transactional outbox" from HLD 9.2. A relay inside the app
+(`events.relay_once`, a few times a second) sends unsent events, oldest first, to every sink (today the
+WebSocket feed) and marks them published; delivery is at least once.
 
 | Event | Published by | Handled by (today) |
 | --- | --- | --- |
@@ -164,15 +166,15 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | --- | --- | --- |
 | PostgreSQL sharded by `store_id` | One SQLite file | Member 1 (PostgreSQL), sharding stays a design-only topic |
 | Redis ATP cache | Reads hit the database | Member 1 |
-| Kafka | `event_log` table + in-process handlers | Member 4 |
-| API gateway, JWT, roles | Open endpoints | Member 4 |
-| H3 delivery zones | Radius around each store | Member 4 |
+| Kafka | `event_log` outbox + in-process handlers; a relay in the app sends events to sinks (the live feed) | Member 4: done as far as the prototype goes; a Kafka producer would be one more sink |
+| API gateway, JWT, roles | Signed tokens, roles and own-store checks on every staff endpoint; audit log; no gateway | Member 4: done, except the gateway itself |
+| H3 delivery zones | H3 cells (resolution 9) mapped to stores | Member 4: done |
 | Hourly forecasts, ML model | Daily forecast: three simple models compared by WAPE, weekday average in use | Member 3 |
-| Reservation timeout sweeper | Manual endpoint | Member 1 |
+| Reservation timeout sweeper | Automatic sweep every `SWEEP_INTERVAL_SECONDS`, plus the manual endpoint | Member 1: done |
 | Substitution and refund saga | Line is dropped, hold released | Member 2 |
 | Batch picking at peak | One order per picker | Member 2 |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
-| Store edge node | Not built | Out of scope; explain it in the report |
+| Store edge node | Not built; design note and an outage experiment in [`EDGE_NODE.md`](EDGE_NODE.md) | Member 4 (design only) |
 | Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); no Prometheus server or Grafana in the prototype | Members 2, 3 and 4 |
 
 ## 9. Monitoring
