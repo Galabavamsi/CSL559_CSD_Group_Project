@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, background, config, events, monitoring, seed
+from . import auth, background, config, events, monitoring, rate_limit, seed
 from .db import SessionLocal, init_db
 from .errors import DomainError
 from .modules.assortment.router import router as assortment_router
@@ -57,6 +57,7 @@ app = FastAPI(
 )
 
 
+app.middleware("http")(rate_limit.limit)     # added first, so it runs inside observe: a 429 is logged and timed too
 app.middleware("http")(monitoring.observe)   # request ids, timing and one JSON log line per request
 
 

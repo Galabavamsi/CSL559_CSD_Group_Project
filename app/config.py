@@ -49,6 +49,12 @@ LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
 # Monitoring (HLD 12): when set, GET /metrics answers only 'Authorization: Bearer <METRICS_TOKEN>'. Leave it empty
 # for local development; set it anywhere /metrics is reachable from outside.
 METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+# Rate limit on the endpoints anyone may call (HLD 5): calls a second per client, and the burst allowed.
+# 0 turns it off; the load test needs that, since it is one client sending hundreds of calls a second.
+RATE_LIMIT_PER_SECOND = float(os.getenv("RATE_LIMIT_PER_SECOND", "20"))
+RATE_LIMIT_BURST = int(os.getenv("RATE_LIMIT_BURST", "40"))
+if not RATE_LIMIT_PER_SECOND >= 0 or RATE_LIMIT_BURST < 1:    # "not >=" also catches nan
+    raise ValueError("RATE_LIMIT_PER_SECOND must be 0 (off) or more, and RATE_LIMIT_BURST at least 1")
 
 # Serviceability: delivery zones are H3 hexagon cells mapped to stores (HLD service 1).
 # Resolution 9 cells have ~0.2 km edges (~0.1 km2), so a zone border is accurate to about 200 m and a

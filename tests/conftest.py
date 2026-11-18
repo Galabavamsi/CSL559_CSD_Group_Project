@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta
 # Must be set before anything from `app` is imported, because the engine is created at import time.
 os.environ["DARKSTORE_DB"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["BACKGROUND_JOBS"] = "off"                     # no timed jobs: tests release holds themselves
+os.environ["RATE_LIMIT_PER_SECOND"] = "0"                 # tests make many calls at once; test_rate_limit turns it on
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

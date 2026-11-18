@@ -6,7 +6,7 @@ to say. Rehearse it twice; press **Reset demo data** on the ops desk before ever
 ## Before you start
 
 ```bash
-python -m uvicorn app.main:app
+RATE_LIMIT_PER_SECOND=0 python -m uvicorn app.main:app   # limit off, so the load test below is not refused
 ```
 
 Then, in a second terminal:

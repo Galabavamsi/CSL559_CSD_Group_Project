@@ -53,7 +53,9 @@ Run the tests with `python -m pytest -q`; `tests/test_end_to_end.py` walks the w
 the API with real logins. Reset the demo data with the button on the ops desk, or with `python -m app.seed`.
 
 To load-test a running app (about 90% reads, 10% checkout holds, a fifth of them paid) and see p50 and p99
-per endpoint against the HLD's 100 ms read target, run `python scripts/load_test.py --seconds 60 --reset`.
+per endpoint against the HLD's 100 ms read target, start the app with the rate limit off
+(`RATE_LIMIT_PER_SECOND=0 python -m uvicorn app.main:app`; the script is one client) and run
+`python scripts/load_test.py --seconds 60 --reset`.
 
 The demo data has one week of sales, too little to judge a forecast model: its accuracy shows as not
 available. To try the models on two months of history, run `python scripts/generate_sales.py`, then call
@@ -81,7 +83,9 @@ docker compose --profile postgres up --build
 
 ## Logging in
 
-Customer endpoints (serviceability, availability, reservations) are open. Everything else needs a
+Customer endpoints (serviceability, availability, reservations) are open, but rate-limited: about 20 calls a
+second per address, with bursts of 40 (`RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`; 0 turns it off), and `429`
+beyond that. Everything else needs a
 staff token. The demo data has `picker1`, `packer1`, `receiver1`, `manager1` (and `...2` for the
 second store), plus city-wide `ops` and `admin`. They all use the password `demo`.
 
@@ -152,7 +156,7 @@ docs/                architecture notes, team plan and one guide per team member
 | 11 Rider Handoff | `fulfilment` | `order.ready_for_pickup` event and a handover call | No real rider system |
 | Kafka | `events.py` | Events written to an outbox table; a relay pushes them to sinks (a WebSocket feed per store) and marks them published; lag shown on the dashboard | No broker yet; the relay runs inside the app |
 | PostgreSQL + Redis | `db.py` | SQLite | One file, no sharding, no cache |
-| Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint; audit log of staff calls (`GET /v1/audit`) | No gateway or mutual TLS; the audit log is never pruned and skips calls with no valid token; customer endpoints are open; demo accounts share one password |
+| Auth, gateway | `auth.py` | Login with a signed token; roles and own-store checks on every staff endpoint; audit log of staff calls (`GET /v1/audit`); per-client rate limit on the open endpoints (`429`) | No gateway or mutual TLS; the rate limit is per process and per IP address; the audit log is never pruned and skips calls with no valid token; customer endpoints are open; demo accounts share one password |
 
 Every "simplified" cell is a task in one of the member guides.
 
