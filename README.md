@@ -79,6 +79,22 @@ To also start the PostgreSQL container that task 1.7 will move the app onto:
 docker compose --profile postgres up --build
 ```
 
+To also start Prometheus and Grafana (HLD 12 monitoring):
+
+```bash
+docker compose --profile monitoring up --build
+```
+
+- **Grafana** at http://localhost:3000 opens on the *Dark store* dashboard; viewing needs no login (to edit, log in as
+  `admin` with `GRAFANA_ADMIN_PASSWORD`, default `admin`, local only).
+- **Prometheus** at http://localhost:9090 scrapes the app every 5 seconds and evaluates the alert rules from
+  `docs/ARCHITECTURE.md` section 9 (*Alerts* tab; nothing is sent anywhere, there is no Alertmanager).
+- Both listen on this machine only. Their configuration is in `monitoring/`.
+- To fill the graphs, run the load test against it: start with `RATE_LIMIT_PER_SECOND=0 docker compose --profile
+  monitoring up --build` (the load test is one client), then `python scripts/load_test.py --seconds 120`.
+
+![Grafana dashboard during a load test](docs/img/grafana-dashboard.png)
+
 `docker compose down -v` stops everything and deletes the stored data.
 
 ## Logging in

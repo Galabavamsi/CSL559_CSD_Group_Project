@@ -4,7 +4,31 @@ services:
     ports: ["8000:8000"]
     environment:
       DARKSTORE_DB: sqlite:////data/darkstore.db
+      RATE_LIMIT_PER_SECOND: ${RATE_LIMIT_PER_SECOND:-20}   # 0 for a load test (it is one client)
     volumes: ["appdata:/data"]
+  prometheus:                    # task 4.7: `docker compose --profile monitoring up --build`
+    image: prom/prometheus:v2.53.0
+    profiles: ["monitoring"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["127.0.0.1:9090:9090"]          # this machine only
+    depends_on: [app]
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: ["monitoring"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"      # viewers need no login; editing still needs admin
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}   # local development only
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/darkstore.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]          # this machine only
+    depends_on: [prometheus]
   postgres:                      # used by Member 1 in task 1.7
     image: postgres:16
     profiles: ["postgres"]
