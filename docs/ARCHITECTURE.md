@@ -58,7 +58,9 @@ Because logic lives in `service.py`, modules can call each other directly
 | Empty shelf | `POST /v1/pick-tasks/{id}/short` | `pickpack.report_short` | Units found (`{"found": n}`, default: those already scanned) become a `picked` line of their own; for the rest, count corrected (`not_found` ledger row), re-allocated to another bin, or dropped: hold released, `order.line_dropped` published, and a substitute offered (`substitute_offer`) |
 | Pack | `POST /v1/fulfilment-jobs/{id}/packed` | `pickpack.pack` → `inventory.commit_sale` | `StockItem.qty`, `qty_on_hand` and `qty_reserved` all drop; `sale` ledger rows; publishes `order.ready_for_pickup` |
 | Cancel (until packed) | `POST /v1/fulfilment-jobs/{id}/cancel` | `fulfilment.cancel` → `inventory.unreserve` | Conditional `UPDATE` moves the job `created`/`picking → cancelled`; `qty_reserved` drops for every line still held; `qty_on_hand` is untouched; publishes `order.cancelled` |
-| Handoff | `POST /v1/fulfilment-jobs/{id}/handover` | `fulfilment.handover` | Job becomes `handed_over` |
+| Rider assigned | (event `order.ready_for_pickup`) | `riders.assign_rider` | A `RiderAssignment` row (`assigned`); publishes `rider.assigned` |
+| Rider arrives | `POST /v1/riders/{id}/arrive` | `riders.arrive` | Assignment becomes `arrived`; answers the crate slot |
+| Handoff | `POST /v1/fulfilment-jobs/{id}/handover` | `riders.handover` | Only with this order's rider and its own bag scanned: conditional `UPDATE` to `handed_over`, assignment `collected` |
 
 Two moments matter most:
 
@@ -104,7 +106,8 @@ WebSocket feed) and marks them published; delivery is at least once.
 | `item.near_expiry` | inventory (hourly job, once per batch per day) | nobody yet (live feed shows it) |
 | `order.paid` | inventory | fulfilment (creates the job) |
 | `fulfilment.state_changed` | fulfilment, pickpack | nobody yet |
-| `order.ready_for_pickup` | pickpack | nobody yet (the rider system would) |
+| `order.ready_for_pickup` | pickpack | fulfilment riders (assigns a made-up rider, standing in for the rider system) |
+| `rider.assigned` (payload: `job_id`, `order_id`, `rider_id`) | fulfilment riders | nobody yet (live feed shows it) |
 | `order.cancelled` (payload: `order_id`, `job_id`, `reason`, `refund_amount`) | fulfilment | nobody yet (the Order service would refund `refund_amount`: the units still held; dropped units were refunded by `order.line_dropped`) |
 | `order.line_dropped` (payload: `order_id`, `job_id`, `sku_id`, `qty`, `refund_amount`) | fulfilment (when a job is created), pickpack (empty shelf) | nobody yet (the Order service would refund that line) |
 | `store.status_changed` | fulfilment | nobody yet |

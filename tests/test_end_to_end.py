@@ -51,7 +51,12 @@ def test_demo_script_from_order_to_stock_audit(fresh_data, sku):
         packed = ok(api.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"},
                              headers=picker))
         assert packed["state"] == "packed"
-        assert ok(api.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover", headers=picker))["state"] == "handed_over"
+        rider = packed["rider"]["rider_id"]                 # task 2.7: the rider checks in, the desk scans the bag
+        assert ok(api.post(f"/v1/riders/{rider}/arrive", json={"order_id": job["order_id"]},
+                           headers=picker))["crate_slot"] == "S-01"
+        handed = api.post(f"/v1/fulfilment-jobs/{job['job_id']}/handover",
+                          json={"rider_id": rider, "scanned_order_id": job["order_id"]}, headers=picker)
+        assert ok(handed)["state"] == "handed_over"
 
         # 4. Manager reorders once; the hub dispatches; the receiver puts the truck away.
         order = ok(api.post("/v1/replenishment/run", params={"store_id": store}, headers=manager))["transfer_order"]

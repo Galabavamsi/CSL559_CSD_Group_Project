@@ -28,7 +28,8 @@ def test_with_nothing_packed_the_numbers_are_empty_not_an_error(client):
 
     assert res.status_code == 200
     assert res.json() == {"orders_packed": 0, "seconds_to_pack_p50": None, "seconds_to_pack_p90": None,
-                          "seconds_claim_to_pack_p90": None, "fill_rate": None, "items_per_picker_hour": None}
+                          "seconds_claim_to_pack_p90": None, "seconds_packed_to_handover_p90": None,
+                          "fill_rate": None, "items_per_picker_hour": None}
 
 
 def test_fill_rate_counts_a_dropped_line_against_the_units_ordered(client, db, sku):

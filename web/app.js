@@ -352,8 +352,14 @@ async function packJob() {
 async function handover() {
   const bagged = state.jobs.find((j) => j.state === "packed");
   if (!bagged) return;
-  const job = await api("POST", `/v1/fulfilment-jobs/${bagged.job_id}/handover`, undefined, picker());
-  say($("picker-message"), `Order ${job.order_id} is with the rider.`, "good");
+  // The rider system's rider for this order checks in at the desk, which scans the bag before handing it over
+  // (task 2.7): only this order's bag goes to this order's rider.
+  const rider = bagged.rider?.rider_id;
+  if (!rider) throw new Error("No rider has been assigned to this order yet.");
+  const desk = await api("POST", `/v1/riders/${rider}/arrive`, { order_id: bagged.order_id }, picker());
+  const job = await api("POST", `/v1/fulfilment-jobs/${bagged.job_id}/handover`,
+    { rider_id: rider, scanned_order_id: bagged.order_id }, picker());
+  say($("picker-message"), `Rider ${rider} collected order ${job.order_id} from ${desk.crate_slot}.`, "good");
   dropJob(job.job_id);
   renderJob();
   refreshOps();

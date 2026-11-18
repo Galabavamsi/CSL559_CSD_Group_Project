@@ -5,13 +5,22 @@ from sqlalchemy.orm import Session
 
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
-from . import service
+from . import riders, service
 
 router = APIRouter(tags=["fulfilment"])
 
 
 class CancelIn(BaseModel):
     reason: str = Field(min_length=1, max_length=200)
+
+
+class ArriveIn(BaseModel):
+    order_id: str = Field(min_length=1, max_length=60)
+
+
+class HandoverIn(BaseModel):
+    rider_id: str = Field(min_length=1, max_length=40)
+    scanned_order_id: str = Field(min_length=1, max_length=60, description="The order on the bag the desk scanned")
 
 
 @router.get("/v1/fulfilment-jobs")
@@ -59,8 +68,19 @@ def cancel(job_id: int, body: CancelIn, db: Session = Depends(get_db),
     return service.job_view(service.cancel(db, job_id, body.reason))
 
 
-@router.post("/v1/fulfilment-jobs/{job_id}/handover")
-def handover(job_id: int, db: Session = Depends(get_db),
+@router.post("/v1/riders/{rider_id}/arrive", summary="A rider is at the store: which crate slot holds the bag")
+def rider_arrives(rider_id: str, body: ArriveIn, db: Session = Depends(get_db),
+                  staff: dict = Depends(require_role("picker", "packer"))):
+    """The desk checks the rider in for one order. `409 wrong_rider` if the order is someone else's, `409 not_ready`
+    if it is not packed yet."""
+    check_store(staff, riders.job_for_order(db, body.order_id).store_id)
+    return riders.arrive(db, rider_id, body.order_id)
+
+
+@router.post("/v1/fulfilment-jobs/{job_id}/handover", summary="Hand the bag to its rider, after scanning it")
+def handover(job_id: int, body: HandoverIn, db: Session = Depends(get_db),
              staff: dict = Depends(require_role("picker", "packer"))):
+    """`scanned_order_id` is the order on the bag the desk just scanned. Refused with `409 wrong_bag` (wrong bag) or
+    `409 wrong_rider` (not this order's rider); the order stays packed."""
     check_store(staff, service.get_job(db, job_id).store_id)
-    return service.job_view(service.handover(db, job_id))
+    return service.job_view(riders.handover(db, job_id, body.rider_id, body.scanned_order_id))
