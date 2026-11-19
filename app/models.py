@@ -14,7 +14,7 @@ Only app/modules/inventory/service.py is allowed to change either table.
 """
 from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -111,7 +111,9 @@ class Staff(Base):
 class StockLevel(Base):
     """Totals per store + SKU. ATP (available to promise) = qty_on_hand - qty_reserved - safety_buffer, never below 0.
     The safety buffer (HLD 7.1) hides a few units from customers so small counting errors do not become failed orders;
-    the units are still physically there, so replenishment does not subtract it."""
+    the units are still physically there, so replenishment does not subtract it.
+    reorder_stopped: a manager stopped reordering this SKU (to let it run down, e.g. before dropping it), so
+    replenishment skips it."""
     __tablename__ = "stock_levels"
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), primary_key=True)
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"), primary_key=True)
@@ -120,6 +122,7 @@ class StockLevel(Base):
     safety_buffer: Mapped[int] = mapped_column(Integer, default=0)
     reorder_point: Mapped[int] = mapped_column(Integer, default=10)
     target_stock: Mapped[int] = mapped_column(Integer, default=40)
+    reorder_stopped: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[int] = mapped_column(Integer, default=0)
     sku: Mapped[SKU] = relationship()
 
