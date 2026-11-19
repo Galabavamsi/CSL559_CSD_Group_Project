@@ -53,6 +53,15 @@ SALES_HISTORY = {
     "Potato chips 90 g": [5, 4, 6, 5, 7, 4, 5],
 }
 
+# Units per case from the hub (replenishment orders whole cases). SKUs not listed come one at a time.
+CASE_SIZES = {
+    "Toned milk 500 ml": 12, "Curd 400 g": 12, "Paneer 200 g": 10, "White bread 400 g": 10,
+    "Eggs (pack of 6)": 6, "Bananas (6 pcs)": 6, "Basmati rice 1 kg": 10, "Wheat atta 5 kg": 4,
+    "Sugar 1 kg": 10, "Tea 250 g": 12, "Instant noodles (pack of 4)": 12, "Potato chips 90 g": 24,
+    "Sunflower oil 1 L": 12, "Vanilla ice cream 500 ml": 6, "Frozen green peas 500 g": 10,
+    "Bath soap (pack of 3)": 12,
+}
+
 DEFAULT_QTY = 30
 
 STORE_ROLES = ("picker", "packer", "receiver", "manager")   # one login of each per store
@@ -78,7 +87,7 @@ def seed(db: Session) -> None:
     skus = []
     for n, (name, category, storage, shelf_life, price) in enumerate(SKUS, start=1):
         sku = SKU(name=name, category=category, barcode=f"890{n:010d}", storage_type=storage,
-                  shelf_life_days=shelf_life, price=price)
+                  shelf_life_days=shelf_life, price=price, case_size=CASE_SIZES.get(name, 1))
         db.add(sku)
         skus.append(sku)
     db.flush()

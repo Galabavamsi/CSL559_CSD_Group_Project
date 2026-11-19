@@ -59,6 +59,7 @@ class SKU(Base):
     storage_type: Mapped[str] = mapped_column(String(10))             # ambient | chilled | frozen
     shelf_life_days: Mapped[int] = mapped_column(Integer)
     price: Mapped[float] = mapped_column(Float)
+    case_size: Mapped[int] = mapped_column(Integer, default=1)        # units per case; the hub ships whole cases
 
 
 class StoreZone(Base):

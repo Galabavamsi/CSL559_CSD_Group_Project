@@ -1,8 +1,9 @@
 """Replenishment Service (HLD service 8): decide what to reorder from the mother hub (HLD 6.2).
 
 Stock position = on hand - reserved + already on its way.
-When the position drops below the reorder point, order enough to get back to target stock.
+When the position drops below the reorder point, order enough to get back to target stock, in whole cases.
 """
+import math
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -43,6 +44,12 @@ def in_transit(db: Session, store_id: int) -> dict[int, int]:
     return {sku_id: int(qty) for sku_id, qty in rows}
 
 
+def _whole_cases(qty: int, case_size: int) -> int:
+    """`qty` rounded up to whole cases (the hub ships nothing smaller); 0 for nothing needed."""
+    case = max(1, case_size)
+    return math.ceil(qty / case) * case if qty > 0 else 0
+
+
 def run(db: Session, store_id: int) -> TransferOrder | None:
     """Check every SKU in the store and raise one transfer order for everything that is low (FR-8).
     Returns None when nothing needs ordering."""
@@ -55,7 +62,7 @@ def run(db: Session, store_id: int) -> TransferOrder | None:
     for level in levels:
         position = level.qty_on_hand - level.qty_reserved + transit.get(level.sku_id, 0)
         if position < level.reorder_point:
-            qty = level.target_stock - position
+            qty = _whole_cases(level.target_stock - position, level.sku.case_size)
             if qty > 0:
                 lines.append(TransferOrderLine(sku_id=level.sku_id, qty_ordered=qty))
     if not lines:
