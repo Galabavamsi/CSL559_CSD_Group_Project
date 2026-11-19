@@ -32,3 +32,18 @@ def add_to_assortment(store_id: int, body: AssortmentIn, db: Session = Depends(g
                       staff: dict = Depends(require_role("manager"))):
     check_store(staff, store_id)
     return service.add_sku(db, store_id, body.sku_id, body.reorder_point, body.target_stock)
+
+
+@router.get("/v1/stores/{store_id}/assortment/recommendations",
+            summary="What to add, what to drop, and the shelf room left in each zone")
+def recommendations(store_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+    check_store(staff, store_id)
+    return service.recommendations(db, store_id)
+
+
+@router.delete("/v1/stores/{store_id}/assortment/{sku_id}",
+               summary="Stop carrying a SKU: only with nothing on the shelf, held or on its way")
+def drop_from_assortment(store_id: int, sku_id: int, db: Session = Depends(get_db),
+                         staff: dict = Depends(require_role("manager"))):
+    check_store(staff, store_id)
+    return service.drop_sku(db, store_id, sku_id)
