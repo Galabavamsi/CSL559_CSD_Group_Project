@@ -303,7 +303,7 @@ share `reference="order:..."`) and place them in neighbouring bins.
    | List | Rule |
    | --- | --- |
    | `add` | SKUs not carried here that sell in other stores, ranked by their daily demand there |
-   | `drop` | SKUs carried here with no sale in 30 days but stock on hand (dead stock taking space) |
+   | `drop` | SKUs carried here that had stock on hand 30 days ago and have not sold one unit since (dead stock taking space) |
    | `space` | Per zone: SKUs carried versus bins available, so nobody adds a 5th chilled SKU to 4 chilled bins |
 
 2. Expose it as `GET /v1/stores/{store_id}/assortment/recommendations`.

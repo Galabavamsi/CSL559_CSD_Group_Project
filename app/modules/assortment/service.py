@@ -5,11 +5,13 @@ assortment just creates that row with zero stock, so replenishment starts orderi
 the row once nothing is on the shelf, held for a customer or on its way. `recommendations` suggests what to
 add and drop from local demand and shelf space.
 """
+from datetime import datetime, time, timedelta
+
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ...errors import DomainError
-from ...models import SKU, Bin, StockLevel, Store
+from ...models import SKU, Bin, StockLedger, StockLevel, Store, utcnow
 from ..forecasting import service as forecasting
 from ..inventory import service as inventory
 from ..replenishment import service as replenishment
@@ -50,7 +52,8 @@ def recommendations(db: Session, store_id: int) -> dict:
 
     add: SKUs it does not carry that sold in another store in the last SALES_DAYS whole days, highest daily demand
     first (units a day, averaged over the stores selling it), and whether their zone has a bin to spare.
-    drop: SKUs it carries with stock on hand and no sale in those days: dead stock taking space.
+    drop: SKUs it carries that already had stock on hand when those days began and have not sold one unit since:
+    dead stock taking space. A SKU with nothing on hand back then (new, or out of stock at the time) is not judged.
     space: per zone, bins against SKUs carried; room_for below 1 means a new SKU there gets no bin of its own.
     """
     inventory.get_store(db, store_id)
@@ -70,11 +73,22 @@ def recommendations(db: Session, store_id: int) -> dict:
                     "fits": room.get(sku.storage_type, 0) > 0})
     add.sort(key=lambda row: (-row["daily_demand"], row["sku"]))
     sold_here = forecasting.daily_sales(db, store_id, SALES_DAYS)
+    window_start = datetime.combine(utcnow().date() - timedelta(days=SALES_DAYS), time.min)   # as daily_sales counts
+    stocked_then = _on_hand_at(db, store_id, window_start)
     drop = sorted(({"sku_id": level.sku_id, "sku": level.sku.name, "on_hand": level.qty_on_hand}
                    for level in carried.values()
-                   if level.qty_on_hand > 0 and not sum(sold_here.get(level.sku_id, {}).values())),
+                   if level.qty_on_hand > 0 and stocked_then.get(level.sku_id, 0) > 0
+                   and not sum(sold_here.get(level.sku_id, {}).values())),
                   key=lambda row: row["sku"])
     return {"store_id": store_id, "days": SALES_DAYS, "add": add, "drop": drop, "space": space}
+
+
+def _on_hand_at(db: Session, store_id: int, moment: datetime) -> dict[int, int]:
+    """Units on hand per SKU at `moment`, from the ledger (on hand always equals the sum of its ledger rows)."""
+    rows = db.execute(select(StockLedger.sku_id, func.sum(StockLedger.delta))
+                      .where(StockLedger.store_id == store_id, StockLedger.ts < moment)
+                      .group_by(StockLedger.sku_id)).all()
+    return {sku_id: int(units) for sku_id, units in rows}
 
 
 def _space(db: Session, store_id: int, levels) -> list[dict]:
@@ -96,18 +110,31 @@ def drop_sku(db: Session, store_id: int, sku_id: int) -> dict:
     level = db.get(StockLevel, (store_id, sku_id), populate_existing=True)
     if level is None:
         raise DomainError(404, "not_carried", f"Store {store_id} does not carry {sku.name}")
-    coming = replenishment.in_transit(db, store_id).get(sku_id, 0)
-    reasons = [f"{count} {what}" for count, what in ((level.qty_on_hand, "on hand"),
-                                                     (level.qty_reserved, "held for customers"),
-                                                     (coming, "on their way")) if count]
-    if reasons:
-        raise DomainError(409, "still_stocked", f"Store {store_id} still has {sku.name}: {', '.join(reasons)}",
-                          {"on_hand": level.qty_on_hand, "reserved": level.qty_reserved, "in_transit": coming})
+    refusal = _still_stocked(store_id, sku, level.qty_on_hand, level.qty_reserved,
+                             replenishment.in_transit(db, store_id).get(sku_id, 0))
+    if refusal:
+        raise refusal
     # Conditional, so units received or held between the check above and here are never orphaned.
     gone = db.execute(delete(StockLevel).where(StockLevel.store_id == store_id, StockLevel.sku_id == sku_id,
                                                StockLevel.qty_on_hand == 0, StockLevel.qty_reserved == 0)).rowcount
     if not gone:
         db.rollback()
         raise DomainError(409, "still_stocked", f"Store {store_id} just received or held {sku.name}; try again")
+    # Look for a truck once more: the delete holds SQLite's write lock until the commit, so a transfer order committed
+    # after the first look shows up here, and none can be committed in between.
+    refusal = _still_stocked(store_id, sku, 0, 0, replenishment.in_transit(db, store_id).get(sku_id, 0))
+    if refusal:
+        db.rollback()
+        raise refusal
     db.commit()
     return {"store_id": store_id, "sku_id": sku_id, "name": sku.name, "carried": False}
+
+
+def _still_stocked(store_id: int, sku: SKU, on_hand: int, reserved: int, coming: int) -> DomainError | None:
+    """The 409 for a SKU that cannot be dropped yet, naming each reason; None when nothing is left."""
+    reasons = [f"{count} {what}" for count, what in ((on_hand, "on hand"), (reserved, "held for customers"),
+                                                     (coming, "on their way")) if count]
+    if not reasons:
+        return None
+    return DomainError(409, "still_stocked", f"Store {store_id} still has {sku.name}: {', '.join(reasons)}",
+                       {"on_hand": on_hand, "reserved": reserved, "in_transit": coming})
