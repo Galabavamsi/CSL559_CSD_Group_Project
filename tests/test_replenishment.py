@@ -1,9 +1,9 @@
 """Smarter replenishment (guide task 3.4): whole cases, free bin space, runs by itself."""
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.models import Bin, Forecast
 
-from .conftest import assert_stock_is_consistent
+from .conftest import assert_stock_is_consistent, atp
 
 
 def test_orders_are_rounded_up_to_full_cases(client, sku):
@@ -42,3 +42,17 @@ def test_a_zone_with_no_room_orders_nothing_for_it(client, db, sku):
     # 40 - 1 = 39 wanted -> 7 cases of 6 = 42, and none fits.
     assert {"sku_id": ice_cream, "sku": "Vanilla ice cream 500 ml", "zone": "frozen", "wanted": 42,
             "ordered": 0} in body["capped"]
+
+
+def test_putaway_never_overfills_a_bin(client, db, sku):
+    milk = sku("Toned milk")
+    first_bin = db.scalar(select(Bin).where(Bin.store_id == 1, Bin.code == "C-01-01"))   # holds the 6 old milk
+    first_bin.capacity = 6
+    db.commit()
+    full = client.post("/v1/goods-receipts", json={
+        "store_id": 1, "lines": [{"sku_id": milk, "qty": 5, "bin_id": first_bin.id}]})
+    assert full.status_code == 409 and full.json()["error"]["code"] == "bin_full"
+    assert atp(client, 1, milk) == 28                           # nothing received (30 less the buffer of 2)
+    placed = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [{"sku_id": milk, "qty": 5}]})
+    assert placed.status_code == 201 and placed.json()["received"][0]["bin"] == "C-01-04"   # milk's other bin has room
+    assert_stock_is_consistent()
