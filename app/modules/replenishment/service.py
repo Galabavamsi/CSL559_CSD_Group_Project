@@ -1,7 +1,8 @@
 """Replenishment Service (HLD service 8): decide what to reorder from the mother hub (HLD 6.2).
 
 Stock position = on hand - reserved + already on its way.
-When the position drops below the reorder point, order enough to get back to target stock, in whole cases.
+When the position drops below the reorder point, order enough to get back to target stock, in whole cases,
+within the free bin space of each zone; when a zone is short of space the most urgent SKUs go first.
 """
 import math
 from datetime import timedelta
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import SKU, StockLedger, StockLevel, TransferOrder, TransferOrderLine, utcnow
+from ...models import SKU, Bin, StockItem, StockLedger, StockLevel, TransferOrder, TransferOrderLine, utcnow
 from ..forecasting import service as forecasting
 from ..inventory import service as inventory
 
@@ -50,29 +51,73 @@ def _whole_cases(qty: int, case_size: int) -> int:
     return math.ceil(qty / case) * case if qty > 0 else 0
 
 
-def run(db: Session, store_id: int) -> TransferOrder | None:
-    """Check every SKU in the store and raise one transfer order for everything that is low (FR-8).
-    Returns None when nothing needs ordering."""
+def run(db: Session, store_id: int) -> dict:
+    """Check every SKU in the store and raise one transfer order for everything that is low (FR-8), in whole cases
+    and within each zone's free bin space (HLD 6.2), and commit.
+
+    Returns {"transfer_order": the order, or None when nothing is ordered, "capped": [{sku_id, sku, zone, wanted,
+    ordered}] for each SKU that got less than it needed because its zone was short of space}.
+    """
     inventory.get_store(db, store_id)
     transit = in_transit(db, store_id)
     levels = db.scalars(
         select(StockLevel).where(StockLevel.store_id == store_id).execution_options(populate_existing=True)
     ).all()
-    lines = []
+    wanted = []
     for level in levels:
         position = level.qty_on_hand - level.qty_reserved + transit.get(level.sku_id, 0)
         if position < level.reorder_point:
             qty = _whole_cases(level.target_stock - position, level.sku.case_size)
             if qty > 0:
-                lines.append(TransferOrderLine(sku_id=level.sku_id, qty_ordered=qty))
+                wanted.append((level, qty))
+    lines, capped = _fit_free_space(db, store_id, wanted, levels, transit)
     if not lines:
-        return None
+        return {"transfer_order": None, "capped": capped}
     order = TransferOrder(store_id=store_id, status="created", lines=lines)
     db.add(order)
     db.flush()
-    events.publish(db, "transfer_order.created", store_id, {"transfer_order_id": order.id, "lines": len(lines)})
+    events.publish(db, "transfer_order.created", store_id,
+                   {"transfer_order_id": order.id, "lines": len(lines), "capped": len(capped)})
     db.commit()
-    return order
+    return {"transfer_order": order, "capped": capped}
+
+
+def free_space(db: Session, store_id: int, levels: list[StockLevel], transit: dict[int, int]) -> dict[str, int]:
+    """Units each zone can still take: its bins' capacity - units stored in them - units on their way. Read-only."""
+    capacity = dict(db.execute(
+        select(Bin.zone, func.sum(Bin.capacity)).where(Bin.store_id == store_id).group_by(Bin.zone)).all())
+    stored = dict(db.execute(
+        select(Bin.zone, func.sum(StockItem.qty)).join(StockItem, StockItem.bin_id == Bin.id)
+        .where(Bin.store_id == store_id).group_by(Bin.zone)).all())
+    coming: dict[str, int] = {}
+    for level in levels:
+        coming[level.sku.storage_type] = coming.get(level.sku.storage_type, 0) + transit.get(level.sku_id, 0)
+    return {zone: max(0, int(capacity.get(zone) or 0) - int(stored.get(zone) or 0) - coming.get(zone, 0))
+            for zone in set(capacity) | set(stored) | set(coming)}
+
+
+def _fit_free_space(db: Session, store_id: int, wanted: list[tuple[StockLevel, int]], levels: list[StockLevel],
+                    transit: dict[int, int]) -> tuple[list[TransferOrderLine], list[dict]]:
+    """Fill each zone's free space most urgent first: lowest days of cover (what customers can buy / forecast
+    daily demand); a SKU with no forecast comes last. A line that does not fit is cut to the whole cases that do."""
+    demand = {row["sku_id"]: row["daily_demand"] for row in forecasting.list_forecasts(db, store_id)}
+
+    def days_of_cover(item: tuple[StockLevel, int]) -> tuple:
+        level, daily = item[0], demand.get(item[0].sku_id, 0)
+        return (inventory.atp_of(level) / daily if daily > 0 else math.inf, level.sku.name)
+
+    room = free_space(db, store_id, levels, transit)
+    lines, capped = [], []
+    for level, qty in sorted(wanted, key=days_of_cover):
+        zone, case = level.sku.storage_type, max(1, level.sku.case_size)
+        ordered = qty if qty <= room.get(zone, 0) else room.get(zone, 0) // case * case
+        room[zone] = room.get(zone, 0) - ordered
+        if ordered:
+            lines.append(TransferOrderLine(sku_id=level.sku_id, qty_ordered=ordered))
+        if ordered < qty:
+            capped.append({"sku_id": level.sku_id, "sku": level.sku.name, "zone": zone, "wanted": qty,
+                           "ordered": ordered})
+    return lines, capped
 
 
 def get_order(db: Session, transfer_order_id: int) -> TransferOrder:

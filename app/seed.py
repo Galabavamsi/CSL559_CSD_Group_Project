@@ -68,6 +68,10 @@ STORE_ROLES = ("picker", "packer", "receiver", "manager")   # one login of each 
 CITY_ROLES = ("ops", "admin")                                 # not tied to a store
 
 
+# Units one bin holds, per zone: room for the stock a busy SKU needs, so orders are cut only when a zone is full.
+BIN_CAPACITY = {"ambient": 200, "chilled": 150, "frozen": 100}
+
+
 def _make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
     """12 ambient bins (3 racks x 4 shelves), 4 chilled, 2 frozen. walk_seq 1 is nearest the packing desk."""
     layout = [("ambient", f"A-{rack:02d}-{shelf:02d}") for rack in range(1, 4) for shelf in range(1, 5)]
@@ -75,7 +79,7 @@ def _make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
     layout += [("frozen", f"F-01-{shelf:02d}") for shelf in range(1, 3)]
     bins: dict[str, list[Bin]] = {"ambient": [], "chilled": [], "frozen": []}
     for seq, (zone, code) in enumerate(layout, start=1):
-        b = Bin(store_id=store_id, code=code, zone=zone, walk_seq=seq)
+        b = Bin(store_id=store_id, code=code, zone=zone, walk_seq=seq, capacity=BIN_CAPACITY[zone])
         db.add(b)
         bins[zone].append(b)
     db.flush()

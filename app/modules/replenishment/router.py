@@ -12,8 +12,9 @@ router = APIRouter(tags=["replenishment"])
 def run(store_id: int, db: Session = Depends(get_db),
         staff: dict = Depends(require_role("manager"))):
     check_store(staff, store_id)
-    order = service.run(db, store_id)
-    return {"transfer_order": service.order_view(order) if order else None}
+    result = service.run(db, store_id)
+    order = result["transfer_order"]
+    return {"transfer_order": service.order_view(order) if order else None, "capped": result["capped"]}
 
 
 @router.get("/v1/transfer-orders")

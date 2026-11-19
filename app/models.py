@@ -47,6 +47,7 @@ class Bin(Base):
     code: Mapped[str] = mapped_column(String(20))                     # e.g. A-01-02 = zone A, rack 1, shelf 2
     zone: Mapped[str] = mapped_column(String(10))                     # ambient | chilled | frozen
     walk_seq: Mapped[int] = mapped_column(Integer)
+    capacity: Mapped[int] = mapped_column(Integer, default=100)       # units it holds; orders and putaway stay within
     __table_args__ = (UniqueConstraint("store_id", "code"),)
 
 
