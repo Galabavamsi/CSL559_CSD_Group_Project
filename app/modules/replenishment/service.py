@@ -5,6 +5,7 @@ When the position drops below the reorder point, order enough to get back to tar
 within the free bin space of each zone; when a zone is short of space the most urgent SKUs go first.
 """
 import math
+import threading
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -12,11 +13,14 @@ from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import SKU, Bin, StockItem, StockLedger, StockLevel, TransferOrder, TransferOrderLine, utcnow
+from ...models import SKU, Bin, StockItem, StockLedger, StockLevel, Store, TransferOrder, TransferOrderLine, utcnow
 from ..forecasting import service as forecasting
 from ..inventory import service as inventory
 
 OPEN_STATES = ("created", "dispatched")
+# One run at a time in this app, so the timer and a manager's button cannot both order the same stock. The lock
+# is per process: with several app instances, run the timer in one of them only.
+_RUN_LOCK = threading.Lock()
 LOW_STOCK_CAUSES = {"reserved", "sale", "damage", "expiry", "theft", "count", "not_found"}
 
 
@@ -58,6 +62,11 @@ def run(db: Session, store_id: int) -> dict:
     Returns {"transfer_order": the order, or None when nothing is ordered, "capped": [{sku_id, sku, zone, wanted,
     ordered}] for each SKU that got less than it needed because its zone was short of space}.
     """
+    with _RUN_LOCK:
+        return _run(db, store_id)
+
+
+def _run(db: Session, store_id: int) -> dict:
     inventory.get_store(db, store_id)
     transit = in_transit(db, store_id)
     levels = db.scalars(
@@ -80,6 +89,19 @@ def run(db: Session, store_id: int) -> dict:
                    {"transfer_order_id": order.id, "lines": len(lines), "capped": len(capped)})
     db.commit()
     return {"transfer_order": order, "capped": capped}
+
+
+def run_all(db: Session) -> list[dict]:
+    """Run replenishment for every store that is not closed (the timer in app/background.py calls this), each
+    store committed on its own. Returns per store: store_id, transfer_order_id (None when nothing was ordered),
+    lines and capped."""
+    results = []
+    for store_id in list(db.scalars(select(Store.id).where(Store.status != "closed").order_by(Store.id))):
+        result = run(db, store_id)
+        order = result["transfer_order"]
+        results.append({"store_id": store_id, "transfer_order_id": order.id if order else None,
+                        "lines": len(order.lines) if order else 0, "capped": result["capped"]})
+    return results
 
 
 def free_space(db: Session, store_id: int, levels: list[StockLevel], transit: dict[int, int]) -> dict[str, int]:

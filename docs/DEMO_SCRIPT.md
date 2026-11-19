@@ -6,8 +6,11 @@ to say. Rehearse it twice; press **Reset demo data** on the ops desk before ever
 ## Before you start
 
 ```bash
-RATE_LIMIT_PER_SECOND=0 python -m uvicorn app.main:app   # limit off, so the load test below is not refused
+RATE_LIMIT_PER_SECOND=0 REPLENISHMENT_INTERVAL_MINUTES=0 python -m uvicorn app.main:app
 ```
+
+The rate limit is off so the load test below is not refused. Automatic replenishment (every 15 minutes) is off
+so the transfer order in section 7 comes from the button, not from the timer half-way through the demo.
 
 Then, in a second terminal:
 

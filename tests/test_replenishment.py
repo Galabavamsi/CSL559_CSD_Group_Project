@@ -1,7 +1,14 @@
 """Smarter replenishment (guide task 3.4): whole cases, free bin space, runs by itself."""
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 from sqlalchemy import select, update
 
-from app.models import Bin, Forecast
+from app import background, config
+from app.db import SessionLocal
+from app.models import Bin, Forecast, Store
+from app.modules.replenishment import service as replenishment
 
 from .conftest import assert_stock_is_consistent, atp
 
@@ -56,3 +63,52 @@ def test_putaway_never_overfills_a_bin(client, db, sku):
     placed = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [{"sku_id": milk, "qty": 5}]})
     assert placed.status_code == 201 and placed.json()["received"][0]["bin"] == "C-01-04"   # milk's other bin has room
     assert_stock_is_consistent()
+
+
+def test_run_all_orders_for_every_open_store_once(db):
+    first = {row["store_id"]: row["transfer_order_id"] for row in replenishment.run_all(db)}
+    assert first[1] is not None and first[2] is not None        # bread in store 1, bananas in store 2
+    assert all(row["transfer_order_id"] is None for row in replenishment.run_all(db))   # all on their way
+
+
+def test_run_all_skips_a_closed_store(db):
+    db.get(Store, 2).status = "closed"
+    db.commit()
+    assert [row["store_id"] for row in replenishment.run_all(db)] == [1]
+
+
+def test_replenishment_runs_on_its_own(client, monkeypatch):
+    monkeypatch.setattr(config, "REPLENISHMENT_INTERVAL_MINUTES", 0.001)          # every 0.06 s
+
+    async def run_briefly():
+        loop = asyncio.create_task(background.replenish_loop())
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if client.get("/v1/transfer-orders", params={"store_id": 1}).json():
+                break
+        loop.cancel()
+
+    asyncio.run(run_briefly())
+    assert client.get("/v1/transfer-orders", params={"store_id": 1}).json()[0]["status"] == "created"
+
+
+def test_the_timer_can_be_switched_off(monkeypatch):
+    monkeypatch.setattr(config, "REPLENISHMENT_INTERVAL_MINUTES", 0)
+    assert background.replenish_loop not in background.loops()
+
+
+def test_the_timer_and_the_button_never_order_twice(monkeypatch):
+    read_transit = replenishment.in_transit
+
+    def read_slowly(db, store_id):
+        time.sleep(0.2)                                         # both runs read before either writes, unless they take turns
+        return read_transit(db, store_id)
+
+    monkeypatch.setattr(replenishment, "in_transit", read_slowly)
+
+    def run_in_own_session(_):
+        with SessionLocal() as session:
+            return replenishment.run(session, 1)["transfer_order"] is not None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(run_in_own_session, range(2))) == [False, True]
