@@ -41,7 +41,7 @@ Each file is short. Read all five `service.py` files (about 25 minutes).
 | `replenishment.run` | `POST /v1/replenishment/run` | One transfer order for everything whose stock position is low |
 | `replenishment.dispatch` | `POST /v1/transfer-orders/{id}/dispatch` | Pretends the hub sent the truck |
 | `inbound.receive_goods` | `POST /v1/goods-receipts` | Receives lines, puts them away, reports shortfalls |
-| `slotting.suggest_bin` | Inbound | Same SKU's bin, else the emptiest bin in the right temperature zone |
+| `slotting.suggest_bin`, `slotting.place` | Inbound | Same SKU's bin with room, else the emptiest bin with room in the right temperature zone; `place` splits a delivery over bins, never past a bin's capacity |
 | `assortment.add_sku` | `POST /v1/stores/{id}/assortment` | Starts carrying a SKU (a zero-stock `StockLevel` row) |
 
 ### Try it by hand
@@ -52,9 +52,10 @@ curl -X POST "localhost:8000/v1/replenishment/run?store_id=1"        # raises a 
 curl -X POST "localhost:8000/v1/replenishment/run?store_id=1"        # null: stock in transit counts
 curl -X POST localhost:8000/v1/transfer-orders/1/dispatch
 
-# Receive it, 6 loaves short (SKU 4 = bread; use the quantities from the first response)
+# Receive it, 6 loaves short: 40 bread and 42 ice cream were ordered, in whole cases
+# (SKU 4 = bread, 14 = ice cream; use the quantities from the first response)
 curl -X POST localhost:8000/v1/goods-receipts -H "Content-Type: application/json" \
-  -d '{"store_id":1,"transfer_order_id":1,"lines":[{"sku_id":4,"qty":30},{"sku_id":14,"qty":40}]}'
+  -d '{"store_id":1,"transfer_order_id":1,"lines":[{"sku_id":4,"qty":34},{"sku_id":14,"qty":42}]}'
 
 # Recalculate forecasts from the seeded week of sales
 curl -X POST "localhost:8000/v1/forecasting/run?store_id=1"

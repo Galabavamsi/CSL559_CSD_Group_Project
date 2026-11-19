@@ -14,7 +14,8 @@ def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_
                   actor: str = "receiver") -> dict:
     """Record a goods receipt. Each line: sku_id, qty, and optionally batch_no, expiry_date, bin_id.
     Missing details are filled in: today's batch, shelf-life expiry, and the bin Slotting suggests.
-    A line that would overfill its bin is refused with 409 bin_full, and then nothing in the receipt is kept."""
+    A line without a bin is spread over the bins Slotting picks, never past a bin's capacity. A line that does not
+    fit is refused with 409 bin_full, and then nothing in the receipt is kept."""
     inventory.get_store(db, store_id)
     order = None
     if transfer_order_id is not None:
@@ -28,13 +29,18 @@ def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_
     received = []
     for line in lines:
         sku = inventory.get_sku(db, line["sku_id"])
-        bin_id = line.get("bin_id") or slotting.suggest_bin(db, store_id, sku.id, line["qty"]).id
-        slotting.ensure_room(db, store_id, bin_id, line["qty"])
         batch_no = line.get("batch_no") or f"B{date.today():%y%m%d}"
         expiry = line.get("expiry_date") or date.today() + timedelta(days=sku.shelf_life_days)
-        inventory.receive(db, store_id, sku.id, line["qty"], bin_id, batch_no, expiry, reference, actor)
-        received.append({"sku_id": sku.id, "sku": sku.name, "qty": line["qty"], "bin": db.get(Bin, bin_id).code,
-                         "batch_no": batch_no, "expiry_date": expiry.isoformat()})
+        if line.get("bin_id"):
+            slotting.ensure_room(db, store_id, line["bin_id"], line["qty"])
+            portions = [(line["bin_id"], line["qty"])]
+        else:                       # as many bins as it takes, never over capacity
+            portions = [(bin_.id, qty) for bin_, qty in slotting.place(db, store_id, sku.id, line["qty"])]
+        for bin_id, qty in portions:
+            inventory.receive(db, store_id, sku.id, qty, bin_id, batch_no, expiry, reference, actor)
+            slotting.ensure_not_overfilled(db, bin_id)
+            received.append({"sku_id": sku.id, "sku": sku.name, "qty": qty, "bin": db.get(Bin, bin_id).code,
+                             "batch_no": batch_no, "expiry_date": expiry.isoformat()})
 
     discrepancies = []
     if order is not None:

@@ -60,7 +60,8 @@ def run(db: Session, store_id: int) -> dict:
     and within each zone's free bin space (HLD 6.2), and commit.
 
     Returns {"transfer_order": the order, or None when nothing is ordered, "capped": [{sku_id, sku, zone, wanted,
-    ordered}] for each SKU that got less than it needed because its zone was short of space}.
+    ordered}] for each SKU that got less than it needed because its zone was short of space}. Cuts are also
+    published as a replenishment.capped event.
     """
     with _RUN_LOCK:
         return _run(db, store_id)
@@ -80,7 +81,11 @@ def _run(db: Session, store_id: int) -> dict:
             if qty > 0:
                 wanted.append((level, qty))
     lines, capped = _fit_free_space(db, store_id, wanted, levels, transit)
+    if capped:                      # on the live feed, so a manager sees cuts made by the timer too
+        events.publish(db, "replenishment.capped", store_id, {"capped": capped})
     if not lines:
+        if capped:
+            db.commit()
         return {"transfer_order": None, "capped": capped}
     order = TransferOrder(store_id=store_id, status="created", lines=lines)
     db.add(order)

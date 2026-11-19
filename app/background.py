@@ -74,7 +74,7 @@ def stall_loop():
 
 
 def replenish_loop():
-    # The first run waits one interval, so a demo that was just reset is not reordered at once.
+    # The first run waits one interval after the app starts (pressing Reset demo data does not restart it).
     return _repeat("replenishment", replenish_once, lambda: config.REPLENISHMENT_INTERVAL_MINUTES * 60,
                    first_run_now=False)
 
