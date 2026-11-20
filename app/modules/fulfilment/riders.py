@@ -47,9 +47,12 @@ def job_for_order(db: Session, order_id: str) -> FulfilmentJob:
 
 def _rider_of(db: Session, job: FulfilmentJob, rider_id: str) -> RiderAssignment:
     """This order's rider, or a 409 saying why this rider may not have it. An order packed before riders were assigned
-    (an old database) goes to the rider who comes for it, so it can never be stuck packed. Does not commit."""
+    (an old database) goes to the rider who comes for it, if the rider system knows them, so it can never be stuck
+    packed. Does not commit."""
     assignment = job.rider
     if assignment is None and job.state == "packed":
+        if rider_id not in RIDERS:                      # a typo or a stranger never gets a bag, old order or not
+            raise DomainError(409, "wrong_rider", f"{rider_id} is not one of the rider system's riders")
         assignment = _assign(db, job, rider_id)
     if assignment is None:
         raise DomainError(409, "not_ready", f"Order {job.order_id} is not packed yet, so no rider is assigned")

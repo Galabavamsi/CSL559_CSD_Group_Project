@@ -171,3 +171,17 @@ def test_after_the_bag_is_gone_any_other_handover_says_so(client, sku):
     for res in (late, wrong_bag):
         assert res.status_code == 409 and res.json()["error"]["code"] == "already_collected"
         assert rider in res.json()["error"]["message"]
+
+
+def test_an_old_order_still_goes_only_to_a_known_rider(client, db, sku):
+    job = packed_order(client, sku)
+    db.delete(db.get(FulfilmentJob, job["job_id"]).rider)            # as if packed before task 2.7
+    db.commit()
+
+    arrive = client.post("/v1/riders/R-99/arrive", json={"order_id": "r-1"})
+    take = handover(client, job, "R-99", "r-1")
+
+    assert arrive.status_code == take.status_code == 409
+    assert arrive.json()["error"]["code"] == take.json()["error"]["code"] == "wrong_rider"
+    assert client.get(f"/v1/fulfilment-jobs/{job['job_id']}").json()["rider"] is None
+    assert handover(client, job, "R-12", "r-1").json()["state"] == "handed_over"   # a known rider still can
