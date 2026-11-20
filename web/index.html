@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dark Store Prototype</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%A6%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet">
@@ -13,7 +14,8 @@
   <header class="topbar">
     <div>
       <h1>Dark store prototype</h1>
-      <p>One order, three stations. Place it on the left, pick it in the middle, watch the stock on the right.</p>
+      <p>One order, three stations. Order on the left (<em>Check delivery</em>, add items, <em>Hold my items</em>,
+        <em>Pay now</em>), pick it in the middle (<em>Get next order</em>), and watch the stock change on the right.</p>
     </div>
     <div class="topbar-controls">
       <label for="store-select">Store for picker and ops</label>
@@ -31,7 +33,7 @@
 
       <div class="block">
         <label for="location-select">Deliver to</label>
-        <div class="row">
+        <div class="row row-wrap">
           <select id="location-select">
             <option value="12.975,77.600">Home near DS-01 Central</option>
             <option value="13.030,77.596">Home near DS-02 North</option>
@@ -39,7 +41,7 @@
           </select>
           <button id="check-location" class="btn">Check delivery</button>
         </div>
-        <p id="service-message" class="note" role="status"></p>
+        <p id="service-message" class="note" role="status">Checking delivery…</p>
       </div>
 
       <div id="shop" class="block" hidden>
@@ -62,8 +64,9 @@
       </div>
 
       <div id="paid-panel" class="block" hidden>
-        <p><strong>Order <span id="paid-order"></span> is paid.</strong></p>
-        <p class="note">You can still cancel it until it is packed.</p>
+        <p><strong>Order <span id="paid-order"></span></strong></p>
+        <p id="paid-status" role="status"></p>
+        <p id="paid-note" class="note">You can still cancel it until it is packed.</p>
         <div class="row">
           <button id="cancel-paid" class="btn">Cancel paid order</button>
         </div>

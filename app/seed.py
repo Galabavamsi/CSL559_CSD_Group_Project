@@ -181,10 +181,16 @@ def seed_if_empty(db: Session) -> bool:
 
 
 def reset() -> None:
-    """Wipe the database and load the demo data again."""
+    """Wipe the database and load the demo data again. With DEMO_HISTORY_ON_RESET on (the shared hosted copy), also
+    write the sales history and delivery lookups the demo script otherwise adds by hand."""
     recreate_tables()
     with SessionLocal() as db:
         seed(db)
+        if config.DEMO_HISTORY_ON_RESET:
+            from scripts import generate_demand, generate_sales    # demo tooling; imported here, it imports this module
+            for store_id in db.scalars(select(Store.id).order_by(Store.id)).all():
+                generate_sales.generate(store_id, db=db)
+            generate_demand.look_up(db, generate_demand.CLUSTERS)
 
 
 if __name__ == "__main__":

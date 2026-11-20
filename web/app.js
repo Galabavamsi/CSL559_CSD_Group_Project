@@ -12,6 +12,7 @@ const state = {
   hold: null,       // the current reservation, if any
   holdTimer: null,
   paid: null,       // the customer's last paid order, which they may still cancel until it is packed
+  trackTimer: null, // follows that order through the store until it is delivered or cancelled
   jobs: [],         // the picker's current orders: one, or a batch at peak (task 2.6)
   walkSize: 0,      // how many orders this walk started with, so the last one of a batch keeps its tote name
 };
@@ -60,7 +61,9 @@ function renderProducts() {
       const qty = state.cart[p.sku_id] || 0;
       const left = el("span", { className: p.atp <= 5 ? "few" : "" }, `${p.atp} left`);
       const minus = el("button", { className: "btn btn-small", textContent: "−", disabled: locked || qty === 0 });
-      const plus = el("button", { className: "btn btn-small", textContent: "+", disabled: locked });
+      // No more than the store can sell: a cart over the stock shown would only be refused at checkout.
+      const plus = el("button", { className: "btn btn-small", textContent: "+", disabled: locked || qty >= p.atp,
+                                  title: qty >= p.atp ? `Only ${p.atp} left` : "" });
       minus.setAttribute("aria-label", `Remove one ${p.name}`);
       plus.setAttribute("aria-label", `Add one ${p.name}`);
       minus.onclick = () => changeCart(p.sku_id, -1);
@@ -93,7 +96,9 @@ function renderCart() {
     const product = state.products.find((p) => p.sku_id === Number(skuId));
     return sum + (product ? product.price * qty : 0);
   }, 0);
-  $("cart-summary").textContent = units ? `${units} ${units === 1 ? "item" : "items"}, ₹${total}` : "Cart is empty";
+  const named = lines.map(([skuId, qty]) => `${qty} × ${skuName(Number(skuId))}`);
+  const listed = named.slice(0, 3).join(", ") + (named.length > 3 ? ` and ${named.length - 3} more` : "");
+  $("cart-summary").textContent = units ? `${listed} · ₹${total}` : "Cart is empty";
   $("checkout").disabled = !units || Boolean(state.hold);
 }
 
@@ -113,6 +118,7 @@ async function checkout() {
   say($("customer-message"), "");
   showPaid(null);
   showHold();
+  $("hold-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });   // on a phone it is below the list
   renderProducts();
   refreshOps();
 }
@@ -145,23 +151,68 @@ async function pay() {
   state.cart = {};
   clearHold();
   showPaid(paid);
-  say($("customer-message"), `Paid. Order ${paid.order_id} is waiting for a picker.`, "good");
+  $("paid-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  say($("customer-message"), "Payment received.", "good");
   await loadProducts();
   refreshOps();
 }
 
+/** Show the customer's paid order and follow it through the store until it is delivered or cancelled. */
 function showPaid(order) {
   state.paid = order;
+  clearInterval(state.trackTimer);
   $("paid-panel").hidden = !order;
-  if (order) $("paid-order").textContent = order.order_id;
+  if (!order) return;
+  $("paid-order").textContent = order.order_id;
+  showOrderStatus({ state: "created", tasks: [] });
+  state.trackTimer = setInterval(() => trackPaid().catch(() => {}), 3000);
+}
+
+/** The paid order as the store sees it. A real app would ask the Order service; here the store manager's login
+ *  stands in for it, as for cancelling. */
+async function paidJob(order) {
+  const jobs = await api("GET", `/v1/fulfilment-jobs?store_id=${order.store_id}`, undefined, `manager${order.store_id}`);
+  return jobs.find((j) => j.order_id === order.order_id);
+}
+
+const ORDER_STATUS = {
+  created: "Paid. Waiting for a picker.",
+  picking: "A picker is collecting your items.",
+  packed: "Packed and waiting for a rider.",
+  handed_over: "On its way to you.",
+  cancelled: "Cancelled. Your payment will be refunded.",
+};
+
+function showOrderStatus(job) {
+  const rider = job.rider?.rider_id;
+  let text = ORDER_STATUS[job.state] || job.state;
+  if (rider && job.state === "packed") {
+    text = job.rider.status === "arrived" ? `Rider ${rider} is collecting your bag.` : `Packed. Rider ${rider} is on the way to the store.`;
+  }
+  if (rider && job.state === "handed_over") text = `On its way to you with rider ${rider}.`;
+  const missing = job.tasks.filter((t) => t.status === "short").reduce((units, t) => units + t.qty, 0);
+  if (missing && job.state !== "cancelled") {
+    text += ` ${missing} ${missing === 1 ? "item was" : "items were"} out of stock and will be refunded.`;
+  }
+  $("paid-status").textContent = text;
+  const cancellable = job.state === "created" || job.state === "picking";
+  $("cancel-paid").hidden = !cancellable;
+  $("paid-note").hidden = !cancellable;
+}
+
+async function trackPaid() {
+  const order = state.paid;
+  const job = order && await paidJob(order);
+  if (!job || state.paid !== order) return;               // gone (a reset), or the customer moved on meanwhile
+  showOrderStatus(job);
+  if (job.state === "handed_over" || job.state === "cancelled") clearInterval(state.trackTimer);
 }
 
 async function cancelPaidOrder() {
   const { order_id: orderId, store_id: storeId } = state.paid;
   // In a real app the Order service makes this call; here the store manager's login stands in for it.
   const managerOfStore = `manager${storeId}`;
-  const jobs = await api("GET", `/v1/fulfilment-jobs?store_id=${storeId}`, undefined, managerOfStore);
-  const job = jobs.find((j) => j.order_id === orderId);
+  const job = await paidJob(state.paid);
   if (!job) {
     showPaid(null);
     throw new Error(`Order ${orderId} is not in the store's list any more.`);
@@ -498,9 +549,10 @@ async function sweepHolds() {
 }
 
 async function resetDemo() {
-  if (!window.confirm("Reset all demo data? Every order, hold and stock change will be wiped.")) return;
+  if (!window.confirm("Reset all demo data for everyone using this copy? Every order, hold and stock change will be wiped.")) return;
   await api("POST", "/v1/admin/reset", undefined, ADMIN);
   clearHold();
+  showPaid(null);
   state.cart = {};
   state.jobs = [];
   state.walkSize = 0;

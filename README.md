@@ -8,6 +8,20 @@ It is a *modular monolith*: a single FastAPI app with SQLite, so anyone can run 
 with no setup. The module boundaries are the same as the HLD's service boundaries, so each part
 can later be split out, moved to PostgreSQL, or put behind Kafka without a redesign.
 
+## Live demo
+
+Hosted on the course's lab servers (release `v1.1`). The addresses work only from the campus network.
+
+| What | Where |
+| --- | --- |
+| The three demo stations (customer, picker, store ops) | http://10.1.75.53:6250 |
+| Ops dashboard, picker phone screen, store network map | http://10.1.75.53:6250/ops.html, [`/picker.html`](http://10.1.75.53:6250/picker.html), [`/network.html`](http://10.1.75.53:6250/network.html) |
+| API reference | http://10.1.75.53:6250/docs |
+| Monitoring (Grafana, *Dark store* dashboard) | http://10.1.75.53:6252 |
+
+It is a shared demo: the data is reset often and the demo accounts use the password `demo`, so do not enter anything
+real.
+
 ## What works today
 
 | Flow | What you can do |
