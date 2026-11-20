@@ -1,21 +1,26 @@
-"""Shared test setup: every test runs against a fresh copy of the demo data in a temporary database."""
+"""Shared test setup: every test runs against a fresh copy of the demo data.
+
+The database is a temporary SQLite file, unless DARKSTORE_TEST_DB names another one (task 1.7), for example
+    DARKSTORE_TEST_DB=postgresql://darkstore:darkstore@localhost:5432/darkstore python -m pytest -q
+Every table in that database is dropped and rebuilt before each test: never point it at data you want to keep."""
 import os
 import tempfile
 from datetime import date, datetime, time, timedelta
 
 # Must be set before anything from `app` is imported, because the engine is created at import time.
-os.environ["DARKSTORE_DB"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
+os.environ["DARKSTORE_DB"] = os.environ.get("DARKSTORE_TEST_DB") or f"sqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["BACKGROUND_JOBS"] = "off"                     # no timed jobs: tests release holds themselves
 os.environ["RATE_LIMIT_PER_SECOND"] = "0"                 # tests make many calls at once; test_rate_limit turns it on
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import func, select  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
 from app import auth, seed  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import SKU, StockItem, StockLedger, StockLevel, utcnow  # noqa: E402
+from app.models import SKU, utcnow  # noqa: E402
+from app.modules.inventory import service as inventory  # noqa: E402
 from scripts.generate_sales import clear_history, write_history  # noqa: E402
 
 
@@ -50,10 +55,12 @@ def db(fresh_data):
 
 
 @pytest.fixture()
-def sku(db):
-    """Look up a SKU id by the start of its name, e.g. sku('Toned milk')."""
+def sku(fresh_data):
+    """Look up a SKU id by the start of its name, e.g. sku('Toned milk'). Each lookup uses its own short session, so
+    it leaves no transaction open (on PostgreSQL an open one would block a reset of the demo data)."""
     def find(name_starts_with: str) -> int:
-        return db.scalar(select(SKU.id).where(SKU.name.startswith(name_starts_with)))
+        with SessionLocal() as session:
+            return session.scalar(select(SKU.id).where(SKU.name.startswith(name_starts_with)))
     return find
 
 
@@ -75,23 +82,17 @@ def place_paid_order(client, order_id: str, store_id: int, lines: list[tuple[int
 def assert_stock_is_consistent(holds_may_exceed_stock: bool = False):
     """The three records of stock must always agree:
     StockLevel.on_hand == units in bins == sum of the ledger, and holds never exceed stock.
+    The checks themselves are inventory.audit, the same ones GET /v1/admin/stock-audit runs.
 
     `holds_may_exceed_stock=True` is only for the moment after an expiry write-off took units a paid order was
     holding (see inventory.expire_stock); the empty-shelf path settles it when the picker reaches the line."""
     with SessionLocal() as session:
-        for level in session.scalars(select(StockLevel)).all():
-            in_bins = session.scalar(
-                select(func.coalesce(func.sum(StockItem.qty), 0))
-                .where(StockItem.store_id == level.store_id, StockItem.sku_id == level.sku_id))
-            in_ledger = session.scalar(
-                select(func.coalesce(func.sum(StockLedger.delta), 0))
-                .where(StockLedger.store_id == level.store_id, StockLedger.sku_id == level.sku_id))
-            where = f"store {level.store_id} sku {level.sku_id}"
-            assert level.qty_on_hand == in_bins, f"{where}: on_hand {level.qty_on_hand} != bins {in_bins}"
-            assert level.qty_on_hand == in_ledger, f"{where}: on_hand {level.qty_on_hand} != ledger {in_ledger}"
-            assert level.qty_reserved >= 0, f"{where}: reserved {level.qty_reserved}"
-            if not holds_may_exceed_stock:
-                assert level.qty_reserved <= level.qty_on_hand, f"{where}: reserved {level.qty_reserved}"
+        mismatches = inventory.audit(session)
+    if holds_may_exceed_stock:
+        for row in mismatches:
+            row["problems"] = [p for p in row["problems"] if p != "reserved_over_on_hand"]
+        mismatches = [row for row in mismatches if row["problems"]]
+    assert mismatches == [], f"stock records disagree: {mismatches}"
 
 
 def plant_sales(db, sales: dict[int, dict[int, int]], store_id: int = 1) -> date:

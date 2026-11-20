@@ -3,7 +3,10 @@ services:
     build: .
     ports: ["8000:8000"]
     environment:
-      DARKSTORE_DB: sqlite:////data/darkstore.db
+      # SQLite in a volume by default. For PostgreSQL (task 1.7), start with `--profile postgres` and
+      #   DARKSTORE_DB=postgresql://darkstore:darkstore@postgres:5432/darkstore
+      # or give the URL of a hosted database (for example Amazon RDS); nothing else changes.
+      DARKSTORE_DB: ${DARKSTORE_DB:-sqlite:////data/darkstore.db}
       RATE_LIMIT_PER_SECOND: ${RATE_LIMIT_PER_SECOND:-20}   # 0 for a load test (it is one client)
     volumes: ["appdata:/data"]
   prometheus:                    # task 4.7: `docker compose --profile monitoring up --build`
@@ -29,13 +32,15 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["127.0.0.1:3000:3000"]          # this machine only
     depends_on: [prometheus]
-  postgres:                      # used by Member 1 in task 1.7
+  postgres:                      # task 1.7: the HLD's database
     image: postgres:16
     profiles: ["postgres"]
     environment:
       POSTGRES_USER: darkstore
-      POSTGRES_PASSWORD: darkstore   # local development only
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-darkstore}   # the default is for local development only
       POSTGRES_DB: darkstore
-    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    ports: ["127.0.0.1:5432:5432"]          # this machine only; the app reaches it as postgres:5432
 volumes:
   appdata: {}
+  pgdata: {}

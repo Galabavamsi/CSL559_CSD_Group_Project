@@ -1,0 +1,252 @@
+% Member 1 report sections: inventory and stock integrity (HLD 5 service 3, HLD 7 data design,
+% HLD 9 scalability and consistency, one HLD 13 trade-off).
+% Body only, so the team report can \input{member1-inventory}. Needs: array, booktabs.
+% member1-standalone.tex compiles these sections on their own.
+% Numbers measured on branch m1/postgres-audit-load-test (on top of main 7c95078), 21 November 2026, one laptop.
+
+\section{Inventory (HLD 5, service 3)}
+\label{sec:m1-inventory}
+
+Every other service trusts one number from Inventory: how many units of a product a store can still sell. If that
+number is too high, a customer pays for something that is not there. Inventory therefore answers two questions and
+guards one rule.
+
+\begin{itemize}
+  \item \textbf{How many can we sell?} Available to promise (ATP) is on hand, minus held, minus a safety buffer, and
+    never below zero. The buffer hides a few units of a product from customers so that a small counting error does
+    not become a failed order. Replenishment and picking ignore it, because those units are really on the shelf.
+  \item \textbf{Where are they?} Each batch of a product in each bin is one row with its expiry date. Picking takes the
+    batch that expires first, then the nearest bin, and never a batch that has already expired.
+  \item \textbf{The rule: a unit is promised to one customer only.} Checkout \emph{holds} units, packing
+    \emph{commits} the sale, and everything in between only has to give a hold back.
+\end{itemize}
+
+\paragraph{Hold, then commit.} Checkout raises \texttt{qty\_reserved} and leaves \texttt{qty\_on\_hand} alone. Only
+packing lowers both. A failed payment, a cancelled order or an expired hold therefore never has to ``put stock
+back''; it lowers \texttt{qty\_reserved} and nothing else. A hold lasts 10 minutes. A timed job releases expired
+holds every 30 seconds, and a hold is released by one conditional \texttt{UPDATE} on its status, so a cancel, a
+payment and the timed job arriving together cannot give the same units back twice.
+
+\paragraph{What else the service does.}
+\begin{itemize}
+  \item \textbf{Expiry.} An hourly job writes off every batch past its date, with one ledger row per batch, and
+    publishes \texttt{item.near\_expiry} for batches within two days of their date, once per batch per day.
+  \item \textbf{Idempotency keys.} A stock adjustment sent with an \texttt{Idempotency-Key} header changes stock
+    once; a retry gets the first answer back. The key is saved in the same transaction as the stock change, so a
+    crash between the two cannot separate them.
+  \item \textbf{Cycle counts.} A counter is told which bin to count but not what the records expect. A difference
+    worth at most Rs~500 is applied at once; a larger one waits for a manager, who may not approve their own count.
+    When a picker reports an empty shelf, a count of that bin is opened automatically. The share of counted lines that
+    matched is the inventory accuracy figure of HLD~12.
+  \item \textbf{Functions for the other services.} Fulfilment asks Inventory to choose bins, to commit a sale and to
+    write off units a picker could not find. Inbound asks it to receive stock. Two more were added for work the
+    other members have planned: \texttt{swap\_line} holds a substitute for a dropped line, and \texttt{move}
+    shifts units between two bins of the same temperature zone. No other module writes to the stock tables.
+\end{itemize}
+
+\section{Data design (HLD 7)}
+\label{sec:m1-data}
+
+\paragraph{Three records that must agree.} Stock is written in three places, and
+Table~\ref{tab:m1-stock-records} says what each is for. For every store and product, the total in
+\texttt{stock\_levels}, the sum of the bins in \texttt{stock\_items} and the sum of the movements in
+\texttt{stock\_ledger} must be equal. Every function that changes one changes all three in the same transaction.
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.17\linewidth}>{\raggedright\arraybackslash}p{0.25\linewidth}
+                  >{\raggedright\arraybackslash}p{0.5\linewidth}@{}}
+    \toprule
+    Table & One row per & Used for \\
+    \midrule
+    \texttt{stock\_levels} & store and product & On hand, held and safety buffer. Every checkout hold is one
+      conditional \texttt{UPDATE} on this row \\
+    \addlinespace[3pt]
+    \texttt{stock\_items} & store, product, bin and batch & Where the units are and when they expire: pick paths,
+      first-expiry-first-out, putaway, cycle counts \\
+    \addlinespace[3pt]
+    \texttt{stock\_ledger} & stock movement & Append-only history with a reason (receipt, sale, damage, expiry,
+      theft, count, not found, move). A mistake is undone by a new row with the opposite sign, never by an edit \\
+    \bottomrule
+  \end{tabular}
+  \caption{The three records of stock.}
+  \label{tab:m1-stock-records}
+\end{table}
+
+HLD~7.1 keeps the held quantity on every batch row. The prototype keeps it on a separate totals row instead. A
+checkout does not care which bin a unit is in, so the hold should lock one small row per product, not several batch
+rows in an order that could deadlock. The cost is that the totals row repeats what the batch rows already say, and
+two copies can drift apart.
+
+\paragraph{The audit.} \texttt{GET /v1/admin/stock-audit} compares the three records for every store and product
+and lists each disagreement with its values: level against bins, level against ledger, a negative quantity, or
+more units held than exist. An empty list means the stock is consistent. The automated tests call the same function
+after every test that moves stock, so a change that breaks the rule fails in review, not in a store.
+
+\paragraph{PostgreSQL and migrations.} HLD~7.2 chooses PostgreSQL because its transactions and row locks prevent
+overselling. The prototype now runs on either database, chosen by one setting, \texttt{DARKSTORE\_DB}: a SQLite file
+for a laptop with nothing to install, PostgreSQL for a hosted deployment. All 313 automated tests pass on both
+(SQLite and PostgreSQL~16), and the build server runs them on both for every change. Table changes are Alembic
+migrations: a change to the models is turned into a migration file with one command and applied with a second, and
+the app applies pending migrations itself when it starts, so a hosted database is changed in place and keeps its
+data. A test fails when the models and the migrations disagree.
+
+\section{Scalability and consistency (HLD 9)}
+\label{sec:m1-consistency}
+
+\subsection{No overselling: check and change in one statement}
+
+The hold is a single SQL statement whose \texttt{WHERE} clause is the stock check:
+\begin{center}\small
+  \verb|UPDATE stock_levels SET qty_reserved = qty_reserved + :qty|\\
+  \verb|WHERE store_id = :store AND sku_id = :sku|\\
+  \verb|  AND qty_on_hand - qty_reserved - safety_buffer >= :qty|
+\end{center}
+If the statement changes no row, there was not enough stock and the whole cart is rolled back, so a cart is held
+whole or not at all. Reading the level first and updating it afterwards would be wrong: two requests could both read
+``1 left'' and both take it.
+
+The statement is safe on PostgreSQL at its default isolation level (read committed) for a specific reason. When two
+requests update the same row, the second waits for the first to commit, and then \emph{checks its \texttt{WHERE}
+clause again against the new row} before changing anything. The second buyer of the last unit therefore sees zero
+available and changes no row. SQLite reaches the same result more bluntly: it allows one writer at a time.
+
+\subsection{The proof: 200 buyers, 50 units}
+
+\texttt{scripts/load\_checkout.py} resets the data, puts exactly 50 units of one product on the shelf, and lets 200
+customers each try to hold one unit at the same instant against a running server. It passes only if exactly 50 holds
+succeed, the other 150 buyers are told \texttt{409 insufficient\_stock}, and the audit afterwards is empty.
+Table~\ref{tab:m1-race} gives the result of five runs on each database.
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    Database & Holds & Refused & Errors & Audit mismatches & p50 (ms) & p99 (ms) \\
+    \midrule
+    SQLite (one file, WAL mode) & 50 & 150 & 0 & 0 & 883 & 1998 \\
+    PostgreSQL 16 & 50 & 150 & 0 & 0 & 1337 & 1478 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Checkout race: 200 simultaneous buyers for 50 units, five runs per database. The counts were the same in
+    all five runs; the times are the median of the five. One laptop, app and database on the same machine.}
+  \label{tab:m1-race}
+\end{table}
+
+The counts are the result. The times are not what a customer would see in normal use: all 200 requests arrive in
+the same instant and the server works on 40 at a time, so most of each time is spent waiting in a queue. The laptop
+also ran the database library without its compiled speed-ups. A single hold on an idle server takes a few
+milliseconds.
+
+\subsection{What PostgreSQL found that SQLite hid}
+
+Moving to the HLD's database was worth doing for the bugs it exposed. SQLite allows one writer at a time, which hides
+mistakes that a database with real concurrency does not forgive.
+
+\begin{itemize}
+  \item \textbf{A lost update on bin quantities.} The totals row was always changed by a conditional
+    \texttt{UPDATE}, but a bin's quantity was read, changed in the program and written back. With two packers
+    taking from the same bin, both read the old number and one sale's change was lost: a simulated run of 100 orders
+    ended with 27 units in the totals and 28 in the bins. The audit caught it. Every bin quantity is now changed
+    inside the database, with the same kind of conditional \texttt{UPDATE}, and a test reproduces the case on both
+    databases.
+  \item \textbf{A stall under a burst.} With 200 buyers at once, requests waited 30 to 60 seconds and many failed,
+    although nothing was oversold. The app kept at most 15 database connections for 40 request threads. Threads
+    waited for a connection while the finished requests that would return one waited for a thread. The pool is now
+    never smaller than the number of threads, and the reason is written beside the setting.
+  \item \textbf{A reset that could wait forever.} PostgreSQL will not drop a table while another session still has
+    a transaction open on it. Statements now give up after 15 seconds instead of waiting without end, and the
+    reset of the demo data drops and recreates the tables in one transaction.
+\end{itemize}
+
+\subsection{Reads: the ATP cache}
+
+HLD~3 expects stock reads to outnumber writes by about 13 to 1, and HLD~9.2 serves ATP from a cache. The prototype
+keeps each store's availability list in the app's memory for 2 seconds and drops it whenever that store's stock
+changes. Table~\ref{tab:m1-cache} shows what that saves.
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}llrrr@{}}
+    \toprule
+    Database & Cache & Median (ms) & p99 (ms) & Hit rate \\
+    \midrule
+    SQLite & off & 7.64 & 10.45 & 0\% \\
+    SQLite & on (2 s) & 3.93 & 8.78 & 92\% \\
+    \addlinespace[3pt]
+    PostgreSQL 16 & off & 12.26 & 15.85 & 0\% \\
+    PostgreSQL 16 & on (2 s) & 3.85 & 13.74 & 92\% \\
+    \bottomrule
+  \end{tabular}
+  \caption{2,000 whole-store availability reads with a checkout hold after every 13th read
+    (\texttt{scripts/bench\_availability.py}). Measured inside the app's process, so the times show the database work
+    saved, not what a phone would see.}
+  \label{tab:m1-cache}
+\end{table}
+
+The median read is about half as long on SQLite and about a third as long on PostgreSQL, where every miss is a
+round trip to another process. The p99 hardly moves, because the slowest reads are the misses that follow a
+write.
+
+\paragraph{Why a stale cache is safe.} The cache is only ever used to \emph{show} stock. The hold never reads it;
+it always runs the conditional \texttt{UPDATE} against the database. A cached list can be out of date in one
+window: a request that read the old numbers just before a write commits can store them just after the cache was
+cleared. The 2-second expiry bounds that. In that window a customer may see an item that then fails to hold
+(``sorry, just sold out''), which is an inconvenience. The store can never promise a unit it does not have, because
+the promise is not made from the cache.
+
+\subsection{Scaling out}
+
+Sharding by store (HLD~7) is not built. It stays possible because every stock query already filters by
+\texttt{store\_id} and no hold ever touches two stores, so each store's rows could move to their own database
+without changing a transaction. Two things would have to change first for several app instances: the cache is per
+process, so another instance can be up to 2 seconds behind, which a shared Redis would fix; and the timed jobs
+should run in one instance only.
+
+\section{Trade-off: writing off expired stock that a paid order still holds (HLD 13)}
+\label{sec:m1-tradeoff}
+
+The hourly expiry job can find an expired batch whose units are held for an order that is paid but not yet picked.
+There are two choices. The job could cancel or change that order itself, which keeps the numbers tidy but makes
+Inventory reach into the order flow that Fulfilment owns, from a timed job with nobody watching. Or it could write
+the units off and leave the hold alone, which is what the prototype does.
+
+The cost is a short period in which more units are held than exist for that product. The audit reports it as
+\texttt{reserved\_over\_on\_hand}, and it is the one mismatch that can be legitimate. It ends when the picker reaches
+the line: allocation finds no unexpired units, and the existing empty-shelf path drops the line, frees the hold and
+publishes the refund event. One path handles every kind of missing item, and the customer is told by the service
+that owns the order. We accepted a number that is briefly untidy in exchange for one owner per decision.
+
+Table~\ref{tab:m1-limits} lists what the inventory work leaves open.
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}
+                  >{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+    \toprule
+    Limit & What it means & Next step \\
+    \midrule
+    No sharding & All stores share one database & Split by \texttt{store\_id}; the queries already allow it \\
+    \addlinespace[3pt]
+    Cache is per app process & A second instance can show stock up to 2 seconds old & A shared Redis with the same
+      four operations \\
+    \addlinespace[3pt]
+    Goods receipts take no idempotency key & A receipt sent twice is received twice & Wrap the endpoint as stock
+      adjustments are \\
+    \addlinespace[3pt]
+    Saved idempotency keys are never removed & The table grows with every keyed write & Delete keys older than a
+      day \\
+    \addlinespace[3pt]
+    \texttt{swap\_line} and \texttt{move} have no endpoint yet & A substitute cannot be accepted and stock cannot
+      be re-slotted from a screen & The fulfilment and slotting endpoints that call them \\
+    \addlinespace[3pt]
+    Race measured on one laptop & The times say little about a cluster & Repeat against the hosted deployment \\
+    \bottomrule
+  \end{tabular}
+  \caption{Limits of the inventory work and what would close them.}
+  \label{tab:m1-limits}
+\end{table}

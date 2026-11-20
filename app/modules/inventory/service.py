@@ -304,6 +304,58 @@ def unreserve(db: Session, store_id: int, sku_id: int, qty: int) -> None:
     )
 
 
+def swap_line(db: Session, reservation: Reservation, old_sku_id: int, new_sku_id: int, qty: int,
+              old_still_held: bool = False) -> ReservationLine:
+    """Replace `qty` units of one SKU on a paid order with a substitute (Pick & Pack, task 2.4). Does not commit,
+    so the caller can add the pick tasks for the substitute in the same transaction.
+
+    The substitute is held with the same conditional UPDATE as `reserve`, so it can never be oversold: if it is
+    no longer available this raises 409 insufficient_stock before anything else has changed. Then the order's
+    lines are rewritten: `qty` fewer of the old SKU, `qty` more of the new one.
+
+    The hold on the old units is normally gone already (Pick & Pack frees it when it drops a line). Pass
+    `old_still_held=True` to give it back here instead. Returns the substitute's reservation line."""
+    if qty <= 0:
+        raise DomainError(422, "bad_quantity", "A substitution needs a quantity of at least 1")
+    if old_sku_id == new_sku_id:
+        raise DomainError(422, "same_sku", "The substitute must be a different product")
+    if reservation.status != "confirmed":
+        raise DomainError(409, "not_paid", f"Reservation is {reservation.status}; only a paid order that is not "
+                                           "packed yet can take a substitute")
+    get_sku(db, new_sku_id)
+    old_line = next((line for line in reservation.lines if line.sku_id == old_sku_id), None)
+    if old_line is None or old_line.qty < qty:
+        raise DomainError(409, "not_on_order", f"The order does not have {qty} units of SKU {old_sku_id} to replace")
+
+    held = db.execute(
+        update(StockLevel)
+        .where(StockLevel.store_id == reservation.store_id, StockLevel.sku_id == new_sku_id,
+               StockLevel.qty_on_hand - StockLevel.qty_reserved - StockLevel.safety_buffer >= qty)
+        .values(qty_reserved=StockLevel.qty_reserved + qty, version=StockLevel.version + 1)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if held == 0:
+        level = get_level(db, reservation.store_id, new_sku_id)
+        raise DomainError(409, "insufficient_stock", "The substitute is no longer available",
+                          {"lines": [{"sku_id": new_sku_id, "requested": qty,
+                                      "available": atp_of(level) if level else 0}]})
+    if old_still_held:
+        unreserve(db, reservation.store_id, old_sku_id, qty)
+        events.publish(db, "stock.changed", reservation.store_id, {"sku_id": old_sku_id, "cause": "substituted"})
+
+    old_line.qty -= qty
+    if old_line.qty == 0:
+        reservation.lines.remove(old_line)
+    new_line = next((line for line in reservation.lines if line.sku_id == new_sku_id), None)
+    if new_line is None:
+        new_line = ReservationLine(sku_id=new_sku_id, qty=0)
+        reservation.lines.append(new_line)
+    new_line.qty += qty
+    db.flush()
+    events.publish(db, "stock.changed", reservation.store_id, {"sku_id": new_sku_id, "cause": "substituted"})
+    return new_line
+
+
 # --------------------------------------------------------------------------- stock movements
 
 
@@ -330,6 +382,26 @@ def _change_on_hand(db: Session, store_id: int, sku_id: int, delta: int, reserve
     )
 
 
+def _change_item_qty(db: Session, item: StockItem, delta: int) -> None:
+    """Add `delta` units to one batch in one bin (a negative delta removes them). Does not commit.
+
+    One UPDATE that computes the new quantity inside the database, like the hold in `reserve`. Reading item.qty,
+    changing it in Python and writing it back would lose one of two changes made at the same moment (two packers
+    taking from the same bin): PostgreSQL lets both read the old number. Taking more units than the bin holds
+    changes nothing and raises 409 stock_mismatch."""
+    db.flush()                                   # a batch created a moment ago needs its row first
+    changed = db.execute(
+        update(StockItem)
+        .where(StockItem.id == item.id, StockItem.qty + delta >= 0)
+        .values(qty=StockItem.qty + delta)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if changed == 0:
+        raise DomainError(409, "stock_mismatch",
+                          f"The bin no longer holds {-delta} units of batch {item.batch_no}; read the stock again")
+    db.refresh(item, ["qty"])
+
+
 def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batch_no: str,
             expiry_date: date, reference: str | None = None, actor: str = "receiver") -> StockItem:
     """Put received stock into a bin (FR-9). The units are sellable as soon as this returns.
@@ -353,12 +425,51 @@ def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batc
         item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no=batch_no,
                          expiry_date=expiry_date, qty=0)
         db.add(item)
-    item.qty += qty
-    db.flush()
+    _change_item_qty(db, item, +qty)
     _change_on_hand(db, store_id, sku_id, +qty)
     _ledger(db, store_id, sku_id, bin_id, +qty, "receipt", reference, actor)
     events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": "receipt"})
     return item
+
+
+def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str | None = None,
+         actor: str = "system") -> StockItem:
+    """Move `qty` units of one batch to another bin in the same store (re-slotting, Slotting task 3.6). Does not
+    commit. Nothing is gained or lost: two ledger rows with reason `move` (out of one bin, into the other) that sum
+    to zero, and qty_on_hand is untouched, so ATP does not change.
+
+    Refused: a bin of the wrong temperature zone (422 wrong_zone), and units a picker has been sent to this bin for
+    (409 promised_to_picker). Bin capacity is Slotting's rule, so the caller checks it. Returns the batch's row
+    in the new bin."""
+    if qty <= 0:
+        raise DomainError(422, "bad_quantity", "Moved quantity must be at least 1")
+    to_bin = db.get(Bin, to_bin_id)
+    if to_bin is None or to_bin.store_id != item.store_id:
+        raise DomainError(422, "bad_bin", f"Bin {to_bin_id} is not in store {item.store_id}")
+    if to_bin.id == item.bin_id:
+        raise DomainError(422, "same_bin", "The units are already in that bin")
+    sku = get_sku(db, item.sku_id)
+    if to_bin.zone != sku.storage_type:
+        raise DomainError(422, "wrong_zone",
+                          f"{sku.name} needs {sku.storage_type} storage but bin {to_bin.code} is {to_bin.zone}")
+    db.refresh(item, ["qty"])
+    free = item.qty - _promised(db, item)
+    if qty > free:
+        raise DomainError(409, "promised_to_picker",
+                          f"Only {max(free, 0)} units in this bin are free to move; the rest are in an order "
+                          "being picked or are not there")
+    target = db.scalar(
+        select(StockItem).where(StockItem.store_id == item.store_id, StockItem.sku_id == item.sku_id,
+                                StockItem.bin_id == to_bin.id, StockItem.batch_no == item.batch_no))
+    if target is None:
+        target = StockItem(store_id=item.store_id, sku_id=item.sku_id, bin_id=to_bin.id, batch_no=item.batch_no,
+                           expiry_date=item.expiry_date, qty=0)
+        db.add(target)
+    _change_item_qty(db, item, -qty)
+    _change_item_qty(db, target, +qty)
+    _ledger(db, item.store_id, item.sku_id, item.bin_id, -qty, "move", reference, actor)
+    _ledger(db, item.store_id, item.sku_id, to_bin.id, +qty, "move", reference, actor)
+    return target
 
 
 def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin_id: int | None = None,
@@ -388,7 +499,7 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
             item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no="ADJ",
                              expiry_date=date.today() + timedelta(days=sku.shelf_life_days), qty=0)
             db.add(item)
-        item.qty += delta
+        _change_item_qty(db, item, delta)
         _ledger(db, store_id, sku_id, bin_id, delta, reason, reference, actor)
     else:
         to_remove = -delta
@@ -420,10 +531,9 @@ def _remove_from_item(db: Session, item: StockItem, qty: int, reason: str, refer
                       change_on_hand: bool = True) -> None:
     """Take `qty` units out of one exact batch in one bin and write the ledger row. With `change_on_hand=False` the
     caller lowers StockLevel itself (once, for several items). Does not commit."""
-    item.qty -= qty
+    _change_item_qty(db, item, -qty)
     _ledger(db, item.store_id, item.sku_id, item.bin_id, -qty, reason, reference, actor)
     if change_on_hand:
-        db.flush()
         _change_on_hand(db, item.store_id, item.sku_id, -qty)
 
 
@@ -511,8 +621,7 @@ def commit_sale(db: Session, task: PickTask, reference: str, actor: str) -> None
     item = task.stock_item
     if item is None or item.qty < task.qty:
         raise DomainError(409, "stock_mismatch", f"Bin no longer holds {task.qty} units for task {task.id}")
-    item.qty -= task.qty
-    db.flush()
+    _change_item_qty(db, item, -task.qty)
     _change_on_hand(db, item.store_id, task.sku_id, -task.qty, reserved_delta=-task.qty)
     _ledger(db, item.store_id, task.sku_id, item.bin_id, -task.qty, "sale", reference, actor)
 
@@ -523,13 +632,24 @@ def write_off_missing(db: Session, item: StockItem, qty: int, reference: str, ac
     take = min(item.qty, qty)
     if take <= 0:
         return
-    item.qty -= take
-    db.flush()
+    _change_item_qty(db, item, -take)
     _change_on_hand(db, item.store_id, item.sku_id, -take)
     _ledger(db, item.store_id, item.sku_id, item.bin_id, -take, "not_found", reference, actor)
 
 
 # --------------------------------------------------------------------------- allocation (FEFO, FR-10)
+
+
+def _promised(db: Session, item: StockItem) -> int:
+    """Units of this batch promised to an order that is not packed yet: lines still to pick, and lines already
+    scanned into a tote (they only leave item.qty when the order is packed)."""
+    return db.scalar(
+        select(func.coalesce(func.sum(PickTask.qty), 0))
+        .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
+        .where(PickTask.stock_item_id == item.id,
+               PickTask.status.in_(TOTE_STATUSES),
+               FulfilmentJob.state.in_(("created", "picking")))
+    )
 
 
 def allocate(db: Session, store_id: int, sku_id: int, qty: int,
@@ -555,22 +675,59 @@ def allocate(db: Session, store_id: int, sku_id: int, qty: int,
             break
         if item.id in exclude_item_ids:
             continue
-        # Units promised to an order that is not packed yet: lines still to pick, and lines
-        # already scanned into a tote (they only leave item.qty when the order is packed).
-        promised = db.scalar(
-            select(func.coalesce(func.sum(PickTask.qty), 0))
-            .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)
-            .where(PickTask.stock_item_id == item.id,
-                   PickTask.status.in_(("pending", "picked")),
-                   FulfilmentJob.state.in_(("created", "picking")))
-        )
-        free = item.qty - promised
+        free = item.qty - _promised(db, item)
         if free <= 0:
             continue
         take = min(free, remaining)
         picks.append((item, take))
         remaining -= take
     return picks, remaining
+
+
+# --------------------------------------------------------------------------- stock audit (task 1.8)
+
+
+def audit(db: Session, store_id: int | None = None) -> list[dict]:
+    """Check that the three records of stock agree, for every store and SKU (or one store). Read-only.
+
+    Returns one entry per (store, SKU) that breaks a rule, with the values and the rules broken in `problems`:
+      on_hand_vs_bins        StockLevel.qty_on_hand is not the sum of StockItem.qty
+      on_hand_vs_ledger      StockLevel.qty_on_hand is not the sum of StockLedger.delta
+      negative_on_hand       fewer than 0 units on hand
+      negative_reserved      fewer than 0 units held
+      reserved_over_on_hand  more units held than exist (normal only between an expiry write-off and the picker
+                             reaching that line, see `expire_stock`)
+    An empty list means stock is consistent."""
+    def totals(table, column) -> dict[tuple[int, int], int]:
+        query = select(table.store_id, table.sku_id, func.coalesce(func.sum(column), 0)) \
+            .group_by(table.store_id, table.sku_id)
+        if store_id is not None:
+            query = query.where(table.store_id == store_id)
+        return {(store, sku): int(total) for store, sku, total in db.execute(query)}
+
+    if store_id is not None:
+        get_store(db, store_id)
+    in_bins, in_ledger = totals(StockItem, StockItem.qty), totals(StockLedger, StockLedger.delta)
+    query = select(StockLevel.store_id, StockLevel.sku_id, StockLevel.qty_on_hand, StockLevel.qty_reserved)
+    if store_id is not None:
+        query = query.where(StockLevel.store_id == store_id)
+    levels = {(store, sku): (on_hand, reserved) for store, sku, on_hand, reserved in db.execute(query)}
+
+    mismatches = []
+    for key in sorted(levels.keys() | in_bins.keys() | in_ledger.keys()):
+        on_hand, reserved = levels.get(key, (0, 0))      # stock recorded for a SKU with no StockLevel row counts as 0
+        bins, ledger_sum = in_bins.get(key, 0), in_ledger.get(key, 0)
+        problems = [name for name, broken in (
+            ("on_hand_vs_bins", on_hand != bins),
+            ("on_hand_vs_ledger", on_hand != ledger_sum),
+            ("negative_on_hand", on_hand < 0),
+            ("negative_reserved", reserved < 0),
+            ("reserved_over_on_hand", reserved > on_hand),
+        ) if broken]
+        if problems:
+            mismatches.append({"store_id": key[0], "sku_id": key[1], "problems": problems, "on_hand": on_hand,
+                               "in_bins": bins, "in_ledger": ledger_sum, "reserved": reserved})
+    return mismatches
 
 
 # --------------------------------------------------------------------------- read models for the ops screen

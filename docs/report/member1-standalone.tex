@@ -1,0 +1,19 @@
+% Compiles Member 1's report sections on their own:
+%   cd docs/report && pdflatex member1-standalone.tex   (run twice for the table numbers)
+% In the team report, add these packages to its preamble and \input{member1-inventory} where the sections go.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+
+\title{Inventory and stock integrity\\\large Report sections, Member 1}
+\author{}
+\date{21 November 2026}
+
+\begin{document}
+\maketitle
+\input{member1-inventory}
+\end{document}

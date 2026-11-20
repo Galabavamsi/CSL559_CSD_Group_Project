@@ -1,4 +1,4 @@
-.PHONY: install run test reset
+.PHONY: install run test reset migration migrate
 
 install:
 	pip install -r requirements.txt
@@ -11,3 +11,10 @@ test:
 
 reset:
 	python -m app.seed
+
+# After editing app/models.py:  make migration m="add shelf_life to bins"   then   make migrate
+migration:
+	python -m alembic revision --autogenerate -m "$(m)"
+
+migrate:
+	python -m alembic upgrade head

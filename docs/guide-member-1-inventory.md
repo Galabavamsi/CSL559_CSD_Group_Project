@@ -35,6 +35,9 @@ Open `app/modules/inventory/service.py` and read it top to bottom once (about 15
 | `write_off_missing` | Pick & Pack (Member 2) | Corrects the count when a shelf is empty | no |
 | `unreserve` | Members 2 and 1 | Gives a quantity back to ATP | no |
 | `allocate` | Fulfilment (Member 2) | Chooses bins: first expiry first, then nearest | read only |
+| `swap_line` | Pick & Pack (Member 2, task 2.4) | Holds a substitute and rewrites the order's lines | no |
+| `move` | Slotting (Member 3, task 3.6) | Moves units of a batch to another bin; two `move` ledger rows | no |
+| `audit` | `GET /v1/admin/stock-audit`, the tests | Lists every store and SKU whose level, bins and ledger disagree | read only |
 
 ### Try it by hand
 

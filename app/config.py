@@ -1,8 +1,28 @@
 """All tunable settings in one place. Override any of them with environment variables."""
 import os
 
-# Database. SQLite keeps the prototype zero-setup; the HLD target is PostgreSQL sharded by store_id.
-DATABASE_URL = os.getenv("DARKSTORE_DB", "sqlite:///./darkstore.db")
+# Database. SQLite keeps local runs zero-setup; set DARKSTORE_DB to a PostgreSQL URL for the HLD's database
+# (task 1.7), e.g. postgresql://darkstore:darkstore@localhost:5432/darkstore. Sharding by store_id is design only.
+
+
+def _database_url(url: str) -> str:
+    """Hosted databases hand out postgres://... or postgresql://... URLs, which SQLAlchemy would open with a driver
+    this project does not install. Point them at psycopg 3, the one in requirements.txt."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = _database_url(os.getenv("DARKSTORE_DB", "sqlite:///./darkstore.db"))
+# Database connections kept open per app process, and how many more may be opened in a burst.
+# Keep the sum at 40 or more: the web server answers up to 40 requests at once, each on its own thread and each
+# with one connection. With fewer connections than threads, threads wait for a connection while the finished
+# requests that would give one back wait for a thread, and everything stalls for 30 s (seen with 200 buyers at once
+# in scripts/load_checkout.py). On PostgreSQL also keep the sum x app processes below max_connections (100 by
+# default, fewer on the smallest hosted instances).
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
+DB_POOL_OVERFLOW = int(os.getenv("DB_POOL_OVERFLOW", "40"))
 
 # Login (HLD 10). The default secret is fake and public: always set JWT_SECRET outside local development.
 DEFAULT_JWT_SECRET = "dev-only-change-me-not-a-real-secret"

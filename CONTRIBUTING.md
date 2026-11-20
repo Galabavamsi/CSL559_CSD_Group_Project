@@ -51,15 +51,35 @@ python -m pytest -q                                   # every test must pass bef
 
 ## When you change the database tables
 
-The prototype creates tables on start-up but does not migrate them. After editing `app/models.py`:
+Table changes are migrations (Alembic), so an existing database, including the hosted one, is
+changed in place and keeps its data. After editing `app/models.py`, two commands:
 
 ```bash
-rm darkstore.db          # Windows: del darkstore.db
-python -m uvicorn app.main:app --reload      # recreates tables and demo data
+python -m alembic revision --autogenerate -m "add shelf_life to bins"   # writes migrations/versions/<id>_....py
+python -m alembic upgrade head                                           # applies it to your database
 ```
 
-Say in your pull request that the database must be recreated. (Member 1 has a task to add real
-migrations; after that this section changes.)
+1. **Read the new file before you commit it.** Autogenerate sees added and removed tables, columns
+   and indexes. It cannot tell a rename from a drop plus an add (edit it to `alter_column` /
+   `rename_table`, or the data in that column is lost), and it does not fill a new required column
+   for rows that already exist (give it a `server_default`, or add it as nullable).
+2. **Commit the migration in the same pull request as the model change.**
+   `tests/test_migrations.py` fails when `models.py` and the migrations disagree.
+3. **Nobody has to delete `darkstore.db` any more.** The app runs `upgrade head` itself when it
+   starts, so pulling `main` and restarting is enough. A new, empty database gets its tables
+   straight from `models.py`.
+
+Both commands use the database in `DARKSTORE_DB` (default: `./darkstore.db`). The tests rebuild
+their tables from `models.py` before every test, so they never need a migration to be run.
+
+To run the tests on PostgreSQL instead of SQLite (every table in that database is dropped first):
+
+```bash
+docker compose --profile postgres up -d postgres
+DARKSTORE_TEST_DB=postgresql://darkstore:darkstore@localhost:5432/darkstore python -m pytest -q
+```
+
+CI runs the suite on both.
 
 ## Code style
 

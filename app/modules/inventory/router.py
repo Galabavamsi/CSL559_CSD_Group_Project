@@ -126,6 +126,16 @@ def expire_stock(store_id: int | None = Query(None, description="Omit for every 
     return {"units_written_off": service.expire_stock(db, store_id)}
 
 
+@router.get("/v1/admin/stock-audit", dependencies=[Depends(require_role("admin"))],
+            summary="Check that stock levels, bins and the ledger agree")
+def stock_audit(store_id: int | None = Query(None, description="Omit for every store"),
+                db: Session = Depends(get_db)):
+    """`mismatches` has one entry per store and SKU whose records disagree; an empty list means stock is consistent.
+    Run it after a load test (scripts/load_checkout.py does)."""
+    mismatches = service.audit(db, store_id)
+    return {"consistent": not mismatches, "mismatches": mismatches}
+
+
 @router.get("/v1/stores/{store_id}/near-expiry", summary="Batches that expire within the next few days")
 def read_near_expiry(store_id: int, days: int = Query(2, ge=0, le=30, description="0 means expiring today"),
                      db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
