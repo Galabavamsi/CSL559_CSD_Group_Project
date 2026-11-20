@@ -173,7 +173,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | HLD | Prototype | Who closes the gap |
 | --- | --- | --- |
 | PostgreSQL sharded by `store_id` | One SQLite file | Member 1 (PostgreSQL), sharding stays a design-only topic |
-| Redis ATP cache | Reads hit the database | Member 1 |
+| Redis ATP cache | Each store's availability list kept in process for `ATP_CACHE_SECONDS` (2), cleared on every stock write (`app/cache.py`); holds never read it | Member 1: done in process; a shared Redis would serve several instances |
 | Kafka | `event_log` outbox + in-process handlers; a relay in the app sends events to sinks (the live feed) | Member 4: done as far as the prototype goes; a Kafka producer would be one more sink |
 | API gateway, JWT, roles | Signed tokens, roles and own-store checks on every staff endpoint; audit log; a per-client rate limit on the open endpoints (`app/rate_limit.py`); no separate gateway | Member 4: done, except the gateway itself |
 | H3 delivery zones | H3 cells (resolution 9) mapped to stores | Member 4: done |
@@ -197,6 +197,7 @@ serves them):
 | `reservations_total` | counter | result: `held`, `insufficient_stock` | `inventory.reserve` |
 | `events_published_total` | counter | event type | `events.publish` |
 | `scans_total` | counter | result: `match`, `mismatch` | `pickpack.scan` |
+| `atp_cache_lookups_total` | counter | result: `hit`, `miss` | `inventory.availability`, whole-store list only |
 | `holds_in_progress` | gauge | | read from the database at scrape time |
 | `outbox_lag_seconds` | gauge | | read at scrape time; same number as the dashboard tile |
 | `store_seconds_since_last_event` | gauge | store id | read at scrape time |
