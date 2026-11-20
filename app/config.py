@@ -10,6 +10,10 @@ JWT_SECRET = os.getenv("JWT_SECRET", DEFAULT_JWT_SECRET)
 TOKEN_MINUTES = int(os.getenv("TOKEN_MINUTES", "30"))
 # Password of every seeded demo account (picker1, manager1, admin, ...). The demo screens log in with it.
 DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo")
+# The shared hosted copy: Reset demo data also writes the 60-day sales history and the delivery lookups that the demo
+# script otherwise adds by hand (scripts/generate_sales.py, generate_demand.py). Off by default, so the tests and a
+# laptop demo start from the plain seed.
+DEMO_HISTORY_ON_RESET = os.getenv("DEMO_HISTORY_ON_RESET", "off") == "on"
 
 # Inventory: how long a checkout hold lasts before the sweeper releases it (HLD 9.1).
 RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))

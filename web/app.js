@@ -60,7 +60,9 @@ function renderProducts() {
       const qty = state.cart[p.sku_id] || 0;
       const left = el("span", { className: p.atp <= 5 ? "few" : "" }, `${p.atp} left`);
       const minus = el("button", { className: "btn btn-small", textContent: "−", disabled: locked || qty === 0 });
-      const plus = el("button", { className: "btn btn-small", textContent: "+", disabled: locked });
+      // No more than the store can sell: a cart over the stock shown would only be refused at checkout.
+      const plus = el("button", { className: "btn btn-small", textContent: "+", disabled: locked || qty >= p.atp,
+                                  title: qty >= p.atp ? `Only ${p.atp} left` : "" });
       minus.setAttribute("aria-label", `Remove one ${p.name}`);
       plus.setAttribute("aria-label", `Add one ${p.name}`);
       minus.onclick = () => changeCart(p.sku_id, -1);
@@ -498,7 +500,7 @@ async function sweepHolds() {
 }
 
 async function resetDemo() {
-  if (!window.confirm("Reset all demo data? Every order, hold and stock change will be wiped.")) return;
+  if (!window.confirm("Reset all demo data for everyone using this copy? Every order, hold and stock change will be wiped.")) return;
   await api("POST", "/v1/admin/reset", undefined, ADMIN);
   clearHold();
   state.cart = {};
