@@ -129,6 +129,10 @@ select, input {
 .stepper { display: inline-flex; align-items: center; gap: 0.4rem; }
 .stepper span { min-width: 1.5ch; text-align: center; font-variant-numeric: tabular-nums; }
 .cart-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-top: 0.75rem; font-weight: 500; }
+/* Checkout stays in reach while the list scrolls, which matters most on a phone. */
+.cart-bar { position: sticky; bottom: 0; z-index: 1; background: var(--surface); padding: 0.6rem 0; border-top: 1px solid var(--line); }
+#location-select { flex: 1 1 100%; }   /* the whole address shows; the button wraps under it */
+#tiles:empty::before { content: "Loading…"; color: var(--ink-soft); }
 
 .hold { background: var(--hold-wash); border-left: 4px solid var(--hold); padding: 0.75rem; border-radius: 0 var(--radius) var(--radius) 0; }
 .hold .row { margin-top: 0.6rem; }
