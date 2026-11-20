@@ -4,10 +4,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
+from sqlalchemy import select
+
 from app import background, config
 from app.db import SessionLocal
 from app.errors import DomainError
-from app.models import Reservation, utcnow
+from app.models import Reservation, StockItem, utcnow
 from app.modules.inventory import service as inventory
 
 from .conftest import assert_stock_is_consistent, atp
@@ -290,3 +292,20 @@ def test_confirm_after_the_sweeper_won_says_expired(client, db, sku):
     paid = client.post(f"/v1/reservations/{rid}/confirm")
     assert paid.status_code == 409 and paid.json()["error"]["code"] == "not_held"
     assert atp(client, 1, rice) == 30
+
+
+def test_two_sessions_taking_from_the_same_bin_both_count(db, sku):
+    """Two packers read the same bin at 30 units, then each takes one. The second must not write back 29 from its old
+    reading: the change is made inside the database, so the bin ends at 28 (PostgreSQL would otherwise lose one)."""
+    rice = sku("Basmati rice")
+    in_bin = select(StockItem).where(StockItem.store_id == 1, StockItem.sku_id == rice)
+    with SessionLocal() as first, SessionLocal() as second:
+        seen_by_first, seen_by_second = first.scalar(in_bin), second.scalar(in_bin)
+        second.commit()                                   # ends its read; it still remembers 30
+        inventory.write_off_missing(first, seen_by_first, 1, "test", "packer-1")
+        first.commit()
+        inventory.write_off_missing(second, seen_by_second, 1, "test", "packer-2")
+        second.commit()
+
+    assert db.scalar(in_bin).qty == 28
+    assert_stock_is_consistent()

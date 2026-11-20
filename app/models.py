@@ -150,7 +150,7 @@ class StockLedger(Base):
     sku_id: Mapped[int] = mapped_column(Integer, index=True)
     bin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delta: Mapped[int] = mapped_column(Integer)                       # + stock in, - stock out
-    reason: Mapped[str] = mapped_column(String(30))                   # receipt | sale | damage | expiry | theft | count | not_found
+    reason: Mapped[str] = mapped_column(String(30))                   # receipt | sale | damage | expiry | theft | count | not_found | move
     reference: Mapped[str | None] = mapped_column(String(60), nullable=True)
     actor: Mapped[str] = mapped_column(String(40), default="system")
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

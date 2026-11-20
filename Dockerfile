@@ -2,6 +2,8 @@ FROM python:3.12-slim
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY alembic.ini .
+COPY migrations migrations
 COPY app app
 COPY web web
 # Run as a non-root user; /data holds the SQLite file when started through docker compose.

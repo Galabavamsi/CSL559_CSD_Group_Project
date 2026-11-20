@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import config
 from .auth import hash_password
-from .db import Base, SessionLocal, engine
+from .db import SessionLocal, recreate_tables
 from .models import SKU, Bin, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
 from .modules.serviceability import service as serviceability
 
@@ -182,8 +182,7 @@ def seed_if_empty(db: Session) -> bool:
 
 def reset() -> None:
     """Wipe the database and load the demo data again."""
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    recreate_tables()
     with SessionLocal() as db:
         seed(db)
 
