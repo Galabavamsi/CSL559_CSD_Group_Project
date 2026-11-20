@@ -1,0 +1,17 @@
+% Compiles Member 4's report sections on their own:
+%   cd docs/report && pdflatex member4-standalone.tex   (run twice for the table numbers)
+% In the team report, add these packages to its preamble and \input{member4-platform} where the sections go.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+
+\title{Platform\\\large Report sections, Member 4}
+\author{}
+\date{21 November 2026}
+
+\begin{document}
+\maketitle
+\input{member4-platform}
+\end{document}

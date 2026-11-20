@@ -1,0 +1,330 @@
+% Member 4 report sections: platform (HLD 4 architecture, HLD 5 services 1 and 10, HLD 8 API and events,
+% HLD 10 security, HLD 11 tech stack, HLD 12 monitoring, one HLD 13 trade-off).
+% Body only, so the team report can \input{member4-platform}. Needs: array, booktabs.
+% member4-standalone.tex compiles these sections on their own. Numbers measured on main (b39692e), 21 November 2026.
+
+\section{Architecture (HLD 4)}
+
+The prototype is a \emph{modular monolith}: one FastAPI process that runs all eleven HLD services as eleven Python
+packages under \texttt{app/modules/}. HLD 13.1 recommends this for a student build, and it keeps the HLD's service
+boundaries, so each package can later move to its own process without a redesign. Every package has the same two
+files: \texttt{service.py} holds the business logic as plain functions whose first argument is the database session,
+and \texttt{router.py} holds the HTTP endpoints, which parse the input, call one service function and shape the
+answer. Because the logic never touches HTTP, modules call each other directly and tests can call the logic without
+a server.
+
+Three rules hold the system together:
+\begin{itemize}
+  \item \textbf{One owner for stock.} Only the inventory module changes stock quantities: what is on hand, what is
+    held and which bin it is in. Other modules ask it to hold, release, sell, receive or write off stock; forecasting
+    and replenishment only set an item's reorder settings.
+  \item \textbf{Hold at checkout, sell at packing.} Checkout raises \texttt{qty\_reserved}; nothing leaves
+    \texttt{qty\_on\_hand} until the order is packed. A failed payment or a cancel only gives a hold back, so no stock
+    count ever has to be ``put back''.
+  \item \textbf{Check and change in one statement.} Every contested change is one conditional \texttt{UPDATE} with
+    the check in its \texttt{WHERE} clause, so two requests can never both pass a check that only one of them should.
+    The checkout hold, for example:
+    \begin{center}\small
+      \verb|UPDATE stock_levels SET qty_reserved = qty_reserved + :qty|\\
+      \verb|WHERE store_id = :store AND sku_id = :sku AND qty_on_hand - qty_reserved >= :qty|
+    \end{center}
+\end{itemize}
+
+Table~\ref{tab:hld-vs-prototype} lists where the prototype stands in for an HLD component.
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.2\linewidth}>{\raggedright\arraybackslash}p{0.44\linewidth}
+                  >{\raggedright\arraybackslash}p{0.3\linewidth}@{}}
+    \toprule
+    HLD component & In the prototype & What a full build adds \\
+    \midrule
+    API gateway & The FastAPI app itself: login, roles, own-store checks, audit log, rate limit & A separate gateway
+      with TLS and mutual TLS between services \\
+    \addlinespace[3pt]
+    PostgreSQL, sharded by store & One SQLite file (WAL mode), all stores in one database & PostgreSQL and
+      migrations (task 1.7); sharding by \texttt{store\_id} \\
+    \addlinespace[3pt]
+    Redis ATP cache & A 2-second in-process cache of each store's availability list, cleared on every stock write
+      & A shared Redis, so several app instances see one copy \\
+    \addlinespace[3pt]
+    Kafka & A transactional outbox (\texttt{event\_log}) and a relay inside the app that feeds each store's live feed
+      & A Kafka producer as one more relay sink (section~\ref{sec:m4-tradeoff}) \\
+    \addlinespace[3pt]
+    Store edge node & A design note and an outage experiment (\texttt{docs/EDGE\_NODE.md}) & A second copy of the
+      app in each store, syncing through the same relay \\
+    \addlinespace[3pt]
+    Prometheus, Grafana & Both, in Docker Compose, with the HLD 12 alert rules & An Alertmanager to send the
+      alerts somewhere \\
+    \bottomrule
+  \end{tabular}
+  \caption{HLD components and their stand-ins in the prototype.}
+  \label{tab:hld-vs-prototype}
+\end{table}
+
+\section{Serviceability (HLD 5, service 1)}
+
+Serviceability answers ``which store delivers here, and how fast?'' for every address a customer types, so it must
+be cheap. Delivery zones are H3 hexagon cells at resolution 9: cells with edges of about 0.2\,km, so a zone border is
+accurate to about 200\,m and a 3\,km zone is about 270 cells.
+\begin{itemize}
+  \item \textbf{Zones are built once.} \texttt{rebuild\_zones} gives each store every cell whose centre lies within its
+    radius; where two stores claim a cell, the nearer one wins. The result is one row per cell.
+  \item \textbf{A lookup is one row.} \texttt{check} turns the customer's point into its cell and reads that cell's
+    row, instead of measuring the distance to every store.
+  \item \textbf{Load shapes the answer.} A closed store serves nobody. A busy store (more than 5 unpacked orders)
+    serves only the inner 70\% of its radius and quotes 5 minutes more. The ETA is 2 minutes to pack plus 3 minutes
+    per kilometre, rounded up.
+  \item \textbf{A miss is recorded.} A point no store serves is saved as its cell and the time, nothing else. These
+    misses are the demand that network planning works from.
+\end{itemize}
+Under load (section~\ref{sec:m4-monitoring}) a serviceability check took 10.7\,ms at the median and 26.1\,ms at p99.
+
+\section{Network Planning (HLD 5, service 10)}
+
+Network Planning answers ``where should the next dark store go?'' (FR-12). It counts demand per H3 cell, never as a
+name, phone number or exact address: a paid order carries the cell of its delivery address, and a turned-away
+lookup is a miss. \texttt{GET /v1/network-planning/heatmap} returns both counts per cell over the last 30 days, and
+the map at \texttt{/network.html} draws them over the current zones.
+
+\texttt{suggest\_sites} chooses up to $k$ new sites by \emph{greedy maximum coverage} of the unmet demand. The
+candidates are the cells with misses, except cells inside an existing zone and the cells listed in
+\texttt{NO\_GO\_CELLS} (standing in for the zoning check of HLD 13.2). Each round picks the candidate whose 3\,km
+radius covers the most unmet demand, breaking ties towards the more central site, then removes that demand and
+repeats. It stops early when no candidate would gain anything. Greedy maximum coverage is guaranteed to cover at
+least $1 - 1/e \approx 63\%$ of what the best choice of $k$ sites from the same candidates would cover. Only the 300
+busiest miss cells are tried as sites, which bounds the work however many misses pile up.
+
+\section{API and events (HLD 8)}
+
+The API has 63 operations on 61 paths, all versioned under \texttt{/v1/} except \texttt{/health}, and documented by
+OpenAPI at \texttt{/docs}.
+Table~\ref{tab:api} groups them by service. They follow four conventions:
+\begin{itemize}
+  \item \textbf{One error shape.} Every refusal is \verb|{"error": {"code", "message", "details"}}|, with 409 when
+    the request is valid but the current state forbids it (not enough stock, wrong job state), 422 for bad input and
+    404 for something that does not exist. The code is stable, so a screen can react to it.
+  \item \textbf{Order steps are safe to repeat.} Paying, packing, cancelling and handing over check the current state
+    in the same conditional update, so a repeated call reports the state instead of acting twice. Stock adjustments
+    take an \texttt{Idempotency-Key} header. A repeated hold or scan is not deduplicated: it holds or scans again.
+  \item \textbf{Staff calls carry a token}; the customer calls (serviceability, availability, checkout) are open but
+    rate-limited (section~\ref{sec:m4-security}).
+  \item \textbf{Every response has a request id} (\texttt{X-Request-ID}), which also appears on every log line made
+    while the request was handled.
+\end{itemize}
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}lrl@{}}
+    \toprule
+    Service & Operations & Examples \\
+    \midrule
+    Inventory           & 19 & availability, holds, adjustments, cycle counts, near-expiry \\
+    Fulfilment          &  8 & cancel, handover, rider check-in, metrics, attention list \\
+    Pick \& Pack        &  5 & next order or batch, scan, empty shelf, pack \\
+    Replenishment       &  5 & run, dispatch, reorder settings \\
+    Assortment          &  5 & catalogue, recommendations \\
+    Forecasting         &  4 & run, compare models \\
+    Dashboard           &  4 & store dashboard, city overview, KPIs, events \\
+    Serviceability      &  3 & check, stores, rebuild zones \\
+    Network planning    &  3 & heatmap, suggestions, coverage \\
+    Admin               &  3 & reset demo data, audit log, health check \\
+    Slotting, inbound, login & 4 & bins, suggest a bin, goods receipt, login \\
+    \bottomrule
+  \end{tabular}
+  \caption{API operations by service.}
+  \label{tab:api}
+\end{table}
+
+\paragraph{Events.} The code publishes 17 event types, such as \texttt{order.paid} when a customer pays and
+\texttt{rider.assigned} when a bag is packed. Publishing writes the event to the \texttt{event\_log} table
+\emph{inside the caller's transaction} and calls the subscribed handlers in that same transaction: this is
+the transactional outbox of HLD 9.2. If the stock change rolls back, the event never existed;
+if it commits, the event is stored. A relay inside the app reads unsent events every 0.2\,s, oldest first, up to 100
+at a time, and hands each one to every sink. Today the only sink is the live feed: a WebSocket per store, so every
+screen of that store sees an order paid or a line dropped within a second, without polling. An event is marked sent
+only after every sink took it, so delivery is \emph{at least once}, and a consumer must ignore an event id it has
+already seen.
+
+\section{Security (HLD 10)}
+\label{sec:m4-security}
+
+\begin{itemize}
+  \item \textbf{Passwords} are stored as salted scrypt hashes and compared in constant time; none is stored as typed.
+  \item \textbf{Login} returns a signed token (JWT, HS256) that lasts 30 minutes and names the user, their role and
+    their store. Six roles exist: picker, packer, receiver, manager, ops and admin.
+  \item \textbf{Every staff endpoint} checks the role and, for store data, that the store is the caller's own:
+    a picker of store 1 gets 403 for store 2. Ops may read every store, and \texttt{/v1/admin/} needs admin.
+  \item \textbf{An audit log} keeps every call a logged-in user makes to a protected endpoint, refused or not: who,
+    what (method, route and path), the status they got and the request id. An admin reads it at
+    \texttt{GET /v1/audit}.
+  \item \textbf{The open customer endpoints are rate-limited} per client address by a token bucket: 20 calls a second
+    with bursts of 40, then 429 with a \texttt{Retry-After} header. This also limits how fast a caller can flood
+    network planning with made-up misses.
+  \item \textbf{Privacy.} Demand is kept as H3 cells, about 0.1\,km$^2$ each, so the planning data names no customer
+    and no exact address. \texttt{/metrics} can be closed with \texttt{METRICS\_TOKEN}.
+\end{itemize}
+The limits are listed in Table~\ref{tab:m4-limits}: the built-in signing key and the shared demo password are public
+for local development (the app warns about the key at start), a token cannot be revoked before it expires, and the
+rate limit is
+counted per process.
+
+\section{Tech stack (HLD 11)}
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.4\linewidth}
+                  >{\raggedright\arraybackslash}p{0.32\linewidth}@{}}
+    \toprule
+    Layer & Used & Why \\
+    \midrule
+    Language, web & Python 3.12, FastAPI, Uvicorn, Pydantic & Async server, validation and OpenAPI docs for free \\
+    Data & SQLAlchemy 2 on SQLite (WAL) & Runs anywhere in one file; the same ORM code moves to PostgreSQL \\
+    Geography & H3 (\texttt{h3} 4) & Equal-area hexagons make zones and demand one indexed lookup \\
+    Login & PyJWT, scrypt from the standard library & No extra service for a prototype \\
+    Monitoring & \texttt{prometheus-client}, Prometheus 2.53, Grafana 11.1 & The HLD's choice; one Compose profile \\
+    Screens & HTML, CSS and JavaScript, no build step; Leaflet for the map & Anyone can read and change them \\
+    Delivery & Docker (\texttt{python:3.12-slim}), Docker Compose, GitHub Actions & One command to run; every pull
+      request runs the tests \\
+    Tests & pytest, httpx & 291 tests, including a race of twenty buyers for the last unit \\
+    \bottomrule
+  \end{tabular}
+  \caption{Tech stack of the prototype.}
+  \label{tab:stack}
+\end{table}
+
+The main swaps against the HLD's stack are SQLite for PostgreSQL, the outbox for Kafka and an in-process cache for
+Redis (Table~\ref{tab:hld-vs-prototype}). Each sits behind an interface the full component can take over (the ORM, a
+relay sink, a cache with get, set and delete), so swapping one should not need changes inside the services.
+
+\section{Monitoring (HLD 12)}
+\label{sec:m4-monitoring}
+
+\texttt{GET /metrics} is a Prometheus scrape target with eight metrics: request time per route (a histogram, labelled
+with the route template so the series do not grow with the number of stores), checkout holds by result, events
+published by type, scans by result, cache lookups by hit or miss, holds in progress, the outbox lag and each store's
+time since its last event. The app logs one JSON object per line with the request id. With
+\texttt{docker compose --profile monitoring up}, Prometheus scrapes the app every 5\,s and evaluates the HLD 12
+alert rules (Table~\ref{tab:alerts}), and Grafana opens on a dashboard of the same numbers. The ops page shows the
+store view: problems first (stalled orders, bags waiting too long for a rider, items out of stock), then eleven KPI
+cards, each beside its target and marked met or not met.
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.68\linewidth}@{}}
+    \toprule
+    Alert & Fires when \\
+    \midrule
+    Failed holds spike & More than 20\% of checkout holds fail over 5 minutes \\
+    Event lag & The oldest unsent event is older than 30\,s for a minute \\
+    Slow reads & The p99 of any read route is above the 100\,ms target \\
+    Store offline & A store has published nothing for 15 minutes \\
+    Cache and database disagree & Waits for the stock audit (task 1.8); not wired up \\
+    \bottomrule
+  \end{tabular}
+  \caption{HLD 12 alert rules, in \texttt{monitoring/alerts.yml}. The thresholds are first guesses to tune with real
+    traffic.}
+  \label{tab:alerts}
+\end{table}
+
+\paragraph{Load test.} \texttt{scripts/load\_test.py} sends the HLD's mix: about 90\% reads and 10\% checkout holds,
+a fifth of them paid and the rest released. Eight clients ran for 60\,s against one laptop, with the rate limit off
+(Table~\ref{tab:load}). Reads met the 100\,ms target with room to spare. No call failed: the 189 refused holds are
+the store correctly running out of stock. The outbox lag stayed at 0.2\,s, one relay pass.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Endpoint & Calls & Per second & p50 (ms) & p99 (ms) \\
+    \midrule
+    Availability (read)   & 8{,}494 & 141.6 & 18.2 &  89.9 \\
+    Serviceability (read) & 8{,}640 & 144.0 & 10.7 &  26.1 \\
+    Hold                  & 1{,}918 &  32.0 & 22.0 & 142.9 \\
+    Payment               &     313 &   5.2 & 36.5 & 121.7 \\
+    Release               & 1{,}416 &  23.6 & 18.1 & 142.8 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Load test: 8 clients for 60\,s, SQLite on one laptop, main at b39692e. No 5xx; 189 holds refused for
+    lack of stock.}
+  \label{tab:load}
+\end{table}
+
+What the numbers say, and what they do not:
+\begin{itemize}
+  \item The cache served 51\% of availability reads. This mix sends one stock write for about every two availability
+    reads, and each write clears the store's entry; Member 1's benchmark at the HLD's 13 reads per write measured
+    92\%.
+  \item Writes are slower than reads because SQLite lets one writer in at a time. Under an earlier load test the
+    picker's \texttt{next-task}, which claims an order and so writes, reached a p99 of 250--500\,ms. PostgreSQL's row
+    locks would let writes to different stores proceed side by side.
+  \item This is one laptop, not the HLD's cluster: the numbers show where the time goes, not what production would
+    do.
+\end{itemize}
+
+\section{Trade-off: a transactional outbox instead of Kafka (HLD 13)}
+\label{sec:m4-tradeoff}
+
+The HLD sends events through Kafka. The prototype writes each event to a table in the same transaction as the change
+that caused it, and a relay inside the app delivers it.
+
+\textbf{What it gains.} An event exists if and only if its change committed: no event announces a hold that was
+rolled back, and no committed sale goes unannounced. That is the hard part of using Kafka well, and the outbox gets
+it from one database transaction. It needs no broker to run or operate, and under load the lag stayed at one relay
+pass (0.2\,s).
+
+\textbf{What it costs.}
+\begin{itemize}
+  \item \textbf{At least once, not exactly once.} A sink that fails gets the batch again, so consumers must ignore an
+    event id they have seen. The edge-node experiment checks both cases (\texttt{tests/test\_edge\_node.py}). With
+    the link down, 7 events queued; once it was back, all 7 arrived in order, once each. A crash after sending
+    delivered a batch twice, and the receiver kept each event once.
+  \item \textbf{One relay, inside the app.} If the app is down, nothing is relayed; but nothing changes either, and
+    the backlog drains on restart.
+  \item \textbf{One database.} The outbox shares SQLite's single writer, and \texttt{event\_log} is never pruned.
+    Replay for a new consumer means reading the table, not rewinding a topic.
+\end{itemize}
+
+\textbf{When to switch.} A Kafka producer is one more sink (\texttt{events.add\_sink}), so the outbox would stay as
+the reliable hand-off and Kafka would carry events to other services. That is worth it once several services
+consume events or the stores move to edge nodes.
+
+\section{Limits and open items}
+
+\begin{table}[!htb]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}
+                  >{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+    \toprule
+    Limit & What it means & Next step \\
+    \midrule
+    No separate gateway, no TLS & The app does the gateway's work itself & A gateway in front, TLS everywhere \\
+    \addlinespace[3pt]
+    One shared signing key (HS256) & Whoever can check a token can also make one & Asymmetric signing, needed
+      anyway for edge nodes \\
+    \addlinespace[3pt]
+    Tokens cannot be revoked & A stolen token works until it expires (30 minutes) & Short tokens with refresh, or a
+      deny list \\
+    \addlinespace[3pt]
+    Rate limit per process and per address & Several instances or a proxy share or split the buckets & Move it to
+      the gateway or Redis \\
+    \addlinespace[3pt]
+    Audit log never pruned & It grows with every staff call & Keep a set period, then archive \\
+    \addlinespace[3pt]
+    Zones rebuilt by hand; one store per cell & A busy store's outer customers are not passed to a neighbour & Let a
+      cell list a second store \\
+    \addlinespace[3pt]
+    Demand is generated & The map and the site suggestions run on scripted orders & Real order history \\
+    \addlinespace[3pt]
+    No Alertmanager & Alerts show only on Prometheus's page & Route them to the on-call channel \\
+    \bottomrule
+  \end{tabular}
+  \caption{Limits of the platform pieces and what would close them.}
+  \label{tab:m4-limits}
+\end{table}
