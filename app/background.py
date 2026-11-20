@@ -1,10 +1,10 @@
 """Timed jobs that run inside the app (HLD 9.1: "a sweeper job releases expired holds").
 
-One place runs every timed job, so later ones (stuck-order recovery 2.5, automatic replenishment 3.4) are added
-here as another loop next to the ones below, and started in `start_all`. Set BACKGROUND_JOBS=off to run none of
-them (the tests do).
+One place runs every timed job: each is a loop below, listed in `loops()` and started in `start_all`. Set
+BACKGROUND_JOBS=off to run none of them (the tests do).
 With several app instances each one runs its own jobs. That is safe: releasing a hold is a conditional update (see
-inventory.service._release), and an expired batch has nothing left to write off the second time.
+inventory.service._release), and an expired batch has nothing left to write off the second time. Replenishment is
+the exception: its lock is per process, so set REPLENISHMENT_INTERVAL_MINUTES=0 on every instance but one.
 """
 import asyncio
 import logging
@@ -14,6 +14,7 @@ from . import config
 from .db import SessionLocal
 from .modules.fulfilment import service as fulfilment
 from .modules.inventory import service as inventory
+from .modules.replenishment import service as replenishment
 
 log = logging.getLogger("darkstore.background")
 
@@ -36,6 +37,13 @@ def recover_once() -> dict | None:
     with SessionLocal() as db:
         result = fulfilment.recover_stalled(db)
     return result if result["released"] or result["needs_attention"] else None
+
+
+def replenish_once() -> list[dict] | None:
+    """Reorder for every open store (task 3.4). Returns the stores where something was ordered or cut, or None."""
+    with SessionLocal() as db:
+        changed = [row for row in replenishment.run_all(db) if row["transfer_order_id"] or row["capped"]]
+    return changed or None
 
 
 async def _repeat(name: str, job: Callable[[], object], seconds: Callable[[], float], first_run_now: bool) -> None:
@@ -65,6 +73,20 @@ def stall_loop():
     return _repeat("stalled orders", recover_once, lambda: config.STALL_CHECK_SECONDS, first_run_now=False)
 
 
+def replenish_loop():
+    # The first run waits one interval after the app starts (pressing Reset demo data does not restart it).
+    return _repeat("replenishment", replenish_once, lambda: config.REPLENISHMENT_INTERVAL_MINUTES * 60,
+                   first_run_now=False)
+
+
+def loops() -> list[Callable]:
+    """The timed jobs to start. Replenishment is left out when REPLENISHMENT_INTERVAL_MINUTES is 0 or less."""
+    jobs = [sweep_loop, expiry_loop, stall_loop]
+    if config.REPLENISHMENT_INTERVAL_MINUTES > 0:
+        jobs.append(replenish_loop)
+    return jobs
+
+
 def start_all() -> list[asyncio.Task]:
     """Start every timed job; main.py cancels them on shutdown."""
-    return [asyncio.create_task(loop()) for loop in (sweep_loop, expiry_loop, stall_loop)]
+    return [asyncio.create_task(loop()) for loop in loops()]

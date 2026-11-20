@@ -1,8 +1,13 @@
 """Replenishment Service (HLD service 8): decide what to reorder from the mother hub (HLD 6.2).
 
 Stock position = on hand - reserved + already on its way.
-When the position drops below the reorder point, order enough to get back to target stock.
+When the position drops below the reorder point, order enough to get back to target stock, in whole cases,
+within the free bin space of each zone; when a zone is short of space the most urgent SKUs go first.
+A manager can stop reordering one SKU (set_reorder_stopped), e.g. to let it run down before dropping it.
 """
+import logging
+import math
+import threading
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -10,21 +15,25 @@ from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import SKU, StockLedger, StockLevel, TransferOrder, TransferOrderLine, utcnow
+from ...models import SKU, Bin, StockItem, StockLedger, StockLevel, Store, TransferOrder, TransferOrderLine, utcnow
 from ..forecasting import service as forecasting
 from ..inventory import service as inventory
 
 OPEN_STATES = ("created", "dispatched")
+# One run at a time in this app, so the timer and a manager's button cannot both order the same stock. The lock
+# is per process: with several app instances, run the timer in one of them only.
+_RUN_LOCK = threading.Lock()
 LOW_STOCK_CAUSES = {"reserved", "sale", "damage", "expiry", "theft", "count", "not_found"}
+log = logging.getLogger(__name__)
 
 
 @events.subscribe("stock.changed")
 def on_stock_changed(db: Session, store_id: int | None, payload: dict) -> None:
-    """Raise stock.low when a SKU's ATP falls below its reorder point."""
+    """Raise stock.low when a SKU's ATP falls below its reorder point, unless a manager stopped reordering it."""
     if payload.get("cause") not in LOW_STOCK_CAUSES:
         return
     level = inventory.get_level(db, store_id, payload["sku_id"])
-    if level is None:
+    if level is None or level.reorder_stopped:      # it is being run down on purpose: no alert
         return
     atp = level.qty_on_hand - level.qty_reserved
     if atp < level.reorder_point:
@@ -43,29 +52,128 @@ def in_transit(db: Session, store_id: int) -> dict[int, int]:
     return {sku_id: int(qty) for sku_id, qty in rows}
 
 
-def run(db: Session, store_id: int) -> TransferOrder | None:
-    """Check every SKU in the store and raise one transfer order for everything that is low (FR-8).
-    Returns None when nothing needs ordering."""
+def _whole_cases(qty: int, case_size: int) -> int:
+    """`qty` rounded up to whole cases (the hub ships nothing smaller); 0 for nothing needed."""
+    case = max(1, case_size)
+    return math.ceil(qty / case) * case if qty > 0 else 0
+
+
+def run(db: Session, store_id: int) -> dict:
+    """Check every SKU in the store and raise one transfer order for everything that is low (FR-8), in whole cases
+    and within each zone's free bin space (HLD 6.2), and commit.
+
+    Returns {"transfer_order": the order, or None when nothing is ordered, "capped": [{sku_id, sku, zone, wanted,
+    ordered}] for each SKU that got less than it needed because its zone was short of space}. Cuts are also
+    published as a replenishment.capped event.
+    """
+    with _RUN_LOCK:
+        return _run(db, store_id)
+
+
+def _run(db: Session, store_id: int) -> dict:
     inventory.get_store(db, store_id)
     transit = in_transit(db, store_id)
     levels = db.scalars(
         select(StockLevel).where(StockLevel.store_id == store_id).execution_options(populate_existing=True)
     ).all()
-    lines = []
+    wanted = []
     for level in levels:
+        if level.reorder_stopped:                   # a manager is letting it run down
+            continue
         position = level.qty_on_hand - level.qty_reserved + transit.get(level.sku_id, 0)
         if position < level.reorder_point:
-            qty = level.target_stock - position
+            qty = _whole_cases(level.target_stock - position, level.sku.case_size)
             if qty > 0:
-                lines.append(TransferOrderLine(sku_id=level.sku_id, qty_ordered=qty))
+                wanted.append((level, qty))
+    lines, capped = _fit_free_space(db, store_id, wanted, levels, transit)
+    if capped:                      # on the live feed, so a manager sees cuts made by the timer too
+        events.publish(db, "replenishment.capped", store_id, {"capped": capped})
     if not lines:
-        return None
+        if capped:
+            db.commit()
+        return {"transfer_order": None, "capped": capped}
     order = TransferOrder(store_id=store_id, status="created", lines=lines)
     db.add(order)
     db.flush()
-    events.publish(db, "transfer_order.created", store_id, {"transfer_order_id": order.id, "lines": len(lines)})
+    events.publish(db, "transfer_order.created", store_id,
+                   {"transfer_order_id": order.id, "lines": len(lines), "capped": len(capped)})
     db.commit()
-    return order
+    return {"transfer_order": order, "capped": capped}
+
+
+def run_all(db: Session) -> list[dict]:
+    """Run replenishment for every store that is not closed (the timer in app/background.py calls this), each
+    store committed on its own. Returns per store: store_id, transfer_order_id (None when nothing was ordered),
+    lines and capped. A store whose run fails is rolled back and logged, its row says why in "error", and the
+    stores after it still run."""
+    results = []
+    for store_id in list(db.scalars(select(Store.id).where(Store.status != "closed").order_by(Store.id))):
+        try:
+            result = run(db, store_id)
+        except Exception as error:                  # one broken store must not stop the others' reorders
+            db.rollback()
+            log.exception("Replenishment failed for store %s", store_id)
+            results.append({"store_id": store_id, "transfer_order_id": None, "lines": 0, "capped": [],
+                            "error": f"{type(error).__name__}: {error}"})
+            continue
+        order = result["transfer_order"]
+        results.append({"store_id": store_id, "transfer_order_id": order.id if order else None,
+                        "lines": len(order.lines) if order else 0, "capped": result["capped"]})
+    return results
+
+
+def set_reorder_stopped(db: Session, store_id: int, sku_id: int, stopped: bool) -> dict:
+    """Stop or restart reordering one SKU in one store, and commit. A manager stops it to let the SKU run down, for
+    example before dropping it: run() then skips it and no stock.low is raised. Units already on their way still
+    arrive. 404 not_carried when the store does not carry the SKU."""
+    inventory.get_store(db, store_id)
+    sku = inventory.get_sku(db, sku_id)
+    level = inventory.get_level(db, store_id, sku_id)
+    if level is None:
+        raise DomainError(404, "not_carried", f"Store {store_id} does not carry {sku.name}")
+    level.reorder_stopped = stopped
+    events.publish(db, "reordering.changed", store_id, {"sku_id": sku_id, "reorder_stopped": stopped})
+    db.commit()
+    return {"store_id": store_id, "sku_id": sku_id, "sku": sku.name, "reorder_stopped": stopped}
+
+
+def free_space(db: Session, store_id: int, levels: list[StockLevel], transit: dict[int, int]) -> dict[str, int]:
+    """Units each zone can still take: its bins' capacity - units stored in them - units on their way. Read-only."""
+    capacity = dict(db.execute(
+        select(Bin.zone, func.sum(Bin.capacity)).where(Bin.store_id == store_id).group_by(Bin.zone)).all())
+    stored = dict(db.execute(
+        select(Bin.zone, func.sum(StockItem.qty)).join(StockItem, StockItem.bin_id == Bin.id)
+        .where(Bin.store_id == store_id).group_by(Bin.zone)).all())
+    coming: dict[str, int] = {}
+    for level in levels:
+        coming[level.sku.storage_type] = coming.get(level.sku.storage_type, 0) + transit.get(level.sku_id, 0)
+    return {zone: max(0, int(capacity.get(zone) or 0) - int(stored.get(zone) or 0) - coming.get(zone, 0))
+            for zone in set(capacity) | set(stored) | set(coming)}
+
+
+def _fit_free_space(db: Session, store_id: int, wanted: list[tuple[StockLevel, int]], levels: list[StockLevel],
+                    transit: dict[int, int]) -> tuple[list[TransferOrderLine], list[dict]]:
+    """Fill each zone's free space most urgent first: lowest days of cover (what customers can buy / forecast
+    daily demand), and on equal cover (say, several SKUs sold out) the faster seller; a SKU with no forecast comes
+    last. A line that does not fit is cut to the whole cases that do."""
+    demand = {row["sku_id"]: row["daily_demand"] for row in forecasting.list_forecasts(db, store_id)}
+
+    def urgency(item: tuple[StockLevel, int]) -> tuple:
+        level, daily = item[0], demand.get(item[0].sku_id, 0)
+        return (inventory.atp_of(level) / daily if daily > 0 else math.inf, -daily, level.sku.name)
+
+    room = free_space(db, store_id, levels, transit)
+    lines, capped = [], []
+    for level, qty in sorted(wanted, key=urgency):
+        zone, case = level.sku.storage_type, max(1, level.sku.case_size)
+        ordered = qty if qty <= room.get(zone, 0) else room.get(zone, 0) // case * case
+        room[zone] = room.get(zone, 0) - ordered
+        if ordered:
+            lines.append(TransferOrderLine(sku_id=level.sku_id, qty_ordered=ordered))
+        if ordered < qty:
+            capped.append({"sku_id": level.sku_id, "sku": level.sku.name, "zone": zone, "wanted": qty,
+                           "ordered": ordered})
+    return lines, capped
 
 
 def get_order(db: Session, transfer_order_id: int) -> TransferOrder:

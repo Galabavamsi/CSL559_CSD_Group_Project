@@ -53,10 +53,23 @@ SALES_HISTORY = {
     "Potato chips 90 g": [5, 4, 6, 5, 7, 4, 5],
 }
 
+# Units per case from the hub (replenishment orders whole cases). SKUs not listed come one at a time.
+CASE_SIZES = {
+    "Toned milk 500 ml": 12, "Curd 400 g": 12, "Paneer 200 g": 10, "White bread 400 g": 10,
+    "Eggs (pack of 6)": 6, "Bananas (6 pcs)": 6, "Basmati rice 1 kg": 10, "Wheat atta 5 kg": 4,
+    "Sugar 1 kg": 10, "Tea 250 g": 12, "Instant noodles (pack of 4)": 12, "Potato chips 90 g": 24,
+    "Sunflower oil 1 L": 12, "Vanilla ice cream 500 ml": 6, "Frozen green peas 500 g": 10,
+    "Bath soap (pack of 3)": 12,
+}
+
 DEFAULT_QTY = 30
 
 STORE_ROLES = ("picker", "packer", "receiver", "manager")   # one login of each per store
 CITY_ROLES = ("ops", "admin")                                 # not tied to a store
+
+
+# Units one bin holds, per zone: room for the stock a busy SKU needs, so orders are cut only when a zone is full.
+BIN_CAPACITY = {"ambient": 200, "chilled": 150, "frozen": 100}
 
 
 def _make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
@@ -66,7 +79,7 @@ def _make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
     layout += [("frozen", f"F-01-{shelf:02d}") for shelf in range(1, 3)]
     bins: dict[str, list[Bin]] = {"ambient": [], "chilled": [], "frozen": []}
     for seq, (zone, code) in enumerate(layout, start=1):
-        b = Bin(store_id=store_id, code=code, zone=zone, walk_seq=seq)
+        b = Bin(store_id=store_id, code=code, zone=zone, walk_seq=seq, capacity=BIN_CAPACITY[zone])
         db.add(b)
         bins[zone].append(b)
     db.flush()
@@ -78,7 +91,7 @@ def seed(db: Session) -> None:
     skus = []
     for n, (name, category, storage, shelf_life, price) in enumerate(SKUS, start=1):
         sku = SKU(name=name, category=category, barcode=f"890{n:010d}", storage_type=storage,
-                  shelf_life_days=shelf_life, price=price)
+                  shelf_life_days=shelf_life, price=price, case_size=CASE_SIZES.get(name, 1))
         db.add(sku)
         skus.append(sku)
     db.flush()

@@ -6,8 +6,11 @@ to say. Rehearse it twice; press **Reset demo data** on the ops desk before ever
 ## Before you start
 
 ```bash
-RATE_LIMIT_PER_SECOND=0 python -m uvicorn app.main:app   # limit off, so the load test below is not refused
+RATE_LIMIT_PER_SECOND=0 REPLENISHMENT_INTERVAL_MINUTES=0 python -m uvicorn app.main:app
 ```
+
+The rate limit is off so the load test below is not refused. Automatic replenishment (every 15 minutes) is off
+so the transfer order in section 7 comes from the button, not from the timer half-way through the demo.
 
 Then, in a second terminal:
 
@@ -204,4 +207,5 @@ Back on http://localhost:8000/docs.
 | Errors such as "no such column" after a `git pull` | Stop the app, delete `darkstore.db`, start it again; the demo data is loaded afresh |
 | A screen looks or behaves as before a `git pull` | The browser kept the old script: hard-refresh each page (Ctrl+Shift+R) |
 | The map has no red cells or suggestions | Run `python scripts/generate_demand.py` (needed after every reset) |
+| The first **Check what needs reordering** in section 7 says "Nothing to reorder" | The timer already ordered the bread: the app was started without `REPLENISHMENT_INTERVAL_MINUTES=0`. Show the order it raised, or restart the app with that setting |
 | A *Try it out* call in /docs says 401 | The token was not pasted into **Authorize**, or it has expired; log in again |

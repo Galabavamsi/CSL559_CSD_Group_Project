@@ -28,6 +28,8 @@ NEAR_EXPIRY_DAYS = int(os.getenv("NEAR_EXPIRY_DAYS", "2"))
 LEAD_TIME_DAYS = float(os.getenv("LEAD_TIME_DAYS", "1"))        # hub -> store delivery time
 SERVICE_LEVEL_Z = float(os.getenv("SERVICE_LEVEL_Z", "1.65"))   # 1.65 = 95% service level
 COVER_DAYS = float(os.getenv("COVER_DAYS", "3"))                # days of stock to hold above the reorder point
+# Replenishment runs by itself this often for every open store (app/background.py); 0 or less switches it off.
+REPLENISHMENT_INTERVAL_MINUTES = float(os.getenv("REPLENISHMENT_INTERVAL_MINUTES", "15"))
 # Forecasting model used by `run`: moving_average | weekday_average | exp_smoothing. The weekday average won the
 # task 3.3 comparison on generated sales (GET /v1/forecasting/compare).
 FORECAST_MODEL = os.getenv("FORECAST_MODEL", "weekday_average")

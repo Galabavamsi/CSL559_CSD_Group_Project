@@ -472,10 +472,13 @@ function renderEvents(events) {
 }
 
 async function runReplenishment() {
-  const { transfer_order: order } = await api("POST", `/v1/replenishment/run?store_id=${state.opsStore}`, undefined, manager());
-  say($("ops-message"), order
+  const { transfer_order: order, capped = [] } = await api("POST", `/v1/replenishment/run?store_id=${state.opsStore}`, undefined, manager());
+  const cut = capped.length
+    ? ` Not enough shelf space for: ${capped.map((c) => `${c.sku} (${c.ordered} of ${c.wanted})`).join(", ")}.`
+    : "";
+  say($("ops-message"), (order
     ? `Transfer order #${order.transfer_order_id} raised for ${order.lines.map((l) => `${l.qty_ordered} × ${l.sku}`).join(", ")}.`
-    : "Nothing to reorder: every item is above its reorder point or already on its way.");
+    : capped.length ? "Nothing ordered." : "Nothing to reorder: every item is above its reorder point or already on its way.") + cut);
   await refreshOps();
 }
 
