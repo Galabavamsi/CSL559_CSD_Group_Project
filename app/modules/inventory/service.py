@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ... import config, events, metrics
+from ...cache import atp_cache
 from ...errors import DomainError, not_found
 from ...models import (SKU, Bin, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
                        StockLedger, StockLevel, Store, utcnow)
@@ -63,7 +64,16 @@ def atp_of(level: StockLevel) -> int:
 
 
 def availability(db: Session, store_id: int, sku_ids: list[int] | None = None) -> list[dict]:
-    """ATP (available to promise) per SKU for one store. ATP = on hand - reserved - safety buffer."""
+    """ATP (available to promise) per SKU for one store. ATP = on hand - reserved - safety buffer.
+
+    The whole-store list (no `sku_ids`) is served from the ATP cache for up to ATP_CACHE_SECONDS; it is cleared
+    whenever that store's stock changes (app/cache.py). For showing only: `reserve` always checks the database."""
+    if sku_ids is None:
+        cached = atp_cache.get(store_id)
+        if cached is not None:
+            metrics.ATP_CACHE.labels("hit").inc()
+            return [dict(row) for row in cached]          # copies, so a caller cannot change the cached list
+        metrics.ATP_CACHE.labels("miss").inc()
     get_store(db, store_id)
     query = select(StockLevel).where(StockLevel.store_id == store_id)
     if sku_ids:
@@ -85,7 +95,10 @@ def availability(db: Session, store_id: int, sku_ids: list[int] | None = None) -
         }
         for r in rows
     ]
-    return sorted(out, key=lambda row: row["name"])
+    out.sort(key=lambda row: row["name"])
+    if sku_ids is None:
+        atp_cache.set(store_id, [dict(row) for row in out])
+    return out
 
 
 def set_safety_buffer(db: Session, store_id: int, sku_id: int, safety_buffer: int) -> dict:

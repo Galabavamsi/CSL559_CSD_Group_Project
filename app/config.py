@@ -16,6 +16,9 @@ RESERVATION_TTL_MINUTES = int(os.getenv("RESERVATION_TTL_MINUTES", "10"))
 # The sweeper runs this often (app/background.py). BACKGROUND_JOBS=off stops every timed job (the tests do).
 SWEEP_INTERVAL_SECONDS = float(os.getenv("SWEEP_INTERVAL_SECONDS", "30"))
 BACKGROUND_JOBS = os.getenv("BACKGROUND_JOBS", "on") == "on"
+# ATP cache (HLD 9.2): a store's availability list is reused for this many seconds. 0 turns the cache off.
+# Holds never read it, so a stale copy can only cause a failed hold, never an oversell (see app/cache.py).
+ATP_CACHE_SECONDS = float(os.getenv("ATP_CACHE_SECONDS", "2"))
 # Cycle counts (FR-11, HLD 10): a count whose differences are worth at most this much (|counted - system| x price,
 # summed) is applied at once; a bigger one waits for a manager.
 COUNT_AUTO_APPROVE_VALUE = float(os.getenv("COUNT_AUTO_APPROVE_VALUE", "500"))
