@@ -163,11 +163,15 @@ async function pay() {
 
 /** Show the customer's paid order and follow it through the store until it is delivered or cancelled. */
 function showPaid(order) {
-  state.paid = order;
+  // Names and prices as they were when the customer paid: the receipt below, and what a missing item refunds.
+  const priceOf = (skuId) => state.products.find((p) => p.sku_id === skuId)?.price ?? 0;
+  state.paid = order && { ...order, items: order.lines.map((l) => ({ ...l, name: skuName(l.sku_id), price: priceOf(l.sku_id) })) };
   clearInterval(state.trackTimer);
   $("paid-panel").hidden = !order;
   if (!order) return;
   $("paid-order").textContent = order.order_id;
+  const total = state.paid.items.reduce((sum, i) => sum + i.price * i.qty, 0);
+  $("paid-items").textContent = `${state.paid.items.map((i) => `${i.qty} × ${i.name}`).join(", ")} · ₹${total} paid`;
   showOrderStatus({ state: "created", tasks: [] });
   state.trackTimer = setInterval(() => trackPaid().catch(() => {}), 3000);
 }
@@ -194,10 +198,15 @@ function showOrderStatus(job) {
     text = job.rider.status === "arrived" ? `Rider ${rider} is collecting your bag.` : `Packed. Rider ${rider} is on the way to the store.`;
   }
   if (rider && job.state === "handed_over") text = `On its way to you with rider ${rider}.`;
-  const missing = job.tasks.filter((t) => t.status === "short").reduce((units, t) => units + t.qty, 0);
-  if (missing && job.state !== "cancelled") {
-    text += ` ${missing} ${missing === 1 ? "item was" : "items were"} out of stock and will be refunded.`;
+  // Units the store could not find or replace: say which, and what comes back, so the refund can be checked.
+  const missing = {};
+  let refund = 0;
+  for (const t of job.tasks.filter((t) => t.status === "short")) {
+    missing[t.sku] = (missing[t.sku] || 0) + t.qty;
+    refund += t.qty * (state.paid?.items.find((i) => i.sku_id === t.sku_id)?.price ?? 0);
   }
+  const missingText = Object.entries(missing).map(([name, qty]) => `${qty} × ${name}`).join(", ");
+  if (missingText && job.state !== "cancelled") text += ` ${missingText} out of stock: ₹${refund} will be refunded.`;
   // Dropped units the customer took a substitute for (task 2.4): one entry per item, however its lines were split.
   const swapped = {};
   for (const t of job.tasks.filter((t) => t.status === "substituted")) swapped[t.sku] = (swapped[t.sku] || 0) + t.qty;

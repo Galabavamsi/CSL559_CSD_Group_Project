@@ -14,8 +14,9 @@
   <header class="topbar">
     <div>
       <h1>Dark store prototype</h1>
-      <p>One order, three stations. Order on the left (<em>Check delivery</em>, add items, <em>Hold my items</em>,
-        <em>Pay now</em>), pick it in the middle (<em>Get next order</em>), and watch the stock change on the right.</p>
+      <p>One order, three stations. Order in the <em>Customer app</em> (<em>Check delivery</em>, add items,
+        <em>Hold my items</em>, <em>Pay now</em>), pick it on the <em>Picker handheld</em> (<em>Get next order</em>), and
+        watch the stock change at the <em>Store ops desk</em>.</p>
     </div>
     <div class="topbar-controls">
       <label for="store-select">Store for picker and ops</label>
@@ -65,6 +66,7 @@
 
       <div id="paid-panel" class="block" hidden>
         <p><strong>Order <span id="paid-order"></span></strong></p>
+        <p id="paid-items" class="note"></p>
         <p id="paid-status" role="status"></p>
         <p id="paid-note" class="note">You can still cancel it until it is packed.</p>
         <div class="row">

@@ -304,7 +304,8 @@ def report_short(db: Session, task_id: int, found: int | None = None, actor: str
 
     moved = 0
     if wanted:
-        picks, _missing = inventory.allocate(db, job.store_id, task.sku_id, wanted, exclude_item_ids=(item.id,))
+        # Not this bin again, even another batch of it: the picker has just found it empty.
+        picks, _missing = inventory.allocate(db, job.store_id, task.sku_id, wanted, exclude_bin_ids=(item.bin_id,))
         for other, take in picks:
             db.add(PickTask(job_id=job.id, sku_id=task.sku_id, stock_item_id=other.id, bin_id=other.bin_id,
                             qty=take, status="pending"))
