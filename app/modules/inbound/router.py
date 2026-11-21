@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
 from ...idempotency import run_once
+from ...ids import Id, PathId
 from ..inventory.router import MAX_BIN_UNITS      # Inventory's cap on one quantity (PR 50): 10**20 was a 500 here
 from . import service
 
@@ -20,22 +21,22 @@ IdempotencyKey = Annotated[str | None, Header(
 
 
 class ReceiptLineIn(BaseModel):
-    sku_id: int
+    sku_id: Id
     qty: int = Field(gt=0, le=MAX_BIN_UNITS)
     batch_no: str | None = Field(None, max_length=30)
     expiry_date: date | None = None
-    bin_id: int | None = None
+    bin_id: Id | None = None
 
 
 class GoodsReceiptIn(BaseModel):
-    store_id: int
-    transfer_order_id: int | None = None
+    store_id: Id
+    transfer_order_id: Id | None = None
     lines: list[ReceiptLineIn] = Field(min_length=1)
 
 
 class OpenReceiptIn(BaseModel):
-    store_id: int
-    transfer_order_id: int | None = None
+    store_id: Id
+    transfer_order_id: Id | None = None
 
 
 class ScanIn(BaseModel):
@@ -47,7 +48,7 @@ class ScanIn(BaseModel):
 
 
 class PutawayIn(BaseModel):
-    sku_id: int
+    sku_id: Id
     batch_no: str = Field(min_length=1, max_length=30)
     bin_code: str = Field(min_length=1, max_length=20)
     qty: int = Field(gt=0, le=MAX_BIN_UNITS)
@@ -73,7 +74,7 @@ def open_receipt(body: OpenReceiptIn, idempotency_key: IdempotencyKey = None, db
 
 
 @router.post("/v1/goods-receipts/{receipt_id}/scans", summary="Scan units off the truck onto the dock")
-def scan(receipt_id: int, body: ScanIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
+def scan(receipt_id: PathId, body: ScanIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
          staff: dict = Depends(require_role("receiver", "manager"))):
     """Good units wait on the dock, not yet sellable. Damaged units (`damaged: true`) and a batch with less than half
     its shelf life left are recorded on the receipt and never stocked."""
@@ -85,14 +86,14 @@ def scan(receipt_id: int, body: ScanIn, idempotency_key: IdempotencyKey = None, 
 
 
 @router.get("/v1/goods-receipts/{receipt_id}/putaway-tasks", summary="Where to put what waits on the dock")
-def putaway_tasks(receipt_id: int, db: Session = Depends(get_db),
+def putaway_tasks(receipt_id: PathId, db: Session = Depends(get_db),
                   staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
     return service.putaway_tasks(db, receipt_id)
 
 
 @router.post("/v1/goods-receipts/{receipt_id}/putaway", summary="Put units from the dock into a bin: sellable at once")
-def put_away(receipt_id: int, body: PutawayIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
+def put_away(receipt_id: PathId, body: PutawayIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
              staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
     return run_once(db, "goods-receipt-putaway", idempotency_key,
@@ -102,21 +103,31 @@ def put_away(receipt_id: int, body: PutawayIn, idempotency_key: IdempotencyKey =
 
 
 @router.post("/v1/goods-receipts/{receipt_id}/close", summary="Finish a receipt: order received, shortfalls reported")
-def close_receipt(receipt_id: int, idempotency_key: IdempotencyKey = None,
+def close_receipt(receipt_id: PathId, idempotency_key: IdempotencyKey = None,
                   send_back: bool = Query(False, description="Return what is still on the dock to the hub "
                                                              "(a miscount, or no room) instead of refusing to close"),
                   db: Session = Depends(get_db), staff: dict = Depends(require_role("receiver", "manager"))):
-    """Refused while good units wait on the dock, unless `send_back`. Reports ordered versus received (with damaged,
-    rejected and sent-back units) for every SKU ordered or scanned, marks the transfer order received and publishes
-    goods.received."""
+    """Refused while good units wait on the dock, unless `send_back`, and for a receipt with nothing scanned on it
+    (`409 nothing_scanned`: cancel it instead). Reports ordered versus received (with damaged, rejected and sent-back
+    units) for every SKU ordered or scanned, marks the transfer order received and publishes goods.received."""
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
     return run_once(db, "goods-receipt-close", idempotency_key,
                     {"receipt_id": receipt_id, "send_back": send_back, "by": staff["sub"]},
                     lambda: service.close_receipt(db, receipt_id, send_back, commit=False))
 
 
+@router.post("/v1/goods-receipts/{receipt_id}/cancel", summary="Drop a receipt opened by mistake, before any scan")
+def cancel_receipt(receipt_id: PathId, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
+                   staff: dict = Depends(require_role("receiver", "manager"))):
+    """Only while nothing is scanned on it (`409 receipt_not_empty`). The transfer order is left as it was, so the
+    real truck can still be received."""
+    check_store(staff, service.get_receipt(db, receipt_id).store_id)
+    return run_once(db, "goods-receipt-cancel", idempotency_key, {"receipt_id": receipt_id, "by": staff["sub"]},
+                    lambda: service.cancel_receipt(db, receipt_id, commit=False))
+
+
 @router.get("/v1/goods-receipts/{receipt_id}", summary="A goods receipt and its lines")
-def read_receipt(receipt_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+def read_receipt(receipt_id: PathId, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
     receipt = service.get_receipt(db, receipt_id)
     check_store(staff, receipt.store_id)
     return service.receipt_view(receipt)

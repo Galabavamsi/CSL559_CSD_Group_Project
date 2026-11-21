@@ -7,7 +7,7 @@ from sqlalchemy import func, select, update
 
 from app.db import SessionLocal
 from app.errors import DomainError
-from app.models import SKU, Bin, StockItem, StockLedger
+from app.models import SKU, Bin, StockItem, StockLedger, TransferOrder
 from app.modules.inbound import service as inbound
 from app.modules.replenishment import service as replenishment
 from app.modules.slotting import service as slotting
@@ -242,6 +242,49 @@ def test_a_receipt_closes_only_once_and_never_with_units_on_the_dock(client, db,
         assert (late.status_code, late.json()["error"]["code"]) == (409, "receipt_closed")
 
 
+def test_a_receipt_with_nothing_scanned_cannot_close(client, db, sku):
+    """Member 4's review of PR 54: it closed, marking the truck received at 0 units, so the real truck was refused."""
+    order, receipt = open_truck(client)
+    for send_back in ("false", "true"):
+        refused = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/close", params={"send_back": send_back})
+        assert (refused.status_code, refused.json()["error"]["code"]) == (409, "nothing_scanned")
+    assert db.get(TransferOrder, order["transfer_order_id"], populate_existing=True).status == "dispatched"
+
+
+def test_a_truck_that_arrived_all_damaged_still_closes(client, db, sku):
+    """Recorded units count as scanned: the closed receipt is the record that the truck came and nothing was usable."""
+    bread, ice_cream = sku("White bread"), sku("Vanilla ice cream")
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 40, damaged=True)
+    scan(client, db, receipt, ice_cream, 42, damaged=True)
+    closed = close(client, receipt)
+    assert closed.status_code == 200, closed.text
+    assert {row["sku_id"]: (row["received"], row["damaged"]) for row in closed.json()["report"]} == {
+        bread: (0, 40), ice_cream: (0, 42)}
+
+
+def test_an_empty_receipt_can_be_cancelled_and_the_truck_received_later(client, db, sku):
+    order, receipt = open_truck(client)
+    url = f"/v1/goods-receipts/{receipt['receipt_id']}/cancel"
+    cancelled = client.post(url, headers={"Idempotency-Key": "cancel-1"})
+    assert cancelled.status_code == 200 and cancelled.json()["status"] == "cancelled"
+    assert client.post(url, headers={"Idempotency-Key": "cancel-1"}).json() == cancelled.json()     # a retry
+    late = scan(client, db, receipt, sku("White bread"), 1)
+    assert (late.status_code, late.json()["error"]["code"]) == (409, "receipt_closed")
+    assert "cancelled" in late.json()["error"]["message"]
+    assert db.get(TransferOrder, order["transfer_order_id"], populate_existing=True).status == "dispatched"
+    again = client.post("/v1/goods-receipts/open",
+                        json={"store_id": 1, "transfer_order_id": order["transfer_order_id"]})
+    assert again.status_code == 201, again.text                     # Receive truck works again
+
+
+def test_only_an_empty_receipt_can_be_cancelled(client, db, sku):
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, sku("White bread"), 5, damaged=True)      # units never stocked are still a record
+    refused = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/cancel")
+    assert (refused.status_code, refused.json()["error"]["code"]) == (409, "receipt_not_empty")
+
+
 def test_a_one_call_receipt_is_saved_as_a_closed_receipt(client, sku):
     bread = sku("White bread")
     body = client.post("/v1/goods-receipts",
@@ -264,6 +307,36 @@ def test_a_short_dated_line_does_not_sink_a_one_call_receipt(client, sku):
     assert {row["sku_id"] for row in body["received"]} == {ice_cream}
     assert [(row["sku_id"], row["qty"]) for row in body["rejected"]] == [(bread, 40)]
     assert {"sku_id": bread, "sku": "White bread 400 g", "ordered": 40, "received": 0} in body["discrepancies"]
+    assert_stock_is_consistent()
+
+
+def test_a_batch_without_a_number_is_named_after_its_expiry_date(client, db, sku):
+    """Issue #56: it was named after the day it arrived, so a second delivery that day with another expiry date joined
+    the first batch and took its date. Two dates of one SKU in one receipt were a 422 batch_mismatch for the same
+    reason."""
+    sugar = sku("Sugar")
+    early, late = date.today() + timedelta(days=200), date.today() + timedelta(days=300)
+
+    def stocked() -> dict[date, tuple[set, int]]:
+        """Batch names and units of sugar per expiry date."""
+        found: dict[date, tuple[set, int]] = {}
+        for item in db.scalars(select(StockItem).where(StockItem.store_id == 1, StockItem.sku_id == sugar,
+                                                       StockItem.expiry_date.in_((early, late)))
+                               .execution_options(populate_existing=True)):
+            names, units = found.get(item.expiry_date, (set(), 0))
+            found[item.expiry_date] = (names | {item.batch_no}, units + item.qty)
+        return found
+
+    for expiry in (early, late):                                        # two deliveries on the same day
+        delivered = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [
+            {"sku_id": sugar, "qty": 5, "expiry_date": expiry.isoformat()}]})
+        assert delivered.status_code == 201, delivered.text
+    assert stocked() == {early: ({f"B{early:%y%m%d}"}, 5), late: ({f"B{late:%y%m%d}"}, 5)}
+    both = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [
+        {"sku_id": sugar, "qty": 2, "expiry_date": early.isoformat()},
+        {"sku_id": sugar, "qty": 3, "expiry_date": late.isoformat()}]})
+    assert both.status_code == 201, both.text                           # one receipt, two dates
+    assert stocked() == {early: ({f"B{early:%y%m%d}"}, 7), late: ({f"B{late:%y%m%d}"}, 8)}
     assert_stock_is_consistent()
 
 
@@ -343,6 +416,8 @@ def test_only_receivers_and_managers_of_the_store_can_receive(client, client_as,
     one_bread = {"barcode": db.get(SKU, sku("White bread")).barcode, "qty": 1, "batch_no": "LOT1",
                  "expiry_date": in_days(4)}
     assert client_as("receiver", 2).post(f"{url}/scans", json=one_bread).status_code == 403
+    assert client_as("picker", 1).post(f"{url}/cancel").status_code == 403
+    assert client_as("receiver", 2).post(f"{url}/cancel").status_code == 403
     assert client_as("manager", 1).post(f"{url}/scans", json=one_bread).status_code == 200
     assert client_as("picker", 2).get(url).status_code == 403
     assert client_as("picker", 1).get(url).status_code == 200
@@ -421,6 +496,29 @@ def test_an_impossible_quantity_is_refused_and_changes_nothing(client, db, sku):
     line = line_of(client.get(f"/v1/goods-receipts/{receipt['receipt_id']}").json(), bread)
     assert (line["scanned"], line["put_away"]) == (40, 0)
     assert_stock_is_consistent()
+
+
+def test_an_impossible_id_is_refused_before_any_query(client, db, sku):
+    """app/ids.py, as in Inventory (PR 52): a receipt id of 10**20 does not fit a database integer and was a 500."""
+    huge = 10**20
+    scan_body = {"barcode": db.get(SKU, sku("White bread")).barcode, "qty": 1, "batch_no": "LOT1",
+                 "expiry_date": in_days(4)}
+    put_body = {"sku_id": 1, "batch_no": "LOT1", "bin_code": "A-01-01", "qty": 1}
+    for receipt_id in (0, huge):
+        url = f"/v1/goods-receipts/{receipt_id}"
+        for method, path, body in (("GET", "", None), ("GET", "/putaway-tasks", None), ("POST", "/scans", scan_body),
+                                   ("POST", "/putaway", put_body), ("POST", "/close", None),
+                                   ("POST", "/cancel", None)):
+            assert client.request(method, url + path, json=body).status_code == 422, (method, url + path)
+    for body in ({"store_id": huge}, {"store_id": 1, "transfer_order_id": huge}):
+        assert client.post("/v1/goods-receipts/open", json=body).status_code == 422, body
+    for body in ({"store_id": huge, "lines": [{"sku_id": 1, "qty": 1}]},
+                 {"store_id": 1, "transfer_order_id": huge, "lines": [{"sku_id": 1, "qty": 1}]},
+                 {"store_id": 1, "lines": [{"sku_id": huge, "qty": 1}]},
+                 {"store_id": 1, "lines": [{"sku_id": 1, "qty": 1, "bin_id": huge}]}):
+        assert client.post("/v1/goods-receipts", json=body).status_code == 422, body
+    _, receipt = open_truck(client)
+    assert put_away(client, receipt, huge, "LOT1", "A-01-01", 1).status_code == 422
 
 
 def test_two_putaways_of_different_items_never_overfill_a_bin(db, sku, monkeypatch):

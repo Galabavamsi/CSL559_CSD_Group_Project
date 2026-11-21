@@ -45,12 +45,14 @@ def _lock_open(db: Session, receipt_id: int) -> GoodsReceipt:
     """The receipt, if it is open, locked to this transaction. The update changes nothing, but other steps on the same
     receipt (on SQLite, every other write) wait at it until this transaction ends and then see what it wrote: two
     putaways of one line cannot both take the same units, and a closing receipt cannot take a late scan.
-    404; 409 receipt_closed."""
+    404; 409 receipt_closed (closed or cancelled)."""
     locked = db.execute(update(GoodsReceipt).where(GoodsReceipt.id == receipt_id, GoodsReceipt.status == "open")
                         .values(status="open").execution_options(synchronize_session=False)).rowcount
     if not locked:
-        get_receipt(db, receipt_id)                             # 404 when there is no such receipt
-        raise DomainError(409, "receipt_closed", f"Goods receipt {receipt_id} is closed")
+        receipt = db.get(GoodsReceipt, receipt_id, populate_existing=True)
+        if receipt is None:
+            raise not_found("Goods receipt", receipt_id)
+        raise DomainError(409, "receipt_closed", f"Goods receipt {receipt_id} is {receipt.status}")
     receipt = db.get(GoodsReceipt, receipt_id, populate_existing=True)
     db.scalars(select(GoodsReceiptLine).where(GoodsReceiptLine.receipt_id == receipt_id)
                .execution_options(populate_existing=True)).all()   # this session may hold older copies of the lines
@@ -92,8 +94,8 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
          expiry_date: date | None = None, damaged: bool = False, commit: bool = True) -> dict:
     """Scan units off the truck (HLD 6.3, step 2). Changes no stock: good units wait on the dock until they are put
     away. Damaged units, and a batch with less than MIN_REMAINING_SHELF_LIFE of its shelf life left, are recorded on
-    the receipt and never stocked. The API requires batch and expiry; the one-call receipt may leave them out (today's
-    batch, full shelf life).
+    the receipt and never stocked. The API requires batch and expiry; the one-call receipt may leave them out (full
+    shelf life, and a batch named after its expiry date, so units with different dates never share a batch: #56).
     422 unknown_barcode; 422 batch_mismatch for a batch already scanned with another expiry; 409 receipt_closed."""
     receipt = _lock_open(db, receipt_id)
     if qty <= 0:
@@ -101,8 +103,8 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     sku = db.scalar(select(SKU).where(SKU.barcode == barcode))
     if sku is None:
         raise DomainError(422, "unknown_barcode", f"No product has barcode {barcode}")
-    batch_no = batch_no or f"B{date.today():%y%m%d}"
     expiry = expiry_date or date.today() + timedelta(days=sku.shelf_life_days)
+    batch_no = batch_no or f"B{expiry:%y%m%d}"
     line = next((ln for ln in receipt.lines if ln.sku_id == sku.id and ln.batch_no == batch_no), None)
     if line is None:
         line = GoodsReceiptLine(sku_id=sku.id, sku=sku, batch_no=batch_no, expiry_date=expiry, qty_scanned=0,
@@ -204,8 +206,13 @@ def close_receipt(db: Session, receipt_id: int, send_back: bool = False, commit:
     """Finish a receipt (HLD 6.3, step 5): the transfer order is marked received with what was put away, every SKU
     ordered or scanned is reported as ordered versus received (with damaged, rejected and sent-back units), and
     goods.received is published. Refused (409 still_on_dock) while good units wait on the dock, unless send_back:
-    then they go back to the hub and are never stocked (a miscount, or no room for them). 409 receipt_closed."""
+    then they go back to the hub and are never stocked (a miscount, or no room for them). 409 nothing_scanned for a
+    receipt with nothing scanned on it, which would mark the truck received at 0 units: cancel it instead.
+    409 receipt_closed."""
     receipt = _lock_open(db, receipt_id)
+    if not receipt.lines:
+        raise DomainError(409, "nothing_scanned", f"Nothing was scanned on goods receipt {receipt_id}: scan the truck, "
+                                                  "or cancel the receipt")
     waiting = [f"{line.qty_scanned - line.qty_put_away} {line.sku.name} (batch {line.batch_no})"
                for line in receipt.lines if line.qty_scanned > line.qty_put_away]
     if waiting and not send_back:
@@ -245,6 +252,22 @@ def close_receipt(db: Session, receipt_id: int, send_back: bool = False, commit:
     db.flush()
     view = receipt_view(receipt)
     view.update(report=report, shortfalls=shortfalls)
+    if commit:
+        db.commit()
+    return view
+
+
+def cancel_receipt(db: Session, receipt_id: int, commit: bool = True) -> dict:
+    """Drop a receipt opened by mistake, before anything was scanned on it. The transfer order is left as it was, so
+    the real truck can still be received. 409 receipt_not_empty once anything was scanned, even units never stocked:
+    close it instead. 409 receipt_closed."""
+    receipt = _lock_open(db, receipt_id)
+    if receipt.lines:
+        raise DomainError(409, "receipt_not_empty", f"Goods receipt {receipt_id} already has scanned units: close it "
+                                                    "instead (send_back=true returns what waits on the dock)")
+    receipt.status, receipt.closed_at = "cancelled", utcnow()
+    db.flush()
+    view = receipt_view(receipt)
     if commit:
         db.commit()
     return view
