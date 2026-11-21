@@ -12,7 +12,7 @@ from datetime import timedelta
 from sqlalchemy import func, select
 
 from app.db import SessionLocal
-from app.models import StockItem, StockLedger
+from app.models import Reservation, StockItem, StockLedger, utcnow
 from app.modules.inventory import service as inventory
 
 from .conftest import assert_stock_is_consistent, place_paid_order
@@ -179,4 +179,95 @@ def test_a_line_moves_to_another_bin_not_to_a_second_batch_in_the_empty_one(clie
     assert {t["batch_no"] for t in lines} == {"M-NEW"}           # not M-MID, in the bin just reported empty
     assert (batch_qty("M-OLD"), batch_qty("M-MID"), batch_qty("M-NEW")) == (0, 0, 24)
     assert stock(client, milk)[:2] == (24, 4)
+    assert_stock_is_consistent()
+
+
+# ------------------------------------------------------------------------- held units given back later (review of #67)
+# The report leaves the units another order holds. When that hold ends, they must not go back on sale while the bin
+# waits for the count the report opened.
+
+def found_empty_while_a_cart_holds(client, sugar: int, qty: int) -> str:
+    """o-1 reports the sugar bin empty while another customer's unpaid cart holds `qty`. Returns the cart's id."""
+    place_paid_order(client, "o-1", 1, [(sugar, 1)])
+    cart = hold(client, "cart", sugar, qty)
+    assert cart.status_code == 201, cart.text
+    short(client)
+    assert stock(client, sugar) == (qty, qty, 0)
+    return cart.json()["reservation_id"]
+
+
+def open_count(client) -> dict:
+    return next(c for c in client.get("/v1/stores/1/cycle-counts").json()
+                if c["reason"] == "not_found" and c["status"] == "open")
+
+
+def test_a_cart_released_after_the_report_does_not_put_the_empty_bin_back_on_sale(client, sku):
+    """Found in the review of #67: release a cart holding 5, and the next order for 5 was sent to the same empty bin."""
+    sugar = sku("Sugar")
+    cart_id = found_empty_while_a_cart_holds(client, sugar, 5)
+
+    released = client.delete(f"/v1/reservations/{cart_id}")
+
+    assert released.status_code == 200, released.text
+    assert stock(client, sugar) == (0, 0, 0)                     # was (5, 0, 5)
+    assert hold(client, "next", sugar, 5).status_code == 409
+    assert written_off(sugar) == 30
+    assert {ref for _bin, ref, _delta in not_found_rows(sugar)} >= {f"count:{open_count(client)['count_id']}"}
+    assert_stock_is_consistent()
+
+
+def test_nor_does_a_cart_that_runs_out_of_time(client, db, sku):
+    sugar = sku("Sugar")
+    cart_id = found_empty_while_a_cart_holds(client, sugar, 5)
+    db.get(Reservation, cart_id).expires_at = utcnow() - timedelta(minutes=1)
+    db.commit()
+
+    assert inventory.sweep_expired(db) == 1
+
+    assert stock(client, sugar) == (0, 0, 0)
+    assert_stock_is_consistent()
+
+
+def test_nor_does_a_paid_order_cancelled_before_its_picker_got_there(client, sku):
+    sugar = sku("Sugar")
+    place_paid_order(client, "o-1", 1, [(sugar, 1)])
+    place_paid_order(client, "o-2", 1, [(sugar, 2)])             # same bin, not claimed yet
+    short(client)                                                # o-1
+    assert stock(client, sugar) == (2, 2, 0)
+    job = next(j for j in client.get("/v1/fulfilment-jobs", params={"store_id": 1}).json() if j["order_id"] == "o-2")
+
+    cancelled = client.post(f"/v1/fulfilment-jobs/{job['job_id']}/cancel", json={"reason": "customer asked"})
+
+    assert cancelled.status_code == 200, cancelled.text
+    assert stock(client, sugar) == (0, 0, 0)
+    assert_stock_is_consistent()
+
+
+def test_once_the_count_is_handed_in_what_the_counter_found_decides(client, sku):
+    """A wrong report: the counter finds the 5 held units on the shelf. From then on the bin is not treated as empty,
+    so releasing the cart puts them back on sale (and the count is not applied twice)."""
+    sugar = sku("Sugar")
+    cart_id = found_empty_while_a_cart_holds(client, sugar, 5)
+    count = open_count(client)
+
+    handed_in = client.post(f"/v1/cycle-counts/{count['count_id']}/submit",
+                            json={"lines": [{"sku_id": sugar, "counted_qty": 5}]})
+    assert handed_in.status_code == 200, handed_in.text
+    assert handed_in.json()["status"] == "approved"              # it matches the records: nothing to apply
+
+    assert client.delete(f"/v1/reservations/{cart_id}").status_code == 200
+    assert stock(client, sugar) == (5, 0, 5)
+    assert_stock_is_consistent()
+
+
+def test_a_delivery_into_the_bin_while_it_waits_for_its_count_is_for_sale(client, sku):
+    sugar = sku("Sugar")
+    first_batch = next(row["batch_no"] for row in client.get("/v1/stores/1/stock").json() if row["sku_id"] == sugar)
+    place_paid_order(client, "o-1", 1, [(sugar, 1)])
+    short(client)
+    assert open_count(client)["bin_id"] is not None
+
+    second_batch_in_the_bin_of(first_batch, sugar, "S-NEW", 10, days_later=30)
+
+    assert stock(client, sugar) == (10, 0, 10)
     assert_stock_is_consistent()
