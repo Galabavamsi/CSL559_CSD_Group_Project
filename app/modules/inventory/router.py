@@ -1,6 +1,8 @@
 """HTTP endpoints for the Inventory Service (HLD section 8.1)."""
+from typing import Annotated
+
 import h3
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Path, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
@@ -8,6 +10,7 @@ from ... import config
 from ...idempotency import run_once
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
+from ...errors import DomainError
 from . import counts, service
 
 router = APIRouter(tags=["inventory"])
@@ -17,15 +20,22 @@ router = APIRouter(tags=["inventory"])
 MAX_LINE_UNITS = 1000          # one line of a customer's cart
 MAX_BIN_UNITS = 100_000        # what one bin can hold: a counted quantity, or one stock adjustment
 
+# The same for ids. Every id is a 32-bit database integer starting at 1, so anything outside that range cannot
+# exist; it is refused here (422) and never reaches a query. `Id` is for request bodies, `PathId` for the URL.
+MAX_ID = 2**31 - 1
+Id = Annotated[int, Field(ge=1, le=MAX_ID)]
+PathId = Annotated[int, Path(ge=1, le=MAX_ID)]
+MAX_LEDGER_ROWS = 500          # most rows one ledger request returns
+
 
 class LineIn(BaseModel):
-    sku_id: int
+    sku_id: Id
     qty: int = Field(gt=0, le=MAX_LINE_UNITS)
 
 
 class ReservationIn(BaseModel):
     order_id: str = Field(min_length=1, max_length=60)
-    store_id: int
+    store_id: Id
     lines: list[LineIn] = Field(min_length=1)
     h3_cell: str | None = Field(default=None, max_length=16,
                                 description="H3 cell of the delivery address, from GET /v1/serviceability")
@@ -43,17 +53,17 @@ class StockSettingsIn(BaseModel):
 
 
 class AdjustmentIn(BaseModel):
-    store_id: int
-    sku_id: int
+    store_id: Id
+    sku_id: Id
     delta: int = Field(ge=-MAX_BIN_UNITS, le=MAX_BIN_UNITS)
     reason: str = Field(pattern="^(damage|expiry|theft|count)$")
-    bin_id: int | None = None
+    bin_id: Id | None = None
     actor: str = "manager"
 
 
 @router.put("/v1/stores/{store_id}/stock-settings/{sku_id}",
             summary="Set the safety buffer for one SKU in one store")
-def update_stock_settings(store_id: int, sku_id: int, body: StockSettingsIn, db: Session = Depends(get_db),
+def update_stock_settings(store_id: PathId, sku_id: PathId, body: StockSettingsIn, db: Session = Depends(get_db),
                           staff: dict = Depends(require_role("manager"))):
     """ATP becomes on hand - reserved - safety buffer. Existing holds are not affected."""
     check_store(staff, store_id)
@@ -61,9 +71,13 @@ def update_stock_settings(store_id: int, sku_id: int, body: StockSettingsIn, db:
 
 
 @router.get("/v1/stores/{store_id}/availability")
-def get_availability(store_id: int, skus: str | None = Query(None, description="Comma-separated SKU ids; omit for all"),
+def get_availability(store_id: PathId,
+                     skus: str | None = Query(None, max_length=2000, pattern=r"^[0-9,\s]*$",
+                                              description="Comma-separated SKU ids; omit for all"),
                      db: Session = Depends(get_db)):
     sku_ids = [int(s) for s in skus.split(",") if s.strip()] if skus else None
+    if sku_ids and not all(1 <= sku_id <= MAX_ID for sku_id in sku_ids):
+        raise DomainError(422, "bad_sku_id", f"SKU ids are between 1 and {MAX_ID}")
     return service.availability(db, store_id, sku_ids)
 
 
@@ -104,14 +118,14 @@ def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db),
 
 
 @router.get("/v1/stores/{store_id}/stock")
-def read_stock_by_bin(store_id: int, db: Session = Depends(get_db),
+def read_stock_by_bin(store_id: PathId, db: Session = Depends(get_db),
                       staff: dict = Depends(current_staff)):
     check_store(staff, store_id)
     return service.stock_by_bin(db, store_id)
 
 
 @router.get("/v1/stores/{store_id}/ledger")
-def read_ledger(store_id: int, limit: int = 50, db: Session = Depends(get_db),
+def read_ledger(store_id: PathId, limit: int = Query(50, ge=1, le=MAX_LEDGER_ROWS), db: Session = Depends(get_db),
                 staff: dict = Depends(current_staff)):
     check_store(staff, store_id)
     return service.ledger(db, store_id, limit)
@@ -125,7 +139,7 @@ def sweep(db: Session = Depends(get_db)):
 
 @router.post("/v1/admin/expire-stock", dependencies=[Depends(require_role("admin"))],
              summary="Write off every batch past its expiry date")
-def expire_stock(store_id: int | None = Query(None, description="Omit for every store"),
+def expire_stock(store_id: int | None = Query(None, ge=1, le=MAX_ID, description="Omit for every store"),
                  db: Session = Depends(get_db)):
     """Also runs on its own every EXPIRY_INTERVAL_SECONDS (an hour by default)."""
     return {"units_written_off": service.expire_stock(db, store_id)}
@@ -133,7 +147,7 @@ def expire_stock(store_id: int | None = Query(None, description="Omit for every 
 
 @router.get("/v1/admin/stock-audit", dependencies=[Depends(require_role("admin"))],
             summary="Check that stock levels, bins and the ledger agree")
-def stock_audit(store_id: int | None = Query(None, description="Omit for every store"),
+def stock_audit(store_id: int | None = Query(None, ge=1, le=MAX_ID, description="Omit for every store"),
                 db: Session = Depends(get_db)):
     """`mismatches` has one entry per store and SKU whose records disagree; an empty list means stock is consistent.
     Run it after a load test (scripts/load_checkout.py does)."""
@@ -142,7 +156,7 @@ def stock_audit(store_id: int | None = Query(None, description="Omit for every s
 
 
 @router.get("/v1/stores/{store_id}/near-expiry", summary="Batches that expire within the next few days")
-def read_near_expiry(store_id: int, days: int = Query(2, ge=0, le=30, description="0 means expiring today"),
+def read_near_expiry(store_id: PathId, days: int = Query(2, ge=0, le=30, description="0 means expiring today"),
                      db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
     check_store(staff, store_id)
     return service.near_expiry(db, store_id, days)
@@ -152,12 +166,12 @@ def read_near_expiry(store_id: int, days: int = Query(2, ge=0, le=30, descriptio
 
 
 class CountStartIn(BaseModel):
-    store_id: int
-    bin_id: int
+    store_id: Id
+    bin_id: Id
 
 
 class CountedLineIn(BaseModel):
-    sku_id: int
+    sku_id: Id
     counted_qty: int = Field(ge=0, le=MAX_BIN_UNITS)
 
 
@@ -189,12 +203,12 @@ def start_count(body: CountStartIn, db: Session = Depends(get_db), staff: dict =
 
 
 @router.get("/v1/cycle-counts/{count_id}", summary="Read a count (no quantities while it is open)")
-def read_count(count_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+def read_count(count_id: PathId, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
     return counts.count_view(_count_in_my_store(db, count_id, staff))
 
 
 @router.post("/v1/cycle-counts/{count_id}/submit", summary="Hand in what was counted")
-def submit_count(count_id: int, body: CountSubmitIn, db: Session = Depends(get_db),
+def submit_count(count_id: PathId, body: CountSubmitIn, db: Session = Depends(get_db),
                  staff: dict = Depends(require_role(*COUNTERS))):
     """Small differences (worth at most COUNT_AUTO_APPROVE_VALUE) are applied at once; bigger ones wait for a
     manager."""
@@ -204,7 +218,7 @@ def submit_count(count_id: int, body: CountSubmitIn, db: Session = Depends(get_d
 
 
 @router.post("/v1/cycle-counts/{count_id}/approve", summary="Apply a count's differences to stock")
-def approve_count(count_id: int, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
+def approve_count(count_id: PathId, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
     """A manager may not approve a count they submitted themselves (an admin may)."""
     _count_in_my_store(db, count_id, staff)
     return counts.count_view(counts.approve(db, count_id, decided_by=staff["sub"],
@@ -212,13 +226,13 @@ def approve_count(count_id: int, db: Session = Depends(get_db), staff: dict = De
 
 
 @router.post("/v1/cycle-counts/{count_id}/reject", summary="Leave stock as it is")
-def reject_count(count_id: int, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
+def reject_count(count_id: PathId, db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
     _count_in_my_store(db, count_id, staff)
     return counts.count_view(counts.reject(db, count_id, decided_by=staff["sub"]))
 
 
 @router.get("/v1/stores/{store_id}/cycle-counts", summary="A store's counts, newest first")
-def list_counts(store_id: int, status: str | None = Query(None, pattern="^(open|submitted|approved|rejected)$",
+def list_counts(store_id: PathId, status: str | None = Query(None, pattern="^(open|submitted|approved|rejected)$",
                                                            description="submitted = waiting for a manager"),
                 db: Session = Depends(get_db), staff: dict = Depends(require_role("manager"))):
     check_store(staff, store_id)
@@ -227,7 +241,7 @@ def list_counts(store_id: int, status: str | None = Query(None, pattern="^(open|
 
 @router.get("/v1/stores/{store_id}/inventory-accuracy",
             summary="Share of counted lines that matched the records (HLD 12 target: 99.5%)")
-def read_inventory_accuracy(store_id: int, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
+def read_inventory_accuracy(store_id: PathId, db: Session = Depends(get_db), staff: dict = Depends(current_staff)):
     check_store(staff, store_id)
     service.get_store(db, store_id)
     return counts.inventory_accuracy(db, store_id)
