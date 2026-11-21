@@ -111,6 +111,64 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     return view
 
 
+def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
+    """Where to put what waits on the dock (HLD 6.3, step 3): one task per bin portion from slotting.place, the SKU's
+    own bins first and never past a bin's capacity. A line that cannot be placed gets one task with bin_code None and
+    the reason. Tasks reflect the bins as they are now: put lines away one at a time. Read-only."""
+    receipt = get_receipt(db, receipt_id)
+    tasks = []
+    for line in receipt.lines:
+        on_dock = line.qty_scanned - line.qty_put_away
+        if on_dock <= 0:
+            continue
+        task = {"sku_id": line.sku_id, "sku": line.sku.name, "batch_no": line.batch_no,
+                "expiry_date": line.expiry_date.isoformat()}
+        try:
+            portions = slotting.place(db, receipt.store_id, line.sku_id, on_dock)
+        except DomainError as error:                # no bin of that zone, or not enough room in it
+            tasks.append({**task, "qty": on_dock, "bin_code": None, "problem": error.message})
+            continue
+        tasks += [{**task, "qty": qty, "bin_code": bin_.code} for bin_, qty in portions]
+    return tasks
+
+
+def put_away(db: Session, receipt_id: int, sku_id: int, batch_no: str, bin_code: str, qty: int,
+             actor: str = "receiver", commit: bool = True) -> dict:
+    """Move units from the dock into a bin (HLD 6.3, step 4). They are sellable as soon as this commits, whatever is
+    still on the dock. 422 not_scanned, too_many (more than is on the dock), bad_bin, wrong_zone; 409 bin_full when
+    the bin has no room, checked again right after writing; 409 receipt_closed."""
+    receipt = _changeable(db, receipt_id)
+    if qty <= 0:
+        raise DomainError(422, "bad_quantity", "Quantity to put away must be at least 1")
+    line = next((ln for ln in receipt.lines if ln.sku_id == sku_id and ln.batch_no == batch_no), None)
+    if line is None or line.qty_scanned == 0:
+        raise DomainError(422, "not_scanned", f"No good units of SKU {sku_id}, batch {batch_no}, were scanned onto "
+                                              f"goods receipt {receipt.id}")
+    on_dock = line.qty_scanned - line.qty_put_away
+    if qty > on_dock:
+        raise DomainError(422, "too_many", f"Only {on_dock} of {line.sku.name}, batch {batch_no}, are on the dock, "
+                                           f"not {qty}", {"on_dock": on_dock})
+    bin_ = db.scalar(select(Bin).where(Bin.store_id == receipt.store_id, Bin.code == bin_code))
+    if bin_ is None:
+        raise DomainError(422, "bad_bin", f"Store {receipt.store_id} has no bin {bin_code}")
+    slotting.ensure_room(db, receipt.store_id, bin_.id, qty)
+    inventory.receive(db, receipt.store_id, sku_id, qty, bin_.id, batch_no, line.expiry_date, _reference(receipt),
+                      actor)
+    slotting.ensure_not_overfilled(db, bin_.id)
+    line.qty_put_away += qty
+    db.flush()
+    view = receipt_view(receipt)
+    view["put"] = {"sku_id": sku_id, "sku": line.sku.name, "batch_no": batch_no, "qty": qty, "bin": bin_.code}
+    if commit:
+        db.commit()
+    return view
+
+
+def _reference(receipt: GoodsReceipt) -> str:
+    """The ledger reference for what a receipt puts away: its transfer order, otherwise the receipt itself."""
+    return f"to:{receipt.transfer_order_id}" if receipt.transfer_order_id else f"grn:{receipt.id}"
+
+
 def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_id: int | None = None,
                   actor: str = "receiver") -> dict:
     """Record a goods receipt. Each line: sku_id, qty, and optionally batch_no, expiry_date, bin_id.

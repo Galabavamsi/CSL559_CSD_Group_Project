@@ -39,6 +39,14 @@ class ScanIn(BaseModel):
     damaged: bool = False
 
 
+class PutawayIn(BaseModel):
+    sku_id: int
+    batch_no: str = Field(min_length=1, max_length=30)
+    bin_code: str = Field(min_length=1, max_length=20)
+    qty: int = Field(gt=0)
+    actor: str = "receiver"
+
+
 @router.post("/v1/goods-receipts", status_code=201)
 def create_goods_receipt(body: GoodsReceiptIn, db: Session = Depends(get_db),
                          staff: dict = Depends(require_role("receiver", "manager"))):
@@ -61,6 +69,20 @@ def scan(receipt_id: int, body: ScanIn, db: Session = Depends(get_db),
     its shelf life left are recorded on the receipt and never stocked."""
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
     return service.scan(db, receipt_id, body.barcode, body.qty, body.batch_no, body.expiry_date, body.damaged)
+
+
+@router.get("/v1/goods-receipts/{receipt_id}/putaway-tasks", summary="Where to put what waits on the dock")
+def putaway_tasks(receipt_id: int, db: Session = Depends(get_db),
+                  staff: dict = Depends(require_role("receiver", "manager"))):
+    check_store(staff, service.get_receipt(db, receipt_id).store_id)
+    return service.putaway_tasks(db, receipt_id)
+
+
+@router.post("/v1/goods-receipts/{receipt_id}/putaway", summary="Put units from the dock into a bin: sellable at once")
+def put_away(receipt_id: int, body: PutawayIn, db: Session = Depends(get_db),
+             staff: dict = Depends(require_role("receiver", "manager"))):
+    check_store(staff, service.get_receipt(db, receipt_id).store_id)
+    return service.put_away(db, receipt_id, body.sku_id, body.batch_no, body.bin_code, body.qty, body.actor)
 
 
 @router.get("/v1/goods-receipts/{receipt_id}", summary="A goods receipt and its lines")
