@@ -1,4 +1,5 @@
 """Pick & Pack Service (HLD service 5): give pickers work, check every scan, pack the order."""
+from datetime import date
 from string import ascii_uppercase
 
 from sqlalchemy import select, update
@@ -144,6 +145,12 @@ def scan(db: Session, task_id: int, barcode: str, qty: int = 1, picker_id: str |
         db.commit()                   # keeps only last_activity_at: a wrong scan still shows the handheld is alive
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
+    if task.stock_item is not None and task.stock_item.expiry_date < date.today():
+        db.commit()                   # keeps only last_activity_at, as above
+        metrics.SCANS.labels("mismatch").inc()
+        # The batch expired after the order was paid: never sell it. Not on shelf moves the line to a fresh batch.
+        return {"match": False, "message": f"This batch expired on {task.stock_item.expiry_date.isoformat()}. "
+                                           "Put it aside and press Not on shelf."}
     # Conditional, like the claim: the units are added only if the line still has room for them.
     added = db.execute(
         update(PickTask)
