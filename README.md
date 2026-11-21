@@ -10,7 +10,7 @@ can later be split out, moved to PostgreSQL, or put behind Kafka without a redes
 
 ## Live demo
 
-Hosted on the course's lab servers (release `v1.1`). The addresses work only from the campus network.
+Hosted on the course's lab servers. The addresses work only from the campus network.
 
 | What | Where |
 | --- | --- |
@@ -127,6 +127,9 @@ docker compose --profile monitoring up --build
 ![Grafana dashboard during a load test](docs/img/grafana-dashboard.png)
 
 `docker compose down -v` stops everything and deletes the stored data.
+
+**On a server:** [docs/DEPLOY_AWS.md](docs/DEPLOY_AWS.md) puts the prototype on one AWS EC2 instance with Docker,
+with the settings in `deploy.env` (template: `deploy.env.example`), plus optional RDS, HTTPS and monitoring.
 
 ## Logging in
 
