@@ -8,6 +8,7 @@ add and drop from local demand and shelf space.
 from datetime import datetime, time, timedelta
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ...errors import DomainError
@@ -31,13 +32,22 @@ def list_assortment(db: Session, store_id: int) -> list[dict]:
 
 
 def add_sku(db: Session, store_id: int, sku_id: int, reorder_point: int = 10, target_stock: int = 40) -> dict:
+    """Start carrying a SKU. Commits. 409 already_stocked, also for the second of two clicks that both got past the
+    check before either was saved (issue #63: that was a 500)."""
     inventory.get_store(db, store_id)
-    sku = inventory.get_sku(db, sku_id)
+    name = inventory.get_sku(db, sku_id).name
+    already = DomainError(409, "already_stocked", f"Store {store_id} already carries {name}")
     if db.get(StockLevel, (store_id, sku_id)) is not None:
-        raise DomainError(409, "already_stocked", f"Store {store_id} already carries {sku.name}")
+        raise already
     db.add(StockLevel(store_id=store_id, sku_id=sku_id, reorder_point=reorder_point, target_stock=target_stock))
-    db.commit()
-    return {"store_id": store_id, "sku_id": sku_id, "name": sku.name}
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if db.get(StockLevel, (store_id, sku_id)) is None:
+            raise                                       # some other constraint: not a double click
+        raise already from None
+    return {"store_id": store_id, "sku_id": sku_id, "name": name}
 
 
 def catalogue(db: Session) -> list[dict]:

@@ -1,13 +1,15 @@
 """Assortment recommendations (guide task 3.7): what to add, what to drop, and how much shelf room is left."""
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.models import StockLedger, StockLevel, TransferOrder, TransferOrderLine
 from app.modules.replenishment import service as replenishment
 
 from .conftest import assert_stock_is_consistent, place_paid_order, plant_sales
+from .test_id_limits import api  # noqa: F401  (a fixture: the admin client, a server error comes back as a 500)
 
 URL = "/v1/stores/{}/assortment/recommendations"
 
@@ -101,3 +103,42 @@ def test_a_truck_ordered_while_dropping_stops_the_drop(client, sku, monkeypatch)
     refused = client.delete(f"/v1/stores/2/assortment/{bananas}")
     assert refused.status_code == 409 and "6 on their way" in refused.json()["error"]["message"]
     assert len(client.get("/v1/stores/2/assortment").json()) == 16             # bananas are still carried
+
+
+def test_reorder_settings_that_cannot_work_are_refused(client, sku):
+    """Issue #63: a negative reorder point was accepted, so the SKU was never reordered and quietly ran out. The
+    target must also be above the reorder point, as forecasting always sets it: a reorder refills up to the target."""
+    bananas = sku("Bananas")
+    assert client.delete(f"/v1/stores/2/assortment/{bananas}").status_code == 200
+    url = "/v1/stores/2/assortment"
+    for settings in ({"reorder_point": -5}, {"reorder_point": 0, "target_stock": 0}, {"target_stock": 100_001},
+                     {"reorder_point": 100_001, "target_stock": 100_000}, {"reorder_point": 40, "target_stock": 40}):
+        refused = client.post(url, json={"sku_id": bananas, **settings})
+        assert refused.status_code == 422, settings
+    added = client.post(url, json={"sku_id": bananas, "reorder_point": 0, "target_stock": 1})
+    assert added.status_code == 201, added.text                         # the smallest settings that work
+
+
+def test_adding_one_sku_twice_at_once_is_a_409_not_a_500(api, sku):
+    """Issue #63: both clicks passed the "already carried" check, and the second insert was a 500."""
+    bananas = sku("Bananas")
+    assert api.delete(f"/v1/stores/2/assortment/{bananas}").status_code == 200
+    first_click = []
+
+    def first_click_lands_meanwhile(session, flush_context, instances):
+        """Runs as the second click is about to insert, after it has checked that the store does not carry it."""
+        if not first_click and any(isinstance(obj, StockLevel) for obj in session.new):
+            first_click.append(True)
+            with SessionLocal() as other:
+                other.add(StockLevel(store_id=2, sku_id=bananas, reorder_point=10, target_stock=40))
+                other.commit()
+
+    event.listen(Session, "before_flush", first_click_lands_meanwhile)
+    try:
+        second_click = api.post("/v1/stores/2/assortment", json={"sku_id": bananas})
+    finally:
+        event.remove(Session, "before_flush", first_click_lands_meanwhile)
+    assert first_click == [True]
+    assert second_click.status_code == 409, second_click.text
+    assert second_click.json()["error"]["code"] == "already_stocked"
+    assert_stock_is_consistent()
