@@ -130,7 +130,9 @@ Handlers must not call `db.commit()`: the code that published the event commits 
 
 ## 5. Transactions: who commits?
 
-- Functions called straight from a router (`reserve`, `confirm`, `pack`, `receive_goods`, ...) commit.
+- Functions called straight from a router (`reserve`, `confirm`, `pack`, ...) commit. A write that takes an
+  `Idempotency-Key` (`inventory.adjust`, the receiving steps in `inbound`) is called with `commit=False`, and
+  `run_once` commits it together with the saved answer.
 - Helper functions that are one step of a bigger operation (`inventory.receive`, `commit_sale`,
   `unreserve`, `write_off_missing`, `fulfilment.create_job`) do **not** commit. Their docstrings say so.
 - Event handlers never commit.
@@ -183,7 +185,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered (same category, never dearer); only that offer can be accepted, with `POST /v1/fulfilment-jobs/{id}/substitutions` (`inventory.swap_line`), the picker answering for the customer | Member 2: done |
 | Stuck orders | No claim, scan or shelf report for `PICK_STALL_MINUTES`: back to the queue every `STALL_CHECK_SECONDS` (`fulfilment.recover_stalled`), or flagged if items are in a tote | Member 2: done |
 | Batch picking at peak | Up to `BATCH_SIZE` oldest orders in one walk at peak, one tote each; not grouped by where their items are | Member 2: done |
-| Scan-item-then-bin putaway | One call receives and puts away | Member 3 |
+| Scan-item-then-bin putaway | Saved goods receipts in five steps: open, scan onto the dock, putaway tasks, put away line by line (sellable at once), close with the shortfalls; damaged and short-dated units are never stocked; `Idempotency-Key` on every write | Member 3: done; the ops screen still receives in one call |
 | Store edge node | Not built; design note and an outage experiment in [`EDGE_NODE.md`](EDGE_NODE.md) | Member 4 (design only) |
 | Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); Prometheus with the alert rules and a Grafana dashboard in Docker Compose (`--profile monitoring`); no Alertmanager | Members 2, 3 and 4 |
 
