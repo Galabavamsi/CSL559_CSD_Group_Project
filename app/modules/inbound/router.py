@@ -1,14 +1,21 @@
 from datetime import date
+from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
+from ...idempotency import run_once
 from . import service
 
 router = APIRouter(tags=["inbound"])
+
+# Every receiving write takes one (task 3.5 with Member 1's task 1.4): a retried scan or putaway does not count twice.
+IdempotencyKey = Annotated[str | None, Header(
+    min_length=1, max_length=80,
+    description="Any unique string. A retry with the same key is not done again; it returns the first answer.")]
 
 
 class ReceiptLineIn(BaseModel):
@@ -45,28 +52,34 @@ class PutawayIn(BaseModel):
     qty: int = Field(gt=0)
 
 
-@router.post("/v1/goods-receipts", status_code=201)
-def create_goods_receipt(body: GoodsReceiptIn, db: Session = Depends(get_db),
+@router.post("/v1/goods-receipts", status_code=201, summary="Receive a whole truck in one call")
+def create_goods_receipt(body: GoodsReceiptIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
                          staff: dict = Depends(require_role("receiver", "manager"))):
+    """Runs the five receiving steps in order and saves the receipt. A batch with less than half its shelf life left
+    is listed under `rejected`."""
     check_store(staff, body.store_id)
-    return service.receive_goods(db, body.store_id, [line.model_dump() for line in body.lines],
-                                 body.transfer_order_id, actor=staff["sub"])
+    return run_once(db, "goods-receipt", idempotency_key, body.model_dump(),
+                    lambda: service.receive_goods(db, body.store_id, [line.model_dump() for line in body.lines],
+                                                  body.transfer_order_id, actor=staff["sub"], commit=False))
 
 
 @router.post("/v1/goods-receipts/open", status_code=201, summary="Start receiving a truck (no stock changes yet)")
-def open_receipt(body: OpenReceiptIn, db: Session = Depends(get_db),
+def open_receipt(body: OpenReceiptIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
                  staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, body.store_id)
-    return service.open_receipt(db, body.store_id, body.transfer_order_id)
+    return run_once(db, "goods-receipt-open", idempotency_key, body.model_dump(),
+                    lambda: service.open_receipt(db, body.store_id, body.transfer_order_id, commit=False))
 
 
 @router.post("/v1/goods-receipts/{receipt_id}/scans", summary="Scan units off the truck onto the dock")
-def scan(receipt_id: int, body: ScanIn, db: Session = Depends(get_db),
+def scan(receipt_id: int, body: ScanIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
          staff: dict = Depends(require_role("receiver", "manager"))):
     """Good units wait on the dock, not yet sellable. Damaged units (`damaged: true`) and a batch with less than half
     its shelf life left are recorded on the receipt and never stocked."""
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
-    return service.scan(db, receipt_id, body.barcode, body.qty, body.batch_no, body.expiry_date, body.damaged)
+    return run_once(db, "goods-receipt-scan", idempotency_key, {"receipt_id": receipt_id, **body.model_dump()},
+                    lambda: service.scan(db, receipt_id, body.barcode, body.qty, body.batch_no, body.expiry_date,
+                                         body.damaged, commit=False))
 
 
 @router.get("/v1/goods-receipts/{receipt_id}/putaway-tasks", summary="Where to put what waits on the dock")
@@ -77,20 +90,22 @@ def putaway_tasks(receipt_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/v1/goods-receipts/{receipt_id}/putaway", summary="Put units from the dock into a bin: sellable at once")
-def put_away(receipt_id: int, body: PutawayIn, db: Session = Depends(get_db),
+def put_away(receipt_id: int, body: PutawayIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
              staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
-    return service.put_away(db, receipt_id, body.sku_id, body.batch_no, body.bin_code, body.qty,
-                            actor=staff["sub"])
+    return run_once(db, "goods-receipt-putaway", idempotency_key, {"receipt_id": receipt_id, **body.model_dump()},
+                    lambda: service.put_away(db, receipt_id, body.sku_id, body.batch_no, body.bin_code, body.qty,
+                                             actor=staff["sub"], commit=False))
 
 
 @router.post("/v1/goods-receipts/{receipt_id}/close", summary="Finish a receipt: order received, shortfalls reported")
-def close_receipt(receipt_id: int, db: Session = Depends(get_db),
+def close_receipt(receipt_id: int, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
                   staff: dict = Depends(require_role("receiver", "manager"))):
     """Refused while good units wait on the dock. Reports ordered versus received (with damaged and rejected units)
     for every SKU ordered or scanned, marks the transfer order received and publishes goods.received."""
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
-    return service.close_receipt(db, receipt_id)
+    return run_once(db, "goods-receipt-close", idempotency_key, {"receipt_id": receipt_id},
+                    lambda: service.close_receipt(db, receipt_id, commit=False))
 
 
 @router.get("/v1/goods-receipts/{receipt_id}", summary="A goods receipt and its lines")

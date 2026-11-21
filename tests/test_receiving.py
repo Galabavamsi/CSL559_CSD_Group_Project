@@ -89,7 +89,8 @@ def test_exactly_half_its_shelf_life_left_is_accepted(client, db, sku):
 def test_receipt_rules_at_open_and_scan(client, db, sku):
     bread = sku("White bread")
     order, receipt = open_truck(client)
-    again = client.post("/v1/goods-receipts/open", json={"store_id": 1, "transfer_order_id": order["transfer_order_id"]})
+    again = client.post("/v1/goods-receipts/open",
+                        json={"store_id": 1, "transfer_order_id": order["transfer_order_id"]})
     assert again.status_code == 409 and again.json()["error"]["code"] == "receipt_open"
     elsewhere = client.post("/v1/goods-receipts/open",
                             json={"store_id": 2, "transfer_order_id": order["transfer_order_id"]})
@@ -301,3 +302,40 @@ def test_the_ledger_names_who_received_the_stock(client_as, db, sku):
     actors = db.scalars(select(StockLedger.actor).where(StockLedger.store_id == 1, StockLedger.sku_id == bread,
                                                          StockLedger.reference.like("grn:%"))).all()
     assert actors == ["test-receiver", "test-receiver"]       # from the login, not from the request body
+
+
+def test_a_retried_scan_counts_once(client, db, sku):
+    bread = sku("White bread")
+    _, receipt = open_truck(client)
+    url = f"/v1/goods-receipts/{receipt['receipt_id']}/scans"
+    body = {"barcode": db.get(SKU, bread).barcode, "qty": 40, "batch_no": "B-KEY"}
+    first = client.post(url, json=body, headers={"Idempotency-Key": "scan-1"})
+    again = client.post(url, json=body, headers={"Idempotency-Key": "scan-1"})
+    assert first.json() == again.json()
+    assert line_of(client.get(f"/v1/goods-receipts/{receipt['receipt_id']}").json(), bread)["scanned"] == 40
+    reused = client.post(url, json={**body, "qty": 1}, headers={"Idempotency-Key": "scan-1"})
+    assert reused.status_code == 422 and reused.json()["error"]["code"] == "idempotency_key_reused"
+
+
+def test_a_retried_one_call_receipt_receives_once(client, sku):
+    bread = sku("White bread")
+    before = atp(client, 1, bread)
+    body = {"store_id": 1, "lines": [{"sku_id": bread, "qty": 10}]}
+    first = client.post("/v1/goods-receipts", json=body, headers={"Idempotency-Key": "grn-1"})
+    again = client.post("/v1/goods-receipts", json=body, headers={"Idempotency-Key": "grn-1"})
+    assert (first.status_code, again.status_code) == (201, 201) and first.json() == again.json()
+    assert atp(client, 1, bread) == before + 10
+    assert_stock_is_consistent()
+
+
+def test_only_receivers_and_managers_of_the_store_can_receive(client, client_as, db, sku):
+    _, receipt = open_truck(client)
+    url = f"/v1/goods-receipts/{receipt['receipt_id']}"
+    assert client_as("picker", 1).post("/v1/goods-receipts/open", json={"store_id": 1}).status_code == 403
+    assert client_as("receiver", 2).post("/v1/goods-receipts/open", json={"store_id": 1}).status_code == 403
+    assert client_as("receiver", 1).post("/v1/goods-receipts/open", json={"store_id": 1}).status_code == 201
+    one_bread = {"barcode": db.get(SKU, sku("White bread")).barcode, "qty": 1}
+    assert client_as("receiver", 2).post(f"{url}/scans", json=one_bread).status_code == 403
+    assert client_as("manager", 1).post(f"{url}/scans", json=one_bread).status_code == 200
+    assert client_as("picker", 2).get(url).status_code == 403
+    assert client_as("picker", 1).get(url).status_code == 200
