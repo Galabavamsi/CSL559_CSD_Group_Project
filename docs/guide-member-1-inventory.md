@@ -30,6 +30,7 @@ Open `app/modules/inventory/service.py` and read it top to bottom once (about 15
 | `release` | `DELETE /v1/reservations/{id}` | Gives held stock back | yes |
 | `sweep_expired` | `POST /v1/admin/sweep-reservations` | Releases holds past their time | yes |
 | `receive` | Inbound (Member 3) | Adds units to a bin; they are sellable at once | no |
+| `other_batch_date` | `receive`, Inbound (Member 3) | The expiry date a batch number already has in the store, if it is another one: `receive` refuses that delivery, Inbound refuses it at the scan | read only |
 | `adjust` | `POST /v1/stock-adjustments` | Damage, expiry, theft, count corrections | yes |
 | `commit_sale` | Pick & Pack (Member 2) | Removes picked units and ends their hold | no |
 | `write_off_missing` | Pick & Pack (Member 2) | Corrects the count when a shelf is empty | no |

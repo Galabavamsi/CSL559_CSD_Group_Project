@@ -96,7 +96,9 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     away. Damaged units, and a batch with less than MIN_REMAINING_SHELF_LIFE of its shelf life left, are recorded on
     the receipt and never stocked. The API requires batch and expiry; the one-call receipt may leave them out (full
     shelf life, and a batch named after its expiry date, so units with different dates never share a batch: #56).
-    422 unknown_barcode; 422 batch_mismatch for a batch already scanned with another expiry; 409 receipt_closed."""
+    422 unknown_barcode; 422 batch_mismatch for a batch already scanned with another expiry; 409
+    batch_expiry_mismatch for good units whose batch number the store already has with another expiry date (see
+    `_check_batch_date`); 409 receipt_closed."""
     receipt = _lock_open(db, receipt_id)
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Scanned quantity must be at least 1")
@@ -106,24 +108,28 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     expiry = expiry_date or date.today() + timedelta(days=sku.shelf_life_days)
     batch_no = batch_no or f"B{expiry:%y%m%d}"
     line = next((ln for ln in receipt.lines if ln.sku_id == sku.id and ln.batch_no == batch_no), None)
-    if line is None:
-        line = GoodsReceiptLine(sku_id=sku.id, sku=sku, batch_no=batch_no, expiry_date=expiry, qty_scanned=0,
-                                qty_damaged=0, qty_rejected=0, qty_put_away=0)
-        receipt.lines.append(line)
-    elif line.expiry_date != expiry:
+    if line is not None and line.expiry_date != expiry:
         raise DomainError(422, "batch_mismatch", f"Batch {batch_no} of {sku.name} was scanned with expiry "
                                                  f"{line.expiry_date}, not {expiry}")
     days_left = (expiry - date.today()).days
     if damaged:
-        line.qty_damaged += qty
         outcome, reason = "damaged", "Damaged on arrival: recorded, never stocked"
     elif days_left < config.MIN_REMAINING_SHELF_LIFE * sku.shelf_life_days:
-        line.qty_rejected += qty
         outcome, reason = "rejected", (f"Refused: {days_left} of {sku.shelf_life_days} days of shelf life left, "
                                        f"at least {config.MIN_REMAINING_SHELF_LIFE:.0%} is needed")
     else:
-        line.qty_scanned += qty
         outcome, reason = "on_dock", None
+        _check_batch_date(db, receipt, sku, batch_no, expiry)      # before anything is written down
+    if line is None:
+        line = GoodsReceiptLine(sku_id=sku.id, sku=sku, batch_no=batch_no, expiry_date=expiry, qty_scanned=0,
+                                qty_damaged=0, qty_rejected=0, qty_put_away=0)
+        receipt.lines.append(line)
+    if outcome == "damaged":
+        line.qty_damaged += qty
+    elif outcome == "rejected":
+        line.qty_rejected += qty
+    else:
+        line.qty_scanned += qty
     db.flush()
     view = receipt_view(receipt)
     view["scan"] = {"sku_id": sku.id, "sku": sku.name, "batch_no": batch_no, "qty": qty, "outcome": outcome,
@@ -133,12 +139,42 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     return view
 
 
+def _check_batch_date(db: Session, receipt: GoodsReceipt, sku: SKU, batch_no: str, expiry: date) -> None:
+    """A batch number means one expiry date: inventory.receive refuses the rest at putaway (#56). Refuse good units
+    whose number the store already has with another date, on the shelf or waiting on another open receipt's dock,
+    while the case is still at the dock and can be given its own number. Accepted, the line could be put away only
+    under this number, so it would wait on the dock until it was sent back. Two receipts scanning one number at the
+    same moment can both pass; putaway still refuses the second, and its task says so. 409 batch_expiry_mismatch."""
+    on_shelf = inventory.other_batch_date(db, receipt.store_id, sku.id, batch_no, expiry)
+    if on_shelf is not None:
+        raise DomainError(409, "batch_expiry_mismatch",
+                          f"Batch {batch_no} of {sku.name} is already in this store with expiry date "
+                          f"{on_shelf.isoformat()}, not {expiry.isoformat()}; give this case its own batch number",
+                          {"batch_no": batch_no, "expiry_date": on_shelf.isoformat()})
+    on_dock = db.execute(
+        select(GoodsReceiptLine.expiry_date, GoodsReceiptLine.receipt_id)
+        .join(GoodsReceipt, GoodsReceipt.id == GoodsReceiptLine.receipt_id)
+        .where(GoodsReceipt.store_id == receipt.store_id, GoodsReceipt.status == "open",
+               GoodsReceipt.id != receipt.id, GoodsReceiptLine.sku_id == sku.id,
+               GoodsReceiptLine.batch_no == batch_no, GoodsReceiptLine.expiry_date != expiry,
+               GoodsReceiptLine.qty_scanned > GoodsReceiptLine.qty_put_away)
+        .limit(1)
+    ).first()
+    if on_dock is not None:
+        raise DomainError(409, "batch_expiry_mismatch",
+                          f"Batch {batch_no} of {sku.name} is waiting on the dock of goods receipt "
+                          f"{on_dock.receipt_id} with expiry date {on_dock.expiry_date.isoformat()}, not "
+                          f"{expiry.isoformat()}; give this case its own batch number",
+                          {"batch_no": batch_no, "expiry_date": on_dock.expiry_date.isoformat(),
+                           "receipt_id": on_dock.receipt_id})
+
+
 def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
     """Where to put what waits on the dock (HLD 6.3, step 3): one task per bin portion from slotting.place, the SKU's
-    planned home bin first, then its own bins, never past a bin's capacity. A line that cannot be placed gets one task
-    with bin_code None and
-    the reason. Tasks reflect the bins as they are now: put lines away one at a time. None once the receipt is closed
-    or cancelled: what was left on the dock went back. Read-only."""
+    planned home bin first, then its own bins, never past a bin's capacity. A line that cannot be placed, or whose
+    batch number the store has with another expiry date (putaway would refuse it), gets one task with bin_code None
+    and the reason. Tasks reflect the bins as they are now: put lines away one at a time. None once the receipt is
+    closed or cancelled: what was left on the dock went back. Read-only."""
     receipt = get_receipt(db, receipt_id)
     if receipt.status != "open":
         return []
@@ -149,6 +185,13 @@ def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
             continue
         task = {"sku_id": line.sku_id, "sku": line.sku.name, "batch_no": line.batch_no,
                 "expiry_date": line.expiry_date.isoformat()}
+        other_date = inventory.other_batch_date(db, receipt.store_id, line.sku_id, line.batch_no, line.expiry_date)
+        if other_date is not None:
+            tasks.append({**task, "qty": on_dock, "bin_code": None,
+                          "problem": f"Batch {line.batch_no} is already in this store with expiry date "
+                                     f"{other_date.isoformat()}, so these cannot be put away under that number: "
+                                     "close with send_back to return them to the hub"})
+            continue
         try:
             portions = slotting.place(db, receipt.store_id, line.sku_id, on_dock)
         except DomainError as error:                # no bin of that zone, or not enough room in it
@@ -162,7 +205,8 @@ def put_away(db: Session, receipt_id: int, sku_id: int, batch_no: str, bin_code:
              actor: str = "receiver", commit: bool = True) -> dict:
     """Move units from the dock into a bin (HLD 6.3, step 4). They are sellable as soon as this commits, whatever is
     still on the dock. 422 not_scanned, too_many (more than is on the dock), bad_bin, wrong_zone; 409 bin_full when
-    the bin has no room, checked again right after writing; 409 receipt_closed."""
+    the bin has no room, checked again right after writing; 409 batch_expiry_mismatch (from inventory.receive) when
+    the store has this batch number with another expiry date; 409 receipt_closed."""
     receipt = _lock_open(db, receipt_id)
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Quantity to put away must be at least 1")
