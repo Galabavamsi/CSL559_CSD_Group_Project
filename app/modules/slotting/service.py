@@ -169,6 +169,50 @@ def lock_bin(db: Session, bin_id: int) -> None:
                .execution_options(synchronize_session=False))
 
 
+def apply(db: Session, store_id: int, actor: str = "manager", commit: bool = True) -> dict:
+    """Do the re-slotting plan through inventory.move: two `move` ledger rows per batch, nothing gained or lost.
+
+    The store's bins are locked first, so a putaway waits and the plan is made from what the bins hold now. A batch
+    moves only when its new bin has room for it right then, so no bin is ever over capacity, even between two moves;
+    one that has to wait is tried again while other moves free some room. Skipped, and left where it is: a batch a
+    picker has been sent to (`promised_to_picker`, guide step 4), and one still without room at the end (`no_room`,
+    such as two full bins that would have to swap). `commit=False` leaves the transaction open for run_once."""
+    inventory.get_store(db, store_id)
+    bins = {bin_.code: bin_ for bin_ in db.scalars(select(Bin).where(Bin.store_id == store_id).order_by(Bin.id))}
+    for bin_ in bins.values():
+        lock_bin(db, bin_.id)
+    waiting = plan(db, store_id)["moves"]
+    moved: list[dict] = []
+    skipped: list[dict] = []
+    while waiting:
+        still = []
+        for move in waiting:
+            to = bins[move["to_bin"]]
+            if move["qty"] > room_in(db, to):
+                still.append(move)
+                continue
+            try:
+                inventory.move(db, db.get(StockItem, move["stock_item_id"]), to.id, move["qty"], reference="reslot",
+                               actor=actor)
+            except DomainError as error:
+                if error.code != "promised_to_picker":
+                    raise
+                skipped.append({**move, "code": error.code, "reason": error.message})
+                continue
+            moved.append(move)
+        if len(still) == len(waiting):                  # a whole pass and nothing moved or was skipped: stuck
+            break
+        waiting = still
+    skipped += [{**move, "code": "no_room",
+                 "reason": f"Bin {move['to_bin']} has no room for {move['qty']} more units, even after the other moves"}
+                for move in waiting]
+    db.flush()
+    result = {"store_id": store_id, "moved": moved, "skipped": skipped}
+    if commit:
+        db.commit()
+    return result
+
+
 def ensure_room(db: Session, store_id: int, bin_id: int, qty: int) -> None:
     """409 bin_full when `qty` more units would overfill the bin. A bin that is not in the store is left for
     inventory.receive to refuse. Read-only."""
