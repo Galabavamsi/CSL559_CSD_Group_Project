@@ -4,7 +4,10 @@ Store 1 of the demo data, by walk_seq (1 is next to the desk): ambient A-01-01 b
 A-01-04 rice, A-02-01 atta, A-02-02 sugar, A-02-03 tea, A-02-04 noodles, A-03-01 chips, A-03-02 oil, A-03-03 soap,
 A-03-04 empty; chilled C-01-01 milk (batch M-OLD), C-01-02 curd, C-01-03 paneer, C-01-04 milk (M-NEW); frozen F-01-01
 ice cream, F-01-02 peas."""
+import subprocess
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select, update
 
@@ -249,3 +252,38 @@ def test_suggest_bin_prefers_the_home_bin(client, db, sku):
         return client.get("/v1/slotting/suggest", params={"store_id": 1, "sku_id": sku_id}).json()["code"]
 
     assert (suggested(chips), suggested(rice)) == ("A-01-01", "A-01-04")   # rice does not sell: kept together
+
+
+def test_the_walk_gets_shorter_when_a_fast_mover_was_far_from_the_desk(db, sku):
+    """The measurement of scripts/compare_slotting.py on sales that do not change with the date: chips sell three
+    times as fast as bread but sit at A-03-01 (walk_seq 9)."""
+    from scripts.compare_slotting import measure
+
+    plant_sales(db, {sku("Potato chips"): every_day(9), sku("White bread"): every_day(3)})
+    result = measure(db, 1, orders=30, random_seed=1)
+    everything = result["all"]
+    assert (result["orders"], result["moved"], result["skipped"]) == (30, 3, 0)
+    assert everything["orders"] == result["ambient_only"]["orders"] == 30            # chips and bread are ambient
+    assert everything["after"] < everything["before"] / 2
+    assert_stock_is_consistent()
+
+
+def test_compare_measures_the_demo_data_with_generated_sales(fresh_data):
+    from scripts.compare_slotting import compare
+
+    result = compare(orders=20, random_seed=1)
+    assert result["orders"] == result["all"]["orders"] == 20 and result["moved"] > 0
+    assert 0 <= result["ambient_only"]["orders"] <= 20
+    assert_stock_is_consistent()
+
+
+def test_compare_slotting_runs_from_the_command_line():
+    """On its own throwaway database, like scripts/compare_picking.py: it never touches darkstore.db."""
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run([sys.executable, "scripts/compare_slotting.py", "--orders", "20", "--seed", "1"], cwd=root,
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert "20 random orders in store 1" in done.stdout
+    assert "All orders" in done.stdout and "Ambient items only" in done.stdout
+    assert "Before re-slotting" in done.stdout and "after re-slotting" in done.stdout
+    assert "the plan saves" in done.stdout and "-0%" not in done.stdout
