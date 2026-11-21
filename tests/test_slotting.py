@@ -6,13 +6,19 @@ A-03-04 empty; chilled C-01-01 milk (batch M-OLD), C-01-02 curd, C-01-03 paneer,
 ice cream, F-01-02 peas."""
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, update
 
+from app.db import SessionLocal
+from app.errors import DomainError
 from app.models import SKU, Bin, StockItem, StockLedger
 from app.modules.assortment import service as assortment
+from app.modules.inbound import service as inbound
 from app.modules.inventory import service as inventory
 from app.modules.slotting import service as slotting
 
@@ -287,3 +293,89 @@ def test_compare_slotting_runs_from_the_command_line():
     assert "All orders" in done.stdout and "Ambient items only" in done.stdout
     assert "Before re-slotting" in done.stdout and "after re-slotting" in done.stdout
     assert "the plan saves" in done.stdout and "-0%" not in done.stdout
+
+
+def test_a_batch_in_the_wrong_zone_goes_back_to_its_own_zone(client, db, sku):
+    """A count can record a SKU in a bin of the wrong zone: here 2 paneer in A-01-01, which chips need. The paneer goes
+    to the chilled bin already holding paneer; it was sent to an ambient bin, and inventory.move's wrong_zone then
+    failed every apply."""
+    chips, paneer = sku("Potato chips"), sku("Paneer")
+    plant_sales(db, {chips: every_day(9)})                     # chips: home A-01-01
+    nearest = db.scalar(select(Bin.id).where(Bin.store_id == 1, Bin.code == "A-01-01"))
+    inventory.adjust(db, 1, paneer, 2, "count", bin_id=nearest, actor="test")
+    assert moves_of(slotting.plan(db, 1))[paneer] == [("A-01-01", "C-01-03")]
+    applied = reslot(client)
+    assert applied.status_code == 200, applied.text
+    assert bins_holding(db, paneer) == {"C-01-03"}
+    assert_stock_is_consistent()
+
+
+def test_one_batch_that_cannot_move_does_not_stop_the_others(client, db, sku, monkeypatch):
+    chips, bread, eggs = sku("Potato chips"), sku("White bread"), sku("Eggs")
+    plant_sales(db, {chips: every_day(9), bread: every_day(3)})
+    real_move = inventory.move
+
+    def move_all_but_chips(session, item, to_bin_id, qty, **details):
+        if item.sku_id == chips:                    # say the units went missing since the plan was made
+            raise DomainError(409, "stock_mismatch", "The bin holds fewer units than the record says")
+        return real_move(session, item, to_bin_id, qty, **details)
+
+    monkeypatch.setattr(inventory, "move", move_all_but_chips)
+    applied = reslot(client)
+    assert applied.status_code == 200, applied.text
+    assert [(move["sku_id"], move["code"]) for move in applied.json()["skipped"]] == [(chips, "stock_mismatch")]
+    assert {move["sku_id"] for move in applied.json()["moved"]} == {bread, eggs}
+    assert_stock_is_consistent()
+
+
+def test_expired_batches_are_left_for_the_write_off(db, sku):
+    """Picking never sends anyone to an expired batch, so moving it would only take room in the home bin."""
+    chips = sku("Potato chips")
+    plant_sales(db, {chips: every_day(9)})
+    db.execute(update(StockItem).where(StockItem.store_id == 1, StockItem.sku_id == chips)
+               .values(expiry_date=date.today() - timedelta(days=1)))
+    db.commit()
+    assert chips not in moves_of(slotting.plan(db, 1))
+
+
+def test_apply_uses_the_days_of_the_plan_it_was_shown(client, db, sku):
+    chips, bread = sku("Potato chips"), sku("White bread")
+    plant_sales(db, {chips: dict.fromkeys(range(8, 15), 9), bread: dict.fromkeys(range(1, 8), 3)})
+    week = client.get("/v1/slotting/plan", params={"store_id": 1, "days": 7}).json()
+    applied = client.post("/v1/slotting/apply", params={"store_id": 1, "days": 7}).json()
+    assert applied["moved"] == week["moves"] == []      # over 7 days only bread sold, and it is nearest already
+    assert bins_holding(db, chips) == {"A-03-01"}
+
+
+def test_apply_and_a_one_call_receipt_take_turns(db, sku, monkeypatch):
+    """PostgreSQL: apply locks the store's bins in id order. A one-call receipt that had locked a chilled bin (higher
+    id) and then wanted an ambient one deadlocked with it, and one of them failed; now both take the bins in one
+    order. On SQLite one writer at a time makes them take turns anyway."""
+    milk, bread = sku("Toned milk"), sku("White bread")
+    plant_sales(db, {sku("Potato chips"): every_day(9)})
+    first_line_in, checks = threading.Event(), []
+    check = slotting.ensure_not_overfilled
+
+    def check_slowly(session, bin_id):
+        checks.append(bin_id)
+        if len(checks) == 1:                        # the receipt has put the milk away and holds its bin
+            first_line_in.set()
+            time.sleep(0.5)                         # apply starts now and locks what it can
+        return check(session, bin_id)
+
+    monkeypatch.setattr(slotting, "ensure_not_overfilled", check_slowly)
+
+    def receive() -> int:
+        with SessionLocal() as session:
+            lines = [{"sku_id": milk, "qty": 1}, {"sku_id": bread, "qty": 1}]
+            return inbound.receive_goods(session, 1, lines)["receipt_id"]
+
+    def reslot_now() -> int:
+        assert first_line_in.wait(5)
+        with SessionLocal() as session:
+            return len(slotting.apply(session, 1, actor="test")["moved"])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipt, applied = pool.submit(receive), pool.submit(reslot_now)
+        assert receipt.result() > 0 and applied.result() > 0
+    assert_stock_is_consistent()

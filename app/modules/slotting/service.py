@@ -5,6 +5,8 @@ gives each selling SKU a home bin, fastest nearest, and lists the batches to mov
 inventory.move. New deliveries go to the planned home bin first; otherwise a SKU is kept together, then the
 emptiest bin in the right temperature zone is used, and a bin is never filled past its capacity.
 """
+from datetime import date
+
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -47,9 +49,10 @@ def plan(db: Session, store_id: int, days: int = VELOCITY_DAYS) -> dict:
     """The re-slotting plan: fast movers near the packing station (HLD service 6). Read-only.
 
     homes: each selling SKU's home bin (see _homes). moves: whole batches, first every batch of a seller that is not
-    in its home, then anything else in a seller's home, out to the furthest bin of its zone that no seller has: one
-    already holding that SKU first, and only one with room for it. Other SKUs that did not sell stay where they are:
-    moving them would not shorten any walk."""
+    in its home, then anything else in a seller's home, out to the furthest bin of that SKU's own zone that no seller
+    has: one already holding that SKU first, and only one with room for it (a batch counted into a bin of the wrong
+    zone goes back to its own). Other SKUs that did not sell stay where they are: moving them would not shorten any
+    walk. Expired batches stay for the write-off: picking never sends anyone to them."""
     inventory.get_store(db, store_id)
     speeds = velocity(db, store_id, days)
     bins, homes = _homes(db, store_id, speeds)
@@ -61,6 +64,7 @@ def plan(db: Session, store_id: int, days: int = VELOCITY_DAYS) -> dict:
     for item in items:
         held[item.bin_id][item.sku_id] = held[item.bin_id].get(item.sku_id, 0) + item.qty
     moves: list[dict] = []
+    fresh = [item for item in items if item.expiry_date >= date.today()]       # what inventory.allocate would pick
 
     def move(item: StockItem, to: Bin) -> None:
         moves.append({"stock_item_id": item.id, "sku_id": item.sku_id, "sku": item.sku.name,
@@ -71,14 +75,14 @@ def plan(db: Session, store_id: int, days: int = VELOCITY_DAYS) -> dict:
 
     home_of = {sku.id: bin_ for sku, bin_ in homes}
     for sku, home in homes:
-        for item in items:
+        for item in fresh:
             if item.sku_id == sku.id and item.bin_id != home.id:
                 move(item, home)
     taken = {home.id for home in home_of.values()}
-    for item in items:
+    for item in fresh:
         if item.bin_id not in taken or item.sku_id in home_of:
             continue
-        spare = [bin_ for bin_ in reversed(bins) if bin_.zone == by_id[item.bin_id].zone and bin_.id not in taken
+        spare = [bin_ for bin_ in reversed(bins) if bin_.zone == item.sku.storage_type and bin_.id not in taken
                  and sum(held[bin_.id].values()) + item.qty <= bin_.capacity]
         target = next((bin_ for bin_ in spare if held[bin_.id].get(item.sku_id)), None) or next(iter(spare), None)
         if target is not None:
@@ -177,19 +181,29 @@ def lock_bin(db: Session, bin_id: int) -> None:
                .execution_options(synchronize_session=False))
 
 
-def apply(db: Session, store_id: int, actor: str = "manager", commit: bool = True) -> dict:
-    """Do the re-slotting plan through inventory.move: two `move` ledger rows per batch, nothing gained or lost.
+def lock_store_bins(db: Session, store_id: int) -> list[Bin]:
+    """Lock every bin of the store, in id order, until this transaction ends, and return them. Re-slotting and the
+    one-call receipt both take them in this one order, so on PostgreSQL neither can hold a bin the other waits for
+    while it waits for one the other holds (a deadlock)."""
+    bins = db.scalars(select(Bin).where(Bin.store_id == store_id).order_by(Bin.id)).all()
+    for bin_ in bins:
+        lock_bin(db, bin_.id)
+    return bins
+
+
+def apply(db: Session, store_id: int, days: int = VELOCITY_DAYS, actor: str = "manager", commit: bool = True) -> dict:
+    """Do the re-slotting plan (over the same `days` as the plan shown) through inventory.move: two `move` ledger rows
+    per batch, nothing gained or lost.
 
     The store's bins are locked first, so a putaway waits and the plan is made from what the bins hold now. A batch
     moves only when its new bin has room for it right then, so no bin is ever over capacity, even between two moves;
-    one that has to wait is tried again while other moves free some room. Skipped, and left where it is: a batch a
-    picker has been sent to (`promised_to_picker`, guide step 4), and one still without room at the end (`no_room`,
-    such as two full bins that would have to swap). `commit=False` leaves the transaction open for run_once."""
+    one that has to wait is tried again while other moves free some room. Skipped, and left where it is: a batch
+    inventory.move refuses, such as one a picker has been sent to (`promised_to_picker`, guide step 4), and one still
+    without room at the end (`no_room`, such as two full bins that would have to swap). One skipped batch never stops
+    the others. `commit=False` leaves the transaction open for run_once."""
     inventory.get_store(db, store_id)
-    bins = {bin_.code: bin_ for bin_ in db.scalars(select(Bin).where(Bin.store_id == store_id).order_by(Bin.id))}
-    for bin_ in bins.values():
-        lock_bin(db, bin_.id)
-    waiting = plan(db, store_id)["moves"]
+    bins = {bin_.code: bin_ for bin_ in lock_store_bins(db, store_id)}
+    waiting = plan(db, store_id, days)["moves"]
     moved: list[dict] = []
     skipped: list[dict] = []
     while waiting:
@@ -203,8 +217,6 @@ def apply(db: Session, store_id: int, actor: str = "manager", commit: bool = Tru
                 inventory.move(db, db.get(StockItem, move["stock_item_id"]), to.id, move["qty"], reference="reslot",
                                actor=actor)
             except DomainError as error:
-                if error.code != "promised_to_picker":
-                    raise
                 skipped.append({**move, "code": error.code, "reason": error.message})
                 continue
             moved.append(move)
