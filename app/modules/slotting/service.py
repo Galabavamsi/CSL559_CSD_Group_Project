@@ -103,13 +103,17 @@ def room_in(db: Session, bin_: Bin) -> int:
 
 
 def suggest_bin(db: Session, store_id: int, sku_id: int, qty: int = 0) -> Bin:
-    """The bin for `qty` more units of a SKU: a bin already holding it, if one has room, otherwise the emptiest bin
-    with room in the right temperature zone, nearest the packing desk. Read-only.
+    """The bin for `qty` more units of a SKU: its planned home bin (task 3.6) if that has room, then a bin already
+    holding it, otherwise the emptiest bin with room in the right temperature zone, nearest the packing desk.
+    Read-only.
 
     409 no_bin when the store has no bin of that zone, 409 bin_full when none has room for `qty`.
     """
     sku = inventory.get_sku(db, sku_id)
     load = _load(db, store_id)
+    home = home_bins(db, store_id).get(sku_id)
+    if home is not None and home.capacity - load.get(home.id, 0) >= qty:
+        return home
     same_sku = db.scalars(
         select(Bin).join(StockItem, StockItem.bin_id == Bin.id)
         .where(StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0,
@@ -132,8 +136,9 @@ def suggest_bin(db: Session, store_id: int, sku_id: int, qty: int = 0) -> Bin:
 
 
 def place(db: Session, store_id: int, sku_id: int, qty: int) -> list[tuple[Bin, int]]:
-    """Where `qty` more units of a SKU go, split over as many bins as it takes: the bins already holding it first
-    (nearest the packing desk first), then the emptiest bins of its zone, each only up to its capacity. Read-only.
+    """Where `qty` more units of a SKU go, split over as many bins as it takes: its planned home bin first (task
+    3.6: new stock re-slots a fast mover before anyone applies the plan), then the bins already holding it (nearest
+    the packing desk first), then the emptiest bins of its zone, each only up to its capacity. Read-only.
 
     409 no_bin when the store has no bin of that zone, 409 bin_full when the zone cannot take them all.
     """
@@ -148,9 +153,12 @@ def place(db: Session, store_id: int, sku_id: int, qty: int) -> list[tuple[Bin, 
     load = _load(db, store_id)
     own = set(db.scalars(select(StockItem.bin_id).where(
         StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0)))
+    home = home_bins(db, store_id).get(sku_id)
+    first = [b for b in bins if home is not None and b.id == home.id]
+    then = [b for b in bins if b.id in own and b not in first]
+    rest = sorted((b for b in bins if b not in first and b not in then), key=lambda b: (load.get(b.id, 0), b.walk_seq))
     portions, left = [], qty
-    for bin_ in [b for b in bins if b.id in own] + sorted((b for b in bins if b.id not in own),
-                                                          key=lambda b: (load.get(b.id, 0), b.walk_seq)):
+    for bin_ in first + then + rest:
         take = min(left, bin_.capacity - load.get(bin_.id, 0))
         if take > 0:
             portions.append((bin_, take))

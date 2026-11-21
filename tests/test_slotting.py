@@ -197,3 +197,55 @@ def test_staff_see_the_plan_and_only_managers_of_the_store_apply_it(client_as):
     assert reslot(client_as("picker", 1)).status_code == 403
     assert reslot(client_as("manager", 2)).status_code == 403
     assert reslot(client_as("manager", 1)).status_code == 200
+
+
+def open_receipt(client) -> int:
+    opened = client.post("/v1/goods-receipts/open", json={"store_id": 1})
+    assert opened.status_code == 201, opened.text
+    return opened.json()["receipt_id"]
+
+
+def scan_in(client, db, receipt_id: int, sku_id: int, qty: int) -> None:
+    sku = db.get(SKU, sku_id)
+    scanned = client.post(f"/v1/goods-receipts/{receipt_id}/scans", json={
+        "barcode": sku.barcode, "qty": qty, "batch_no": "NEW",
+        "expiry_date": (date.today() + timedelta(days=sku.shelf_life_days)).isoformat()})
+    assert scanned.status_code == 200, scanned.text
+
+
+def tasks(client, receipt_id: int) -> list[tuple[str, int]]:
+    return [(task["bin_code"], task["qty"])
+            for task in client.get(f"/v1/goods-receipts/{receipt_id}/putaway-tasks").json()]
+
+
+def test_a_delivery_goes_to_the_planned_home_bin(client, db, sku):
+    """Re-slotting as stock arrives: new units go to the SKU's planned home even before anyone applies the plan."""
+    chips = sku("Potato chips")
+    plant_sales(db, {chips: every_day(9)})                     # chips: home A-01-01, stock still in A-03-01
+    receipt = open_receipt(client)
+    scan_in(client, db, receipt, chips, 10)
+    assert tasks(client, receipt) == [("A-01-01", 10)]
+    one_call = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [{"sku_id": chips, "qty": 5}]})
+    assert one_call.status_code == 201, one_call.text
+    assert bins_holding(db, chips) == {"A-01-01", "A-03-01"}
+    assert_stock_is_consistent()
+
+
+def test_a_full_home_bin_falls_back_to_the_old_rule(client, db, sku):
+    chips = sku("Potato chips")
+    plant_sales(db, {chips: every_day(9)})
+    db.execute(update(Bin).where(Bin.store_id == 1, Bin.code == "A-01-01").values(capacity=10))
+    db.commit()                                                # 4 bread in it: room for 6
+    receipt = open_receipt(client)
+    scan_in(client, db, receipt, chips, 10)
+    assert tasks(client, receipt) == [("A-01-01", 6), ("A-03-01", 4)]     # the rest joins the chips already there
+
+
+def test_suggest_bin_prefers_the_home_bin(client, db, sku):
+    chips, rice = sku("Potato chips"), sku("Basmati rice")
+    plant_sales(db, {chips: every_day(9)})
+
+    def suggested(sku_id: int) -> str:
+        return client.get("/v1/slotting/suggest", params={"store_id": 1, "sku_id": sku_id}).json()["code"]
+
+    assert (suggested(chips), suggested(rice)) == ("A-01-01", "A-01-04")   # rice does not sell: kept together
