@@ -5,6 +5,7 @@ const phone = {
   store: Number(new URLSearchParams(location.search).get("store")) || 1,
   jobs: [],         // the orders being picked: one, or a batch at peak (task 2.6)
   walkSize: 0,      // how many orders this walk started with, so the last one of a batch keeps its tote
+  offer: null,      // a substitute offered for dropped units, waiting for the customer's answer (task 2.4)
 };
 const me = () => `picker${phone.store}`;
 // A walk is a batch if it started with more than one order (or, after a reload, still holds a tote past A).
@@ -19,11 +20,19 @@ function linesToPick() {
 }
 
 function show(card) {
-  for (const id of ["idle", "line", "pack"]) $(id).hidden = id !== card;
+  for (const id of ["idle", "offer", "line", "pack"]) $(id).hidden = id !== card;
 }
 
 function render() {
   $("who").textContent = me();
+  const offered = phone.offer && phone.jobs.find((j) => j.job_id === phone.offer.jobId && j.state === "picking");
+  if (offered) {                                      // answer the offer before walking on
+    const { qty, name, price } = phone.offer;
+    $("offer-what").textContent = `${batch() ? `Tote ${offered.tote}: ` : ""}${qty} × ${name} (Rs ${price})`;
+    show("offer");
+    return;
+  }
+  phone.offer = null;
   const lines = linesToPick();
   if (lines.length) {
     const { job, task } = lines[0];
@@ -116,7 +125,33 @@ async function notOnShelf() {
     return orderGone(error, job);
   }
   replaceJob(result.job);
+  phone.offer = result.substitute_offer
+    ? { jobId: job.job_id, droppedSkuId: task.sku_id, qty: result.dropped, ...result.substitute_offer } : null;
   say($("message"), result.message, result.dropped ? "bad" : "");
+  render();
+}
+
+/** In a real app the customer answers on their own phone; in the demo the picker answers for them. */
+async function acceptOffer() {
+  const offer = phone.offer;
+  const job = phone.jobs.find((j) => j.job_id === offer.jobId);
+  phone.offer = null;
+  let result;
+  try {
+    result = await api("POST", `/v1/fulfilment-jobs/${offer.jobId}/substitutions`,
+      { dropped_sku_id: offer.droppedSkuId, substitute_sku_id: offer.sku_id, qty: offer.qty, picker_id: me() }, me());
+  } catch (error) {
+    render();
+    return orderGone(error, job);
+  }
+  replaceJob(result.job);
+  say($("message"), result.message, "good");
+  render();
+}
+
+function declineOffer() {
+  phone.offer = null;
+  say($("message"), "No substitute: the missing item stays refunded.");
   render();
 }
 
@@ -146,6 +181,7 @@ function start() {
     phone.store = Number($("store").value);
     phone.jobs = [];
     phone.walkSize = 0;
+    phone.offer = null;
     history.replaceState(null, "", `?store=${phone.store}`);
     say($("message"), "");
     render();
@@ -155,6 +191,8 @@ function start() {
   $("scan-all").onclick = guarded($("message"), () => scan(true));
   $("short").onclick = guarded($("message"), notOnShelf);
   $("pack-btn").onclick = guarded($("message"), pack);
+  $("accept-offer").onclick = guarded($("message"), acceptOffer);
+  $("decline-offer").onclick = guarded($("message"), declineOffer);
   render();
   // Pick up orders this picker was already working on (e.g. after a page reload) without claiming new ones.
   api("GET", `/v1/fulfilment-jobs?store_id=${phone.store}&state=picking`, undefined, me())

@@ -1,4 +1,5 @@
 """Pick & Pack Service (HLD service 5): give pickers work, check every scan, pack the order."""
+from datetime import date
 from string import ascii_uppercase
 
 from sqlalchemy import select, update
@@ -144,6 +145,12 @@ def scan(db: Session, task_id: int, barcode: str, qty: int = 1, picker_id: str |
         db.commit()                   # keeps only last_activity_at: a wrong scan still shows the handheld is alive
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
+    if task.stock_item is not None and task.stock_item.expiry_date < date.today():
+        db.commit()                   # keeps only last_activity_at, as above
+        metrics.SCANS.labels("mismatch").inc()
+        # The batch expired after the order was paid: never sell it. Not on shelf moves the line to a fresh batch.
+        return {"match": False, "message": f"This batch expired on {task.stock_item.expiry_date.isoformat()}. "
+                                           "Put it aside and press Not on shelf."}
     # Conditional, like the claim: the units are added only if the line still has room for them.
     added = db.execute(
         update(PickTask)
@@ -178,6 +185,53 @@ def find_substitute(db: Session, store_id: int, sku_id: int, qty: int) -> dict |
         return None
     best = min(options, key=lambda row: (abs(row["price"] - wanted.price), row["price"], row["name"]))
     return {"sku_id": best["sku_id"], "name": best["name"], "price": best["price"]}
+
+
+def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id: int, qty: int,
+               picker_id: str | None = None) -> dict:
+    """The customer takes a substitute for units dropped from their order (task 2.4; in the demo the picker answers
+    for the customer). Commits.
+
+    Only units this order really dropped can be replaced: their hold is already gone, so `inventory.swap_line` holds
+    the substitute and rewrites the order's lines in this same transaction, and the dropped lines it answers are marked
+    `substituted` so they cannot be replaced twice. If the substitute sold out since it was offered, swap_line's
+    `409 insufficient_stock` comes back and nothing changes. The substitute becomes a new pending line in walking
+    order. `order.line_substituted` tells the Order service to charge for it, since `order.line_dropped` already
+    refunded the dropped units."""
+    job = fulfilment.get_job(db, job_id)
+    if not fulfilment.hold_if_picking(db, job):
+        raise DomainError(409, "job_not_picking",
+                          f"Order is {job.state}; a substitute can only join an order being picked")
+    _check_picker(db, job, picker_id)
+    dropped = [t for t in job.tasks if t.sku_id == dropped_sku_id and t.status == "short"]
+    if sum(t.qty for t in dropped) < qty:
+        db.rollback()
+        raise DomainError(409, "not_dropped", f"Only {sum(t.qty for t in dropped)} units of that item were dropped "
+                                              f"from this order, so {qty} cannot be replaced")
+    try:
+        inventory.swap_line(db, db.get(Reservation, job.reservation_id), dropped_sku_id, substitute_sku_id, qty)
+    except DomainError:
+        db.rollback()
+        raise
+    left = qty
+    for task in dropped:                      # mark what this answers; split a dropped line only part of which it uses
+        take = min(left, task.qty)
+        if take == task.qty:
+            task.status = "substituted"
+        elif take:
+            task.qty -= take
+            db.add(PickTask(job_id=job.id, sku_id=dropped_sku_id, qty=take, status="substituted"))
+        left -= take
+    db.flush()
+    fulfilment.add_pick_tasks(db, job, substitute_sku_id, qty)
+    fulfilment.resequence(db, job)
+    name = inventory.get_sku(db, substitute_sku_id).name
+    events.publish(db, "order.line_substituted", job.store_id,
+                   {"order_id": job.order_id, "job_id": job.id, "dropped_sku_id": dropped_sku_id,
+                    "substitute_sku_id": substitute_sku_id, "qty": qty,
+                    "charge_amount": fulfilment.refund_for(db, {substitute_sku_id: qty})})   # priced like refunds
+    db.commit()
+    return {"message": f"{qty} × {name} added to the order. Pick it on this walk.", "job": fulfilment.job_view(job)}
 
 
 def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker",

@@ -12,10 +12,15 @@ from . import counts, service
 
 router = APIRouter(tags=["inventory"])
 
+# Upper limits on quantities people type or send. Without them a huge number (10**20) reached the database and came
+# back as a 500 (an integer overflow); now it is a 422 that says which field is wrong.
+MAX_LINE_UNITS = 1000          # one line of a customer's cart
+MAX_BIN_UNITS = 100_000        # what one bin can hold: a counted quantity, or one stock adjustment
+
 
 class LineIn(BaseModel):
     sku_id: int
-    qty: int = Field(gt=0)
+    qty: int = Field(gt=0, le=MAX_LINE_UNITS)
 
 
 class ReservationIn(BaseModel):
@@ -40,7 +45,7 @@ class StockSettingsIn(BaseModel):
 class AdjustmentIn(BaseModel):
     store_id: int
     sku_id: int
-    delta: int
+    delta: int = Field(ge=-MAX_BIN_UNITS, le=MAX_BIN_UNITS)
     reason: str = Field(pattern="^(damage|expiry|theft|count)$")
     bin_id: int | None = None
     actor: str = "manager"
@@ -153,7 +158,7 @@ class CountStartIn(BaseModel):
 
 class CountedLineIn(BaseModel):
     sku_id: int
-    counted_qty: int = Field(ge=0)
+    counted_qty: int = Field(ge=0, le=MAX_BIN_UNITS)
 
 
 class CountSubmitIn(BaseModel):

@@ -15,6 +15,7 @@ const state = {
   trackTimer: null, // follows that order through the store until it is delivered or cancelled
   jobs: [],         // the picker's current orders: one, or a batch at peak (task 2.6)
   walkSize: 0,      // how many orders this walk started with, so the last one of a batch keeps its tote name
+  offer: null,      // a substitute offered for dropped units, waiting for the customer's answer (task 2.4)
 };
 
 // Each station logs in as a seeded demo user (common.js); the customer station needs no login.
@@ -194,6 +195,11 @@ function showOrderStatus(job) {
   if (missing && job.state !== "cancelled") {
     text += ` ${missing} ${missing === 1 ? "item was" : "items were"} out of stock and will be refunded.`;
   }
+  // Dropped units the customer took a substitute for (task 2.4): one entry per item, however its lines were split.
+  const swapped = {};
+  for (const t of job.tasks.filter((t) => t.status === "substituted")) swapped[t.sku] = (swapped[t.sku] || 0) + t.qty;
+  const swappedText = Object.entries(swapped).map(([name, qty]) => `${qty} × ${name}`).join(", ");
+  if (swappedText && job.state !== "cancelled") text += ` ${swappedText} replaced by a substitute.`;
   $("paid-status").textContent = text;
   const cancellable = job.state === "created" || job.state === "picking";
   $("cancel-paid").hidden = !cancellable;
@@ -262,6 +268,7 @@ const TASK_STATUS_TEXT = {
   short: "Dropped: none left in the store",
   reallocated: "Not here: moved to another bin",
   cancelled: "Order cancelled: put it back",
+  substituted: "Replaced by a substitute",
 };
 
 // A walk is a batch if it started with more than one order (or, after a reload, still holds a tote past A).
@@ -346,6 +353,12 @@ function renderJob() {
   const ready = jobs.find((j) => j.state === "picking" && !j.tasks.some((t) => t.status === "pending"));
   $("pack-row").hidden = !ready;
   $("pack").textContent = ready && inBatch() ? `Mark tote ${ready.tote} packed` : "Mark packed";
+  const offered = state.offer && jobs.find((j) => j.job_id === state.offer.jobId && j.state === "picking");
+  $("offer-row").hidden = !offered;
+  if (offered) {
+    const { qty, name, price } = state.offer;
+    $("offer-text").textContent = `${toteLabel(offered)}Offer the customer ${qty} × ${name} (Rs ${price}) instead?`;
+  }
   const bagged = jobs.find((j) => j.state === "packed");
   $("handover").hidden = !bagged;
   $("handover").textContent = bagged && inBatch() ? `Rider collected tote ${bagged.tote}` : "Rider collected the bag";
@@ -373,9 +386,33 @@ async function reportShort(job, task, found) {
     .catch((error) => explainIfOrderGone(error, job));
   if (!result) return;
   updateJob(result.job);
+  // Dropped units with something similar in stock: the customer may take it instead (task 2.4).
+  state.offer = result.substitute_offer
+    ? { jobId: job.job_id, droppedSkuId: task.sku_id, qty: result.dropped, ...result.substitute_offer } : null;
   say($("picker-message"), toteLabel(job) + result.message, result.dropped ? "bad" : "");
   renderJob();
   refreshOps();
+}
+
+/** In a real app the customer answers the offer on their phone; in the demo the picker answers for them. */
+async function acceptOffer() {
+  const offer = state.offer;
+  const job = state.jobs.find((j) => j.job_id === offer.jobId);
+  state.offer = null;
+  const result = await api("POST", `/v1/fulfilment-jobs/${offer.jobId}/substitutions`,
+    { dropped_sku_id: offer.droppedSkuId, substitute_sku_id: offer.sku_id, qty: offer.qty, picker_id: picker() },
+    picker()).catch((error) => { renderJob(); return explainIfOrderGone(error, job); });
+  if (!result) return;
+  updateJob(result.job);
+  say($("picker-message"), toteLabel(job) + result.message, "good");
+  renderJob();
+  refreshOps();
+}
+
+function declineOffer() {
+  state.offer = null;
+  say($("picker-message"), "No substitute: the missing item stays refunded.");
+  renderJob();
 }
 
 async function packJob() {
@@ -556,6 +593,7 @@ async function resetDemo() {
   state.cart = {};
   state.jobs = [];
   state.walkSize = 0;
+  state.offer = null;
   renderJob();
   say($("ops-message"), "Demo data reset.");
   say($("customer-message"), "");
@@ -609,6 +647,7 @@ async function start() {
     $("picker-id").textContent = picker();
     state.jobs = [];
     state.walkSize = 0;
+    state.offer = null;
     renderJob();
     connectLive().catch(() => {});
     await refreshOps();
@@ -622,6 +661,8 @@ async function start() {
   $("next-job").onclick = guarded($("picker-message"), nextJob);
   $("pack").onclick = guarded($("picker-message"), packJob);
   $("handover").onclick = guarded($("picker-message"), handover);
+  $("accept-offer").onclick = guarded($("picker-message"), acceptOffer);
+  $("decline-offer").onclick = guarded($("picker-message"), declineOffer);
   $("run-replenishment").onclick = guarded($("ops-message"), runReplenishment);
   $("run-forecast").onclick = guarded($("ops-message"), runForecast);
   $("sweep-holds").onclick = guarded($("ops-message"), sweepHolds);

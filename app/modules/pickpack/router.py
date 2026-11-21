@@ -35,6 +35,13 @@ class PackedIn(BaseModel):
     picker_id: str | None = Field(default=None, max_length=40, description="As for scans")
 
 
+class SubstituteIn(BaseModel):
+    dropped_sku_id: int = Field(description="The item dropped from the order (its empty-shelf report's line)")
+    substitute_sku_id: int = Field(description="The item offered instead (`substitute_offer.sku_id`)")
+    qty: int = Field(gt=0, le=MAX_UNITS)
+    picker_id: str | None = Field(default=None, max_length=40, description="As for scans")
+
+
 @router.get("/v1/pickers/{picker_id}/next-task")
 def next_task(picker_id: str, store_id: int, db: Session = Depends(get_db),
               staff: dict = Depends(require_role("picker", "packer"))):
@@ -66,6 +73,18 @@ def report_short(task_id: int, body: ShortIn | None = None, db: Session = Depend
     check_store(staff, service.task_store_id(db, task_id))
     return service.report_short(db, task_id, found=body.found if body else None,
                                 picker_id=body.picker_id if body else None)
+
+
+@router.post("/v1/fulfilment-jobs/{job_id}/substitutions",
+             summary="The customer takes the substitute for dropped units")
+def substitute(job_id: int, body: SubstituteIn, db: Session = Depends(get_db),
+               staff: dict = Depends(require_role("picker", "packer"))):
+    """Only units this order dropped can be replaced (`409 not_dropped`). The substitute is held and added as a new line
+    in walking order; `409 insufficient_stock` if it sold out since the offer. Publishes `order.line_substituted`
+    with the amount to charge. In the demo the picker answers for the customer."""
+    check_store(staff, fulfilment.get_job(db, job_id).store_id)
+    return service.substitute(db, job_id, body.dropped_sku_id, body.substitute_sku_id, body.qty,
+                              picker_id=body.picker_id)
 
 
 @router.post("/v1/fulfilment-jobs/{job_id}/packed")
