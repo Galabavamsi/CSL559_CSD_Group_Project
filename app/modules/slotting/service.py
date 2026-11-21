@@ -4,7 +4,7 @@ The prototype rule is simple: keep a SKU together, otherwise use the emptiest bi
 temperature zone, nearest to the packing desk, and never fill a bin past its capacity. Member 3's guide
 covers the real rule (fast movers nearest, items bought together close to each other).
 """
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ...errors import DomainError
@@ -82,6 +82,14 @@ def place(db: Session, store_id: int, sku_id: int, qty: int) -> list[tuple[Bin, 
             return portions
     raise DomainError(409, "bin_full", f"The {sku.storage_type} bins of store {store_id} have room for {qty - left} "
                                        f"more {sku.name}, not {qty}", {"zone": sku.storage_type, "room": qty - left})
+
+
+def lock_bin(db: Session, bin_id: int) -> None:
+    """Hold the bin's row until this transaction ends, so putaways into one bin take turns. Without it, on PostgreSQL
+    two putaways of different SKUs would each check the room without seeing the other's units (READ COMMITTED); SQLite
+    allows one writer at a time anyway."""
+    db.execute(update(Bin).where(Bin.id == bin_id).values(capacity=Bin.capacity)
+               .execution_options(synchronize_session=False))
 
 
 def ensure_room(db: Session, store_id: int, bin_id: int, qty: int) -> None:

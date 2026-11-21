@@ -41,9 +41,9 @@ Each file is short. Read all five `service.py` files (about 25 minutes).
 | `replenishment.run` | `POST /v1/replenishment/run` | One transfer order for everything whose stock position is low |
 | `replenishment.set_reorder_stopped` | `PUT /v1/stores/{id}/reorder-settings/{sku_id}` | Stops or restarts reordering one SKU, e.g. to let it run down before dropping it |
 | `replenishment.dispatch` | `POST /v1/transfer-orders/{id}/dispatch` | Pretends the hub sent the truck |
-| `inbound.open_receipt`, `scan` | `POST /v1/goods-receipts/open`, `/{id}/scans` | Saves a receipt; scanned units wait on the dock. Damaged units and batches with under half their shelf life left are recorded, never stocked |
+| `inbound.open_receipt`, `scan` | `POST /v1/goods-receipts/open`, `/{id}/scans` | Saves a receipt; scanned units (batch and expiry required) wait on the dock. Damaged units and batches with under half their shelf life left are recorded, never stocked |
 | `inbound.putaway_tasks`, `put_away` | `GET /v1/goods-receipts/{id}/putaway-tasks`, `POST /{id}/putaway` | Bins with room for what is on the dock; a line put away is sellable at once |
-| `inbound.close_receipt` | `POST /v1/goods-receipts/{id}/close` | Marks the transfer order received and reports ordered versus received for every SKU |
+| `inbound.close_receipt` | `POST /v1/goods-receipts/{id}/close` | Marks the transfer order received and reports ordered versus received for every SKU; `send_back=true` returns what is left on the dock |
 | `inbound.receive_goods` | `POST /v1/goods-receipts` | The one-call receipt: runs the five steps in order |
 | `slotting.suggest_bin`, `slotting.place` | Inbound | Same SKU's bin with room, else the emptiest bin with room in the right temperature zone; `place` splits a delivery over bins, never past a bin's capacity |
 | `assortment.add_sku` | `POST /v1/stores/{id}/assortment` | Starts carrying a SKU (a zero-stock `StockLevel` row) |

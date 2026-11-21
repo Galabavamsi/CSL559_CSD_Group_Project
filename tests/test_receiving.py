@@ -9,6 +9,7 @@ from app.db import SessionLocal
 from app.errors import DomainError
 from app.models import SKU, Bin, StockItem, StockLedger
 from app.modules.inbound import service as inbound
+from app.modules.replenishment import service as replenishment
 from app.modules.slotting import service as slotting
 
 from .conftest import assert_stock_is_consistent, atp
@@ -29,8 +30,11 @@ def open_truck(client, store_id: int = 1) -> tuple[dict, dict]:
 
 
 def scan(client, db, receipt: dict, sku_id: int, qty: int, **details):
+    """Scan units of batch LOT1 with a full shelf life, unless `details` say otherwise."""
+    sku = db.get(SKU, sku_id)
     return client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/scans",
-                       json={"barcode": db.get(SKU, sku_id).barcode, "qty": qty, **details})
+                       json={"barcode": sku.barcode, "qty": qty, "batch_no": "LOT1",
+                             "expiry_date": in_days(sku.shelf_life_days), **details})
 
 
 def put_away(client, receipt: dict, sku_id: int, batch_no: str, bin_code: str, qty: int):
@@ -95,7 +99,8 @@ def test_receipt_rules_at_open_and_scan(client, db, sku):
     elsewhere = client.post("/v1/goods-receipts/open",
                             json={"store_id": 2, "transfer_order_id": order["transfer_order_id"]})
     assert elsewhere.status_code == 404
-    unknown = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/scans", json={"barcode": "0000", "qty": 1})
+    unknown = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/scans",
+                          json={"barcode": "0000", "qty": 1, "batch_no": "LOT1", "expiry_date": in_days(4)})
     assert unknown.status_code == 422 and unknown.json()["error"]["code"] == "unknown_barcode"
     scan(client, db, receipt, bread, 5, batch_no="B1", expiry_date=in_days(4))
     clash = scan(client, db, receipt, bread, 5, batch_no="B1", expiry_date=in_days(3))
@@ -200,9 +205,9 @@ def test_closing_reports_ordered_versus_received_for_every_line(client, db, sku)
     assert body["status"] == "closed"
     assert {row["sku_id"]: row for row in body["report"]} == {
         bread: {"sku_id": bread, "sku": "White bread 400 g", "ordered": 40, "received": 34, "damaged": 0,
-                "rejected": 0},
+                "rejected": 0, "sent_back": 0},
         ice_cream: {"sku_id": ice_cream, "sku": "Vanilla ice cream 500 ml", "ordered": 42, "received": 0,
-                    "damaged": 0, "rejected": 0}}
+                    "damaged": 0, "rejected": 0, "sent_back": 0}}
     assert sorted(row["sku_id"] for row in body["shortfalls"]) == sorted([bread, ice_cream])
     orders = {o["transfer_order_id"]: o for o in client.get("/v1/transfer-orders", params={"store_id": 1}).json()}
     assert orders[order["transfer_order_id"]]["status"] == "received"
@@ -294,7 +299,8 @@ def test_the_ledger_names_who_received_the_stock(client_as, db, sku):
     receiver = client_as("receiver", 1)
     receipt = receiver.post("/v1/goods-receipts/open", json={"store_id": 1}).json()
     receiver.post(f"/v1/goods-receipts/{receipt['receipt_id']}/scans",
-                  json={"barcode": db.get(SKU, bread).barcode, "qty": 4, "batch_no": "B-WHO"})
+                  json={"barcode": db.get(SKU, bread).barcode, "qty": 4, "batch_no": "B-WHO",
+                        "expiry_date": in_days(4)})
     receiver.post(f"/v1/goods-receipts/{receipt['receipt_id']}/putaway",
                   json={"sku_id": bread, "batch_no": "B-WHO", "bin_code": "A-01-01", "qty": 4, "actor": "someone"})
     receiver.post("/v1/goods-receipts",
@@ -308,7 +314,7 @@ def test_a_retried_scan_counts_once(client, db, sku):
     bread = sku("White bread")
     _, receipt = open_truck(client)
     url = f"/v1/goods-receipts/{receipt['receipt_id']}/scans"
-    body = {"barcode": db.get(SKU, bread).barcode, "qty": 40, "batch_no": "B-KEY"}
+    body = {"barcode": db.get(SKU, bread).barcode, "qty": 40, "batch_no": "B-KEY", "expiry_date": in_days(4)}
     first = client.post(url, json=body, headers={"Idempotency-Key": "scan-1"})
     again = client.post(url, json=body, headers={"Idempotency-Key": "scan-1"})
     assert first.json() == again.json()
@@ -334,8 +340,111 @@ def test_only_receivers_and_managers_of_the_store_can_receive(client, client_as,
     assert client_as("picker", 1).post("/v1/goods-receipts/open", json={"store_id": 1}).status_code == 403
     assert client_as("receiver", 2).post("/v1/goods-receipts/open", json={"store_id": 1}).status_code == 403
     assert client_as("receiver", 1).post("/v1/goods-receipts/open", json={"store_id": 1}).status_code == 201
-    one_bread = {"barcode": db.get(SKU, sku("White bread")).barcode, "qty": 1}
+    one_bread = {"barcode": db.get(SKU, sku("White bread")).barcode, "qty": 1, "batch_no": "LOT1",
+                 "expiry_date": in_days(4)}
     assert client_as("receiver", 2).post(f"{url}/scans", json=one_bread).status_code == 403
     assert client_as("manager", 1).post(f"{url}/scans", json=one_bread).status_code == 200
     assert client_as("picker", 2).get(url).status_code == 403
     assert client_as("picker", 1).get(url).status_code == 200
+
+
+def test_receiving_one_truck_twice_at_once_stocks_it_once(client, db, sku, monkeypatch):
+    bread = sku("White bread")
+    before = atp(client, 1, bread)
+    order = client.post("/v1/replenishment/run", params={"store_id": 1}).json()["transfer_order"]
+    lines = [{"sku_id": line["sku_id"], "qty": line["qty_ordered"]} for line in order["lines"]]
+    room = slotting.room_in
+
+    def room_slowly(session, bin_):
+        time.sleep(0.2)                    # the first receipt is still at work when the second click lands
+        return room(session, bin_)
+
+    monkeypatch.setattr(slotting, "room_in", room_slowly)
+
+    def receive(delay):
+        time.sleep(delay)
+        with SessionLocal() as session:
+            try:
+                inbound.receive_goods(session, 1, lines, order["transfer_order_id"])
+                return "received"
+            except DomainError as error:
+                return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:      # a double-click on "Receive truck"
+        assert sorted(pool.map(receive, [0, 0.1])) == ["already_received", "received"]
+    assert atp(client, 1, bread) == before + 40
+    assert_stock_is_consistent()
+
+
+def test_put_away_units_no_longer_count_as_on_their_way(client, db, sku):
+    bread, ice_cream = sku("White bread"), sku("Vanilla ice cream")
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 40)
+    put_all(client, receipt, bread)
+    transit = replenishment.in_transit(db, 1)
+    assert (transit.get(bread, 0), transit.get(ice_cream, 0)) == (0, 42)    # the bread is on the shelf already
+
+
+def test_units_left_on_the_dock_can_be_sent_back(client, db, sku):
+    bread = sku("White bread")
+    before = atp(client, 1, bread)
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 400)                       # 400 typed instead of 40
+    put_away(client, receipt, bread, "LOT1", "A-01-01", 40)
+    assert close(client, receipt).status_code == 409
+    body = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/close", params={"send_back": True}).json()
+    [row] = [row for row in body["report"] if row["sku_id"] == bread]
+    assert (row["received"], row["sent_back"]) == (40, 360)
+    assert (line_of(body, bread)["on_dock"], line_of(body, bread)["sent_back"]) == (0, 360)
+    assert atp(client, 1, bread) == before + 40                 # the 360 never entered stock
+    assert_stock_is_consistent()
+
+
+def test_a_scan_must_name_its_batch_and_expiry(client, db, sku):
+    _, receipt = open_truck(client)
+    url = f"/v1/goods-receipts/{receipt['receipt_id']}/scans"
+    barcode = db.get(SKU, sku("White bread")).barcode
+    assert client.post(url, json={"barcode": barcode, "qty": 5, "batch_no": "LOT1"}).status_code == 422
+    assert client.post(url, json={"barcode": barcode, "qty": 5, "expiry_date": in_days(4)}).status_code == 422
+
+
+def test_two_putaways_of_different_items_never_overfill_a_bin(db, sku, monkeypatch):
+    milk, curd = sku("Toned milk"), sku("Curd")
+    first_bin = db.scalar(select(Bin).where(Bin.store_id == 1, Bin.code == "C-01-01"))   # holds the 6 old milk
+    first_bin.capacity, bin_id = 10, first_bin.id
+    db.commit()
+    receipts = []
+    for item in (milk, curd):
+        receipt_id = inbound.open_receipt(db, 1)["receipt_id"]
+        inbound.scan(db, receipt_id, db.get(SKU, item).barcode, 4, batch_no="B-BOTH")
+        receipts.append((receipt_id, item))
+    room = slotting.room_in
+
+    def room_slowly(session, bin_):
+        time.sleep(0.3)
+        return room(session, bin_)
+
+    monkeypatch.setattr(slotting, "room_in", room_slowly)
+
+    def put(receipt):
+        with SessionLocal() as session:
+            try:
+                inbound.put_away(session, receipt[0], receipt[1], "B-BOTH", "C-01-01", 4)
+                return "put"
+            except DomainError as error:
+                return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:      # on PostgreSQL neither check would see the other's units
+        assert sorted(pool.map(put, receipts)) == ["bin_full", "put"]
+    assert db.scalar(select(func.sum(StockItem.qty)).where(StockItem.bin_id == bin_id)) == 10
+    assert_stock_is_consistent()
+
+
+def test_an_idempotency_key_belongs_to_whoever_sent_it(client, client_as, db, sku):
+    _, receipt = open_truck(client)
+    url = f"/v1/goods-receipts/{receipt['receipt_id']}/scans"
+    body = {"barcode": db.get(SKU, sku("White bread")).barcode, "qty": 4, "batch_no": "LOT1", "expiry_date": in_days(4)}
+    first = client_as("receiver", 1).post(url, json=body, headers={"Idempotency-Key": "k-1"})
+    other = client_as("manager", 1).post(url, json=body, headers={"Idempotency-Key": "k-1"})
+    assert first.status_code == 200
+    assert other.status_code == 422 and other.json()["error"]["code"] == "idempotency_key_reused"

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import SKU, Bin, GoodsReceipt, GoodsReceiptLine, TransferOrder, utcnow
+from ...models import SKU, Bin, GoodsReceipt, GoodsReceiptLine, TransferOrder, TransferOrderLine, utcnow
 from ..inventory import service as inventory
 from ..slotting import service as slotting
 
@@ -28,14 +28,17 @@ def get_receipt(db: Session, receipt_id: int) -> GoodsReceipt:
 
 
 def receipt_view(receipt: GoodsReceipt) -> dict:
-    """The receipt and its lines, JSON-ready (run_once saves it as the answer to a retried request)."""
+    """The receipt and its lines, JSON-ready (run_once saves it as the answer to a retried request). Units still on
+    the dock when the receipt closed were sent back to the hub."""
+    closed = receipt.status == "closed"
     return {"receipt_id": receipt.id, "store_id": receipt.store_id, "transfer_order_id": receipt.transfer_order_id,
             "status": receipt.status, "created_at": receipt.created_at.isoformat(),
             "closed_at": receipt.closed_at.isoformat() if receipt.closed_at else None,
             "lines": [{"sku_id": line.sku_id, "sku": line.sku.name, "batch_no": line.batch_no,
                        "expiry_date": line.expiry_date.isoformat(), "scanned": line.qty_scanned,
                        "damaged": line.qty_damaged, "rejected": line.qty_rejected, "put_away": line.qty_put_away,
-                       "on_dock": line.qty_scanned - line.qty_put_away} for line in receipt.lines]}
+                       "on_dock": 0 if closed else line.qty_scanned - line.qty_put_away,
+                       "sent_back": line.qty_scanned - line.qty_put_away if closed else 0} for line in receipt.lines]}
 
 
 def _lock_open(db: Session, receipt_id: int) -> GoodsReceipt:
@@ -57,13 +60,19 @@ def _lock_open(db: Session, receipt_id: int) -> GoodsReceipt:
 
 def open_receipt(db: Session, store_id: int, transfer_order_id: int | None = None, commit: bool = True) -> dict:
     """Start receiving a truck (HLD 6.3, step 1). Changes no stock. 404 for a transfer order of another store,
-    409 already_received for one received before, 409 receipt_open while another receipt of it is open."""
+    409 already_received for one received before, 409 receipt_open while another receipt of it is open. The order is
+    locked first, so two receipts of one truck (a double-click on Receive truck) take turns and the second sees the
+    first."""
     inventory.get_store(db, store_id)
     if transfer_order_id is not None:
-        order = db.get(TransferOrder, transfer_order_id)
+        locked = db.execute(update(TransferOrder).where(TransferOrder.id == transfer_order_id,
+                                                        TransferOrder.store_id == store_id,
+                                                        TransferOrder.status != "received")
+                            .values(status=TransferOrder.status).execution_options(synchronize_session=False)).rowcount
+        order = db.get(TransferOrder, transfer_order_id, populate_existing=True)
         if order is None or order.store_id != store_id:
             raise not_found("Transfer order", transfer_order_id)
-        if order.status == "received":
+        if not locked:
             raise DomainError(409, "already_received", f"Transfer order {order.id} was already received")
         still_open = db.scalar(select(GoodsReceipt.id).where(GoodsReceipt.transfer_order_id == order.id,
                                                              GoodsReceipt.status == "open"))
@@ -83,7 +92,8 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
          expiry_date: date | None = None, damaged: bool = False, commit: bool = True) -> dict:
     """Scan units off the truck (HLD 6.3, step 2). Changes no stock: good units wait on the dock until they are put
     away. Damaged units, and a batch with less than MIN_REMAINING_SHELF_LIFE of its shelf life left, are recorded on
-    the receipt and never stocked. Missing details get the one-call defaults: today's batch, full shelf life.
+    the receipt and never stocked. The API requires batch and expiry; the one-call receipt may leave them out (today's
+    batch, full shelf life).
     422 unknown_barcode; 422 batch_mismatch for a batch already scanned with another expiry; 409 receipt_closed."""
     receipt = _lock_open(db, receipt_id)
     if qty <= 0:
@@ -167,10 +177,16 @@ def put_away(db: Session, receipt_id: int, sku_id: int, batch_no: str, bin_code:
                                            f"not {qty}", {"on_dock": on_dock})
     if bin_ is None:
         raise DomainError(422, "bad_bin", f"Store {receipt.store_id} has no bin {bin_code}")
+    slotting.lock_bin(db, bin_.id)
     slotting.ensure_room(db, receipt.store_id, bin_.id, qty)
     inventory.receive(db, receipt.store_id, sku_id, qty, bin_.id, batch_no, line.expiry_date, _reference(receipt),
                       actor)
     slotting.ensure_not_overfilled(db, bin_.id)
+    if receipt.transfer_order_id:           # on the shelf now, so no longer on its way (replenishment.in_transit)
+        db.execute(update(TransferOrderLine).where(TransferOrderLine.transfer_order_id == receipt.transfer_order_id,
+                                                   TransferOrderLine.sku_id == sku_id)
+                   .values(qty_received=TransferOrderLine.qty_received + qty)
+                   .execution_options(synchronize_session=False))
     db.flush()
     view = receipt_view(receipt)
     view["put"] = {"sku_id": sku_id, "sku": line.sku.name, "batch_no": batch_no, "qty": qty, "bin": bin_.code}
@@ -184,20 +200,22 @@ def _reference(receipt: GoodsReceipt) -> str:
     return f"to:{receipt.transfer_order_id}" if receipt.transfer_order_id else f"grn:{receipt.id}"
 
 
-def close_receipt(db: Session, receipt_id: int, commit: bool = True) -> dict:
+def close_receipt(db: Session, receipt_id: int, send_back: bool = False, commit: bool = True) -> dict:
     """Finish a receipt (HLD 6.3, step 5): the transfer order is marked received with what was put away, every SKU
-    ordered or scanned is reported as ordered versus received (with damaged and rejected units), and goods.received
-    is published. 409 still_on_dock while good units wait on the dock; 409 receipt_closed."""
+    ordered or scanned is reported as ordered versus received (with damaged, rejected and sent-back units), and
+    goods.received is published. Refused (409 still_on_dock) while good units wait on the dock, unless send_back:
+    then they go back to the hub and are never stocked (a miscount, or no room for them). 409 receipt_closed."""
     receipt = _lock_open(db, receipt_id)
     waiting = [f"{line.qty_scanned - line.qty_put_away} {line.sku.name} (batch {line.batch_no})"
                for line in receipt.lines if line.qty_scanned > line.qty_put_away]
-    if waiting:
-        raise DomainError(409, "still_on_dock", f"Put these away before closing: {', '.join(waiting)}")
+    if waiting and not send_back:
+        raise DomainError(409, "still_on_dock", f"Put these away, or close with send_back to return them to the "
+                                                f"hub: {', '.join(waiting)}")
     rows: dict[int, dict] = {}
 
     def row(sku: SKU) -> dict:
         return rows.setdefault(sku.id, {"sku_id": sku.id, "sku": sku.name, "ordered": 0, "received": 0,
-                                        "damaged": 0, "rejected": 0})
+                                        "damaged": 0, "rejected": 0, "sent_back": 0})
 
     order = db.get(TransferOrder, receipt.transfer_order_id) if receipt.transfer_order_id else None
     for ordered in order.lines if order else []:
@@ -207,10 +225,17 @@ def close_receipt(db: Session, receipt_id: int, commit: bool = True) -> dict:
         counts["received"] += line.qty_put_away
         counts["damaged"] += line.qty_damaged
         counts["rejected"] += line.qty_rejected
+        counts["sent_back"] += line.qty_scanned - line.qty_put_away
     if order is not None:
+        received = db.execute(update(TransferOrder)
+                              .where(TransferOrder.id == order.id, TransferOrder.status != "received")
+                              .values(status="received", received_at=utcnow())
+                              .execution_options(synchronize_session=False)).rowcount
+        if not received:
+            raise DomainError(409, "already_received", f"Transfer order {order.id} was received by another receipt")
+        db.refresh(order, ["status", "received_at"])
         for ordered in order.lines:
             ordered.qty_received = rows[ordered.sku_id]["received"]
-        order.status, order.received_at = "received", utcnow()
     receipt.status, receipt.closed_at = "closed", utcnow()
     report = list(rows.values())
     shortfalls = [counts for counts in report if counts["received"] < counts["ordered"]]
