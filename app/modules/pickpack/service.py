@@ -181,13 +181,23 @@ def find_substitute(db: Session, store_id: int, sku_id: int, qty: int) -> dict |
 
     No dearer, because in this prototype nobody asks the customer: whoever accepts the offer can never make them pay
     more than they paid for the missing item, and every refund (a cancel too) stays exact."""
+    return _offer_for(qty, *_candidates(db, store_id, sku_id))
+
+
+def _candidates(db: Session, store_id: int, sku_id: int) -> tuple[float, list[dict]]:
+    """The missing item's price, and every item that could ever replace it: same category, no dearer."""
     wanted = inventory.get_sku(db, sku_id)
-    options = [row for row in inventory.availability(db, store_id)
-               if row["category"] == wanted.category and row["sku_id"] != sku_id and row["atp"] >= qty
-               and row["price"] <= wanted.price]
+    return wanted.price, [row for row in inventory.availability(db, store_id)
+                          if row["category"] == wanted.category and row["sku_id"] != sku_id
+                          and row["price"] <= wanted.price]
+
+
+def _offer_for(qty: int, price: float, candidates: list[dict]) -> dict | None:
+    """Of the candidates a customer could buy `qty` of, the one nearest in price."""
+    options = [row for row in candidates if row["atp"] >= qty]
     if not options:
         return None
-    best = min(options, key=lambda row: (abs(row["price"] - wanted.price), row["price"], row["name"]))
+    best = min(options, key=lambda row: (abs(row["price"] - price), row["price"], row["name"]))
     return {"sku_id": best["sku_id"], "name": best["name"], "price": best["price"]}
 
 
@@ -196,8 +206,8 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
     """The customer takes a substitute for units dropped from their order (task 2.4; in the demo the picker answers
     for the customer). Commits.
 
-    Only units this order really dropped can be replaced, and only by the item on offer (`409 not_offered` names the
-    current offer): their hold is already gone, so `inventory.swap_line` holds
+    Only units this order really dropped can be replaced, and only by the item on offer, or fewer units of it
+    (`409 not_offered` names the offer for that many): their hold is already gone, so `inventory.swap_line` holds
     the substitute and rewrites the order's lines in this same transaction, and the dropped lines it answers are marked
     `substituted` so they cannot be replaced twice. If the substitute sold out since it was offered, swap_line's
     `409 insufficient_stock` comes back and nothing changes. The substitute becomes a new pending line in walking
@@ -213,13 +223,20 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
         db.rollback()
         raise DomainError(409, "not_dropped", f"Only {sum(t.qty for t in dropped)} units of that item were dropped "
                                               f"from this order, so {qty} cannot be replaced")
-    # Only the item on offer, worked out again now: nobody can pick a dearer one for the customer.
-    offer = find_substitute(db, job.store_id, dropped_sku_id, qty)
-    if offer is None or offer["sku_id"] != substitute_sku_id:
+    # Only the item on offer, worked out again now: nobody can pick a dearer one for the customer. An offer is made for
+    # all the units dropped, and taking fewer of it is fine, so the item must be the offer for `qty` or for more of the
+    # units this order dropped. Rice offered for 3 atta (only 2 oil left) still stands for 1 atta, then for the other 2.
+    dropped_in_all = sum(t.qty for t in job.tasks
+                         if t.sku_id == dropped_sku_id and t.status in ("short", "substituted"))
+    price, candidates = _candidates(db, job.store_id, dropped_sku_id)
+    offers = {o["sku_id"]: o for n in range(qty, dropped_in_all + 1) if (o := _offer_for(n, price, candidates))}
+    offer = offers.get(substitute_sku_id)
+    if offer is None:
+        offered = _offer_for(qty, price, candidates)
         db.rollback()
         raise DomainError(409, "not_offered", "Only the substitute on offer can be accepted: " + (
-            f"{offer['name']} (Rs {offer['price']:g})" if offer else "nothing similar is in stock now"),
-            {"offered": offer})
+            f"{offered['name']} (Rs {offered['price']:g})" if offered else "nothing similar is in stock now"),
+            {"offered": offered})
     try:
         inventory.swap_line(db, db.get(Reservation, job.reservation_id), dropped_sku_id, substitute_sku_id, qty)
     except DomainError:
