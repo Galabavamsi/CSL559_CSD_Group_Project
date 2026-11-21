@@ -79,9 +79,10 @@ def report_short(task_id: int, body: ShortIn | None = None, db: Session = Depend
              summary="The customer takes the substitute for dropped units")
 def substitute(job_id: int, body: SubstituteIn, db: Session = Depends(get_db),
                staff: dict = Depends(require_role("picker", "packer"))):
-    """Only units this order dropped can be replaced (`409 not_dropped`). The substitute is held and added as a new line
-    in walking order; `409 insufficient_stock` if it sold out since the offer. Publishes `order.line_substituted`
-    with the amount to charge. In the demo the picker answers for the customer."""
+    """Only units this order dropped can be replaced (`409 not_dropped`), and only by the item on offer, which is never
+    dearer than the missing one (`409 not_offered`, with the current offer in `details.offered`). The substitute is
+    held and added as a new line in walking order. Publishes `order.line_substituted` with the amount to charge.
+    In the demo the picker answers for the customer."""
     check_store(staff, fulfilment.get_job(db, job_id).store_id)
     return service.substitute(db, job_id, body.dropped_sku_id, body.substitute_sku_id, body.qty,
                               picker_id=body.picker_id)

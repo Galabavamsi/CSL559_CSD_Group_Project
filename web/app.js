@@ -401,12 +401,25 @@ async function acceptOffer() {
   state.offer = null;
   const result = await api("POST", `/v1/fulfilment-jobs/${offer.jobId}/substitutions`,
     { dropped_sku_id: offer.droppedSkuId, substitute_sku_id: offer.sku_id, qty: offer.qty, picker_id: picker() },
-    picker()).catch((error) => { renderJob(); return explainIfOrderGone(error, job); });
+    picker()).catch((error) => {
+      if (error.code === "not_offered") return offerChanged(offer, error.details?.offered, job);
+      renderJob();
+      return explainIfOrderGone(error, job);
+    });
   if (!result) return;
   updateJob(result.job);
   say($("picker-message"), toteLabel(job) + result.message, "good");
   renderJob();
   refreshOps();
+}
+
+/** Stock moved since the offer was shown: show the one on offer now, or say there is none (409 not_offered). */
+function offerChanged(old, now, job) {
+  state.offer = now ? { ...old, ...now } : null;
+  say($("picker-message"), toteLabel(job) + (now
+    ? `The offer changed: ${now.name} (Rs ${now.price}) is on offer now.`
+    : "Nothing similar is in stock any more: the missing item stays refunded."), "bad");
+  renderJob();
 }
 
 function declineOffer() {
