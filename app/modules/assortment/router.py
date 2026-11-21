@@ -13,8 +13,10 @@ router = APIRouter(tags=["assortment"])
 
 class AssortmentIn(BaseModel):
     sku_id: Id
-    reorder_point: int = Field(10, ge=0, le=MAX_BIN_UNITS, description="Reorder when stock falls below this")
-    target_stock: int = Field(40, ge=1, le=MAX_BIN_UNITS, description="A reorder refills up to this")
+    # Issue #63: replenishment orders only when stock is below the reorder point, so 0 (stock is never below it) or
+    # less would never reorder the SKU.
+    reorder_point: int = Field(10, ge=1, le=MAX_BIN_UNITS, description="Reorder when stock falls below this")
+    target_stock: int = Field(40, ge=2, le=MAX_BIN_UNITS, description="A reorder refills up to this")
 
     @model_validator(mode="after")
     def _target_above_reorder_point(self):

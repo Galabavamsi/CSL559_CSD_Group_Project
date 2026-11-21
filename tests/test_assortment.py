@@ -106,17 +106,20 @@ def test_a_truck_ordered_while_dropping_stops_the_drop(client, sku, monkeypatch)
 
 
 def test_reorder_settings_that_cannot_work_are_refused(client, sku):
-    """Issue #63: a negative reorder point was accepted, so the SKU was never reordered and quietly ran out. The
-    target must also be above the reorder point, as forecasting always sets it: a reorder refills up to the target."""
+    """Issue #63: a negative reorder point was accepted, so the SKU was never reordered and quietly ran out. So does
+    0: replenishment orders only when stock is below the reorder point. The target must also be above the reorder
+    point, as forecasting always sets it: a reorder refills up to the target."""
     bananas = sku("Bananas")
     assert client.delete(f"/v1/stores/2/assortment/{bananas}").status_code == 200
     url = "/v1/stores/2/assortment"
-    for settings in ({"reorder_point": -5}, {"reorder_point": 0, "target_stock": 0}, {"target_stock": 100_001},
+    for settings in ({"reorder_point": -5}, {"reorder_point": 0, "target_stock": 1}, {"target_stock": 100_001},
                      {"reorder_point": 100_001, "target_stock": 100_000}, {"reorder_point": 40, "target_stock": 40}):
         refused = client.post(url, json={"sku_id": bananas, **settings})
         assert refused.status_code == 422, settings
-    added = client.post(url, json={"sku_id": bananas, "reorder_point": 0, "target_stock": 1})
-    assert added.status_code == 201, added.text                         # the smallest settings that work
+    added = client.post(url, json={"sku_id": bananas, "reorder_point": 1, "target_stock": 2})
+    assert added.status_code == 201, added.text                         # the smallest settings that work,
+    order = client.post("/v1/replenishment/run", params={"store_id": 2}).json()["transfer_order"]
+    assert bananas in {line["sku_id"] for line in order["lines"]}       # and they do get the SKU reordered
 
 
 def test_adding_one_sku_twice_at_once_is_a_409_not_a_500(api, sku):
