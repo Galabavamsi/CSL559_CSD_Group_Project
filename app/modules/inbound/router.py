@@ -116,11 +116,12 @@ def close_receipt(receipt_id: PathId, idempotency_key: IdempotencyKey = None,
                     lambda: service.close_receipt(db, receipt_id, send_back, commit=False))
 
 
-@router.post("/v1/goods-receipts/{receipt_id}/cancel", summary="Drop a receipt opened by mistake, before any scan")
+@router.post("/v1/goods-receipts/{receipt_id}/cancel",
+             summary="Drop a receipt opened or scanned by mistake, before anything is put away")
 def cancel_receipt(receipt_id: PathId, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
                    staff: dict = Depends(require_role("receiver", "manager"))):
-    """Only while nothing is scanned on it (`409 receipt_not_empty`). The transfer order is left as it was, so the
-    real truck can still be received."""
+    """Only while nothing from it is put away (`409 already_put_away`). Its lines stay as the record, and the transfer
+    order is left as it was, so the real truck can still be received."""
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
     return run_once(db, "goods-receipt-cancel", idempotency_key, {"receipt_id": receipt_id, "by": staff["sub"]},
                     lambda: service.cancel_receipt(db, receipt_id, commit=False))

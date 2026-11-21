@@ -29,8 +29,8 @@ def get_receipt(db: Session, receipt_id: int) -> GoodsReceipt:
 
 def receipt_view(receipt: GoodsReceipt) -> dict:
     """The receipt and its lines, JSON-ready (run_once saves it as the answer to a retried request). Units still on
-    the dock when the receipt closed were sent back to the hub."""
-    closed = receipt.status == "closed"
+    the dock when the receipt was closed or cancelled went back to the hub."""
+    closed = receipt.status != "open"
     return {"receipt_id": receipt.id, "store_id": receipt.store_id, "transfer_order_id": receipt.transfer_order_id,
             "status": receipt.status, "created_at": receipt.created_at.isoformat(),
             "closed_at": receipt.closed_at.isoformat() if receipt.closed_at else None,
@@ -136,8 +136,11 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
 def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
     """Where to put what waits on the dock (HLD 6.3, step 3): one task per bin portion from slotting.place, the SKU's
     own bins first and never past a bin's capacity. A line that cannot be placed gets one task with bin_code None and
-    the reason. Tasks reflect the bins as they are now: put lines away one at a time. Read-only."""
+    the reason. Tasks reflect the bins as they are now: put lines away one at a time. None once the receipt is closed
+    or cancelled: what was left on the dock went back. Read-only."""
     receipt = get_receipt(db, receipt_id)
+    if receipt.status != "open":
+        return []
     tasks = []
     for line in receipt.lines:
         on_dock = line.qty_scanned - line.qty_put_away
@@ -258,13 +261,15 @@ def close_receipt(db: Session, receipt_id: int, send_back: bool = False, commit:
 
 
 def cancel_receipt(db: Session, receipt_id: int, commit: bool = True) -> dict:
-    """Drop a receipt opened by mistake, before anything was scanned on it. The transfer order is left as it was, so
-    the real truck can still be received. 409 receipt_not_empty once anything was scanned, even units never stocked:
-    close it instead. 409 receipt_closed."""
+    """Drop a receipt opened or scanned by mistake, before anything from it is put away. Its lines stay as the record
+    (what was on the dock goes back, as with send_back), and the transfer order is left as it was, so the real truck can
+    still be received. 409 already_put_away once any unit of it is sellable: close it instead. 409 receipt_closed.
+    The receipt is locked first, so a putaway already running finishes before this decides."""
     receipt = _lock_open(db, receipt_id)
-    if receipt.lines:
-        raise DomainError(409, "receipt_not_empty", f"Goods receipt {receipt_id} already has scanned units: close it "
-                                                    "instead (send_back=true returns what waits on the dock)")
+    stocked = [f"{line.qty_put_away} {line.sku.name}" for line in receipt.lines if line.qty_put_away]
+    if stocked:
+        raise DomainError(409, "already_put_away", f"Goods receipt {receipt_id} already put away {', '.join(stocked)}: "
+                                                   "close it instead (send_back=true returns what waits on the dock)")
     receipt.status, receipt.closed_at = "cancelled", utcnow()
     db.flush()
     view = receipt_view(receipt)

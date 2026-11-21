@@ -1,4 +1,5 @@
 """Two-step receiving (guide task 3.5): open a receipt, scan the truck onto the dock, put each line away, close."""
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
@@ -269,20 +270,79 @@ def test_an_empty_receipt_can_be_cancelled_and_the_truck_received_later(client, 
     cancelled = client.post(url, headers={"Idempotency-Key": "cancel-1"})
     assert cancelled.status_code == 200 and cancelled.json()["status"] == "cancelled"
     assert client.post(url, headers={"Idempotency-Key": "cancel-1"}).json() == cancelled.json()     # a retry
-    late = scan(client, db, receipt, sku("White bread"), 1)
-    assert (late.status_code, late.json()["error"]["code"]) == (409, "receipt_closed")
-    assert "cancelled" in late.json()["error"]["message"]
+    bread = sku("White bread")
+    for late in (scan(client, db, receipt, bread, 1), put_away(client, receipt, bread, "LOT1", "A-01-01", 1),
+                 close(client, receipt)):
+        assert (late.status_code, late.json()["error"]["code"]) == (409, "receipt_closed")
+        assert "cancelled" in late.json()["error"]["message"]
     assert db.get(TransferOrder, order["transfer_order_id"], populate_existing=True).status == "dispatched"
     again = client.post("/v1/goods-receipts/open",
                         json={"store_id": 1, "transfer_order_id": order["transfer_order_id"]})
     assert again.status_code == 201, again.text                     # Receive truck works again
 
 
-def test_only_an_empty_receipt_can_be_cancelled(client, db, sku):
+def test_a_receipt_scanned_by_mistake_can_still_be_cancelled(client, db, sku):
+    """The review of the first fix: one case scanned on the wrong truck left only close with send_back, which marks
+    the truck received at 0 units, so the real one would be refused. The lines stay as the record."""
+    bread = sku("White bread")
+    order, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 6)
+    scan(client, db, receipt, bread, 2, damaged=True)
+    cancelled = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/cancel")
+    assert cancelled.status_code == 200, cancelled.text
+    line = line_of(cancelled.json(), bread)
+    assert (line["scanned"], line["damaged"], line["on_dock"], line["sent_back"]) == (6, 2, 0, 6)
+    assert client.get(f"/v1/goods-receipts/{receipt['receipt_id']}/putaway-tasks").json() == []
+    assert db.get(TransferOrder, order["transfer_order_id"], populate_existing=True).status == "dispatched"
+    again = client.post("/v1/goods-receipts/open",
+                        json={"store_id": 1, "transfer_order_id": order["transfer_order_id"]})
+    assert again.status_code == 201, again.text
+
+
+def test_a_receipt_with_units_put_away_cannot_be_cancelled(client, db, sku):
+    bread = sku("White bread")
     _, receipt = open_truck(client)
-    scan(client, db, receipt, sku("White bread"), 5, damaged=True)      # units never stocked are still a record
+    scan(client, db, receipt, bread, 40)
+    put_away(client, receipt, bread, "LOT1", "A-01-01", 1)                 # one unit is sellable now
     refused = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/cancel")
-    assert (refused.status_code, refused.json()["error"]["code"]) == (409, "receipt_not_empty")
+    assert (refused.status_code, refused.json()["error"]["code"]) == (409, "already_put_away")
+
+
+def test_a_cancel_waits_for_a_putaway_in_flight(client, db, sku, monkeypatch):
+    """A cancel must not decide "nothing put away" while a putaway that holds the receipt is still running: its units
+    would be sellable on a cancelled receipt and still counted as on their way."""
+    bread = sku("White bread")
+    before = atp(client, 1, bread)
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 40)
+    room, putting = slotting.room_in, threading.Event()
+
+    def room_slowly(session, bin_):
+        putting.set()                                   # the putaway holds the receipt by now
+        time.sleep(0.3)
+        return room(session, bin_)
+
+    monkeypatch.setattr(slotting, "room_in", room_slowly)
+
+    def put() -> str:
+        with SessionLocal() as session:
+            inbound.put_away(session, receipt["receipt_id"], bread, "LOT1", "A-01-01", 40)
+            return "put"
+
+    def cancel() -> str:
+        assert putting.wait(5)
+        with SessionLocal() as session:
+            try:
+                inbound.cancel_receipt(session, receipt["receipt_id"])
+                return "cancelled"
+            except DomainError as error:
+                return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = [pool.submit(put), pool.submit(cancel)]
+        assert [outcome.result() for outcome in outcomes] == ["put", "already_put_away"]
+    assert atp(client, 1, bread) == before + 40
+    assert_stock_is_consistent()
 
 
 def test_a_one_call_receipt_is_saved_as_a_closed_receipt(client, sku):
@@ -471,6 +531,7 @@ def test_units_left_on_the_dock_can_be_sent_back(client, db, sku):
     [row] = [row for row in body["report"] if row["sku_id"] == bread]
     assert (row["received"], row["sent_back"]) == (40, 360)
     assert (line_of(body, bread)["on_dock"], line_of(body, bread)["sent_back"]) == (0, 360)
+    assert client.get(f"/v1/goods-receipts/{receipt['receipt_id']}/putaway-tasks").json() == []   # nothing to do
     assert atp(client, 1, bread) == before + 40                 # the 360 never entered stock
     assert_stock_is_consistent()
 

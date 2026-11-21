@@ -260,7 +260,8 @@ class TransferOrderLine(Base):
 
 class GoodsReceipt(Base):
     """A truck being received (HLD 6.3): opened, scanned onto the dock, put away line by line, then closed.
-    open -> closed. transfer_order_id is empty for a receipt that came without a transfer order."""
+    open -> closed, or open -> cancelled (opened or scanned by mistake, nothing put away). transfer_order_id is empty
+    for a receipt that came without a transfer order."""
     __tablename__ = "goods_receipts"
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
