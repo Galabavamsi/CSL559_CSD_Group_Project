@@ -179,3 +179,83 @@ def test_two_putaways_never_overfill_a_bin(db, sku, monkeypatch):
         assert sorted(pool.map(put, receipts)) == ["bin_full", "put"]
     assert db.scalar(select(func.sum(StockItem.qty)).where(StockItem.bin_id == bin_id)) == 10
     assert_stock_is_consistent()
+
+
+def close(client, receipt: dict):
+    return client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/close")
+
+
+def put_all(client, receipt: dict, sku_id: int) -> None:
+    for task in tasks_for(client, receipt, sku_id):
+        assert put_away(client, receipt, sku_id, task["batch_no"], task["bin_code"], task["qty"]).status_code == 200
+
+
+def test_closing_reports_ordered_versus_received_for_every_line(client, db, sku):
+    bread, ice_cream = sku("White bread"), sku("Vanilla ice cream")
+    order, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 34)                        # the hub sent 6 bread short, and no ice cream
+    put_all(client, receipt, bread)
+    body = close(client, receipt).json()
+    assert body["status"] == "closed"
+    assert {row["sku_id"]: row for row in body["report"]} == {
+        bread: {"sku_id": bread, "sku": "White bread 400 g", "ordered": 40, "received": 34, "damaged": 0,
+                "rejected": 0},
+        ice_cream: {"sku_id": ice_cream, "sku": "Vanilla ice cream 500 ml", "ordered": 42, "received": 0,
+                    "damaged": 0, "rejected": 0}}
+    assert sorted(row["sku_id"] for row in body["shortfalls"]) == sorted([bread, ice_cream])
+    orders = {o["transfer_order_id"]: o for o in client.get("/v1/transfer-orders", params={"store_id": 1}).json()}
+    assert orders[order["transfer_order_id"]]["status"] == "received"
+    newest = client.get("/v1/events", params={"store_id": 1}).json()[0]
+    assert newest["type"] == "goods.received" and newest["payload"]["receipt_id"] == receipt["receipt_id"]
+    assert_stock_is_consistent()
+
+
+def test_damaged_units_appear_in_the_shortfall_list(client, db, sku):
+    bread = sku("White bread")
+    before = atp(client, 1, bread)
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 35)
+    scan(client, db, receipt, bread, 5, damaged=True)
+    put_all(client, receipt, bread)
+    [short] = [row for row in close(client, receipt).json()["shortfalls"] if row["sku_id"] == bread]
+    assert (short["ordered"], short["received"], short["damaged"]) == (40, 35, 5)
+    assert atp(client, 1, bread) == before + 35                 # the 5 damaged never entered stock
+    assert_stock_is_consistent()
+
+
+def test_a_receipt_closes_only_once_and_never_with_units_on_the_dock(client, db, sku):
+    bread = sku("White bread")
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 40, batch_no="B1")
+    waiting = close(client, receipt)
+    assert waiting.status_code == 409 and waiting.json()["error"]["code"] == "still_on_dock"
+    put_all(client, receipt, bread)
+    assert close(client, receipt).status_code == 200
+    for late in (scan(client, db, receipt, bread, 1), put_away(client, receipt, bread, "B1", "A-01-01", 1),
+                 close(client, receipt)):
+        assert (late.status_code, late.json()["error"]["code"]) == (409, "receipt_closed")
+
+
+def test_a_one_call_receipt_is_saved_as_a_closed_receipt(client, sku):
+    bread = sku("White bread")
+    body = client.post("/v1/goods-receipts",
+                       json={"store_id": 1, "lines": [{"sku_id": bread, "qty": 10, "batch_no": "B-SAVED"}]}).json()
+    saved = client.get(f"/v1/goods-receipts/{body['receipt_id']}").json()
+    assert (saved["status"], saved["transfer_order_id"]) == ("closed", None)
+    assert [(line["sku_id"], line["batch_no"], line["scanned"], line["put_away"]) for line in saved["lines"]] == \
+        [(bread, "B-SAVED", 10, 10)]
+
+
+def test_a_short_dated_line_does_not_sink_a_one_call_receipt(client, sku):
+    bread, ice_cream = sku("White bread"), sku("Vanilla ice cream")
+    order = client.post("/v1/replenishment/run", params={"store_id": 1}).json()["transfer_order"]
+    response = client.post("/v1/goods-receipts", json={
+        "store_id": 1, "transfer_order_id": order["transfer_order_id"],
+        "lines": [{"sku_id": bread, "qty": 40, "batch_no": "B-OLD", "expiry_date": in_days(1)},
+                  {"sku_id": ice_cream, "qty": 42}]})
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert {row["sku_id"] for row in body["received"]} == {ice_cream}
+    assert [(row["sku_id"], row["qty"]) for row in body["rejected"]] == [(bread, 40)]
+    assert {"sku_id": bread, "sku": "White bread 400 g", "ordered": 40, "received": 0} in body["discrepancies"]
+    assert_stock_is_consistent()

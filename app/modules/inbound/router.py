@@ -14,7 +14,7 @@ router = APIRouter(tags=["inbound"])
 class ReceiptLineIn(BaseModel):
     sku_id: int
     qty: int = Field(gt=0)
-    batch_no: str | None = None
+    batch_no: str | None = Field(None, max_length=30)
     expiry_date: date | None = None
     bin_id: int | None = None
 
@@ -83,6 +83,15 @@ def put_away(receipt_id: int, body: PutawayIn, db: Session = Depends(get_db),
              staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
     return service.put_away(db, receipt_id, body.sku_id, body.batch_no, body.bin_code, body.qty, body.actor)
+
+
+@router.post("/v1/goods-receipts/{receipt_id}/close", summary="Finish a receipt: the order is received, shortfalls reported")
+def close_receipt(receipt_id: int, db: Session = Depends(get_db),
+                  staff: dict = Depends(require_role("receiver", "manager"))):
+    """Refused while good units wait on the dock. Reports ordered versus received (with damaged and rejected units)
+    for every SKU ordered or scanned, marks the transfer order received and publishes goods.received."""
+    check_store(staff, service.get_receipt(db, receipt_id).store_id)
+    return service.close_receipt(db, receipt_id)
 
 
 @router.get("/v1/goods-receipts/{receipt_id}", summary="A goods receipt and its lines")

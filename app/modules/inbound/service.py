@@ -169,57 +169,82 @@ def _reference(receipt: GoodsReceipt) -> str:
     return f"to:{receipt.transfer_order_id}" if receipt.transfer_order_id else f"grn:{receipt.id}"
 
 
-def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_id: int | None = None,
-                  actor: str = "receiver") -> dict:
-    """Record a goods receipt. Each line: sku_id, qty, and optionally batch_no, expiry_date, bin_id.
-    Missing details are filled in: today's batch, shelf-life expiry, and the bin Slotting suggests.
-    A line without a bin is spread over the bins Slotting picks, never past a bin's capacity. A line that does not
-    fit is refused with 409 bin_full, and then nothing in the receipt is kept."""
-    inventory.get_store(db, store_id)
-    order = None
-    if transfer_order_id is not None:
-        order = db.get(TransferOrder, transfer_order_id)
-        if order is None or order.store_id != store_id:
-            raise not_found("Transfer order", transfer_order_id)
-        if order.status == "received":
-            raise DomainError(409, "already_received", f"Transfer order {order.id} was already received")
+def close_receipt(db: Session, receipt_id: int, commit: bool = True) -> dict:
+    """Finish a receipt (HLD 6.3, step 5): the transfer order is marked received with what was put away, every SKU
+    ordered or scanned is reported as ordered versus received (with damaged and rejected units), and goods.received
+    is published. 409 still_on_dock while good units wait on the dock; 409 receipt_closed."""
+    receipt = _changeable(db, receipt_id)
+    waiting = [f"{line.qty_scanned - line.qty_put_away} {line.sku.name} (batch {line.batch_no})"
+               for line in receipt.lines if line.qty_scanned > line.qty_put_away]
+    if waiting:
+        raise DomainError(409, "still_on_dock", f"Put these away before closing: {', '.join(waiting)}")
+    rows: dict[int, dict] = {}
 
-    reference = f"to:{order.id}" if order else "grn"
-    received = []
+    def row(sku: SKU) -> dict:
+        return rows.setdefault(sku.id, {"sku_id": sku.id, "sku": sku.name, "ordered": 0, "received": 0,
+                                        "damaged": 0, "rejected": 0})
+
+    order = db.get(TransferOrder, receipt.transfer_order_id) if receipt.transfer_order_id else None
+    for ordered in order.lines if order else []:
+        row(ordered.sku)["ordered"] += ordered.qty_ordered
+    for line in receipt.lines:
+        counts = row(line.sku)
+        counts["received"] += line.qty_put_away
+        counts["damaged"] += line.qty_damaged
+        counts["rejected"] += line.qty_rejected
+    if order is not None:
+        for ordered in order.lines:
+            ordered.qty_received = rows[ordered.sku_id]["received"]
+        order.status, order.received_at = "received", utcnow()
+    receipt.status, receipt.closed_at = "closed", utcnow()
+    report = list(rows.values())
+    shortfalls = [counts for counts in report if counts["received"] < counts["ordered"]]
+    events.publish(db, "goods.received", receipt.store_id,
+                   {"receipt_id": receipt.id, "transfer_order_id": receipt.transfer_order_id, "lines": len(report),
+                    "discrepancies": sum(counts["received"] != counts["ordered"] for counts in report)})
+    db.flush()
+    view = receipt_view(receipt)
+    view.update(report=report, shortfalls=shortfalls)
+    if commit:
+        db.commit()
+    return view
+
+
+def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_id: int | None = None,
+                  actor: str = "receiver", commit: bool = True) -> dict:
+    """The one-call goods receipt: the five steps in order. Each line (sku_id, qty, and optionally batch_no,
+    expiry_date, bin_id) is scanned, then put away: into its bin_id if given, otherwise over the bins Slotting picks,
+    never past a bin's capacity. A batch refused for too little shelf life is listed under "rejected" (and in
+    "discrepancies" when ordered); any other refusal, such as 409 bin_full, keeps nothing of the receipt."""
+    receipt_id = open_receipt(db, store_id, transfer_order_id, commit=False)["receipt_id"]
+    received, rejected = [], []
     for line in lines:
         sku = inventory.get_sku(db, line["sku_id"])
-        batch_no = line.get("batch_no") or f"B{date.today():%y%m%d}"
-        expiry = line.get("expiry_date") or date.today() + timedelta(days=sku.shelf_life_days)
+        view = scan(db, receipt_id, sku.barcode, line["qty"], line.get("batch_no"), line.get("expiry_date"),
+                    commit=False)
+        scanned = view["scan"]
+        if scanned["outcome"] != "on_dock":
+            rejected.append({"sku_id": sku.id, "sku": sku.name, "batch_no": scanned["batch_no"], "qty": line["qty"],
+                             "reason": scanned["reason"]})
+            continue
+        expiry = next(row["expiry_date"] for row in view["lines"]
+                      if row["sku_id"] == sku.id and row["batch_no"] == scanned["batch_no"])
         if line.get("bin_id"):
-            slotting.ensure_room(db, store_id, line["bin_id"], line["qty"])
-            portions = [(line["bin_id"], line["qty"])]
+            bin_ = db.get(Bin, line["bin_id"])
+            if bin_ is None or bin_.store_id != store_id:
+                raise DomainError(422, "bad_bin", f"Bin {line['bin_id']} is not in store {store_id}")
+            portions = [(bin_, line["qty"])]
         else:                       # as many bins as it takes, never over capacity
-            portions = [(bin_.id, qty) for bin_, qty in slotting.place(db, store_id, sku.id, line["qty"])]
-        for bin_id, qty in portions:
-            inventory.receive(db, store_id, sku.id, qty, bin_id, batch_no, expiry, reference, actor)
-            slotting.ensure_not_overfilled(db, bin_id)
-            received.append({"sku_id": sku.id, "sku": sku.name, "qty": qty, "bin": db.get(Bin, bin_id).code,
-                             "batch_no": batch_no, "expiry_date": expiry.isoformat()})
-
-    discrepancies = []
-    if order is not None:
-        got: dict[int, int] = {}
-        for line in lines:
-            got[line["sku_id"]] = got.get(line["sku_id"], 0) + line["qty"]
-        for ol in order.lines:
-            ol.qty_received = got.pop(ol.sku_id, 0)
-            if ol.qty_received != ol.qty_ordered:
-                discrepancies.append({"sku_id": ol.sku_id, "sku": ol.sku.name, "ordered": ol.qty_ordered,
-                                      "received": ol.qty_received})
-        for sku_id, qty in got.items():            # arrived but never ordered
-            discrepancies.append({"sku_id": sku_id, "sku": inventory.get_sku(db, sku_id).name,
-                                  "ordered": 0, "received": qty})
-        order.status = "received"
-        order.received_at = utcnow()
-
-    events.publish(db, "goods.received", store_id,
-                   {"transfer_order_id": order.id if order else None, "lines": len(received),
-                    "discrepancies": len(discrepancies)})
-    db.commit()
-    return {"store_id": store_id, "transfer_order_id": order.id if order else None,
-            "received": received, "discrepancies": discrepancies}
+            portions = slotting.place(db, store_id, sku.id, line["qty"])
+        for bin_, qty in portions:
+            put_away(db, receipt_id, sku.id, scanned["batch_no"], bin_.code, qty, actor, commit=False)
+            received.append({"sku_id": sku.id, "sku": sku.name, "qty": qty, "bin": bin_.code,
+                             "batch_no": scanned["batch_no"], "expiry_date": expiry})
+    report = close_receipt(db, receipt_id, commit=False)["report"]
+    discrepancies = [{"sku_id": row["sku_id"], "sku": row["sku"], "ordered": row["ordered"],
+                      "received": row["received"]}
+                     for row in report if transfer_order_id is not None and row["received"] != row["ordered"]]
+    if commit:
+        db.commit()
+    return {"store_id": store_id, "transfer_order_id": transfer_order_id, "receipt_id": receipt_id,
+            "received": received, "discrepancies": discrepancies, "rejected": rejected}
