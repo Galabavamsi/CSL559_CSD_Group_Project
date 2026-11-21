@@ -408,6 +408,21 @@ def test_a_scan_must_name_its_batch_and_expiry(client, db, sku):
     assert client.post(url, json={"barcode": barcode, "qty": 5, "expiry_date": in_days(4)}).status_code == 422
 
 
+def test_an_impossible_quantity_is_refused_and_changes_nothing(client, db, sku):
+    """Capped like Inventory's quantities (PR 50). 10**20 does not even fit a database integer: it was a 500."""
+    bread = sku("White bread")
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 40)
+    for qty in (100_001, 10**20):
+        assert scan(client, db, receipt, bread, qty).status_code == 422
+        assert put_away(client, receipt, bread, "LOT1", "A-01-01", qty).status_code == 422
+        one_call = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [{"sku_id": bread, "qty": qty}]})
+        assert one_call.status_code == 422
+    line = line_of(client.get(f"/v1/goods-receipts/{receipt['receipt_id']}").json(), bread)
+    assert (line["scanned"], line["put_away"]) == (40, 0)
+    assert_stock_is_consistent()
+
+
 def test_two_putaways_of_different_items_never_overfill_a_bin(db, sku, monkeypatch):
     milk, curd = sku("Toned milk"), sku("Curd")
     first_bin = db.scalar(select(Bin).where(Bin.store_id == 1, Bin.code == "C-01-01"))   # holds the 6 old milk

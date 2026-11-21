@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ...auth import check_store, current_staff, require_role
 from ...db import get_db
 from ...idempotency import run_once
+from ..inventory.router import MAX_BIN_UNITS      # Inventory's cap on one quantity (PR 50): 10**20 was a 500 here
 from . import service
 
 router = APIRouter(tags=["inbound"])
@@ -20,7 +21,7 @@ IdempotencyKey = Annotated[str | None, Header(
 
 class ReceiptLineIn(BaseModel):
     sku_id: int
-    qty: int = Field(gt=0)
+    qty: int = Field(gt=0, le=MAX_BIN_UNITS)
     batch_no: str | None = Field(None, max_length=30)
     expiry_date: date | None = None
     bin_id: int | None = None
@@ -39,7 +40,7 @@ class OpenReceiptIn(BaseModel):
 
 class ScanIn(BaseModel):
     barcode: str = Field(min_length=1, max_length=20)
-    qty: int = Field(gt=0)
+    qty: int = Field(gt=0, le=MAX_BIN_UNITS)
     batch_no: str = Field(min_length=1, max_length=30)          # both printed on the case: the shelf-life check
     expiry_date: date                                           # and first-expiry-first-out picking rely on them
     damaged: bool = False
@@ -49,7 +50,7 @@ class PutawayIn(BaseModel):
     sku_id: int
     batch_no: str = Field(min_length=1, max_length=30)
     bin_code: str = Field(min_length=1, max_length=20)
-    qty: int = Field(gt=0)
+    qty: int = Field(gt=0, le=MAX_BIN_UNITS)
 
 
 @router.post("/v1/goods-receipts", status_code=201, summary="Receive a whole truck in one call")
