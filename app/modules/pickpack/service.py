@@ -208,6 +208,11 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
         db.rollback()
         raise DomainError(409, "not_dropped", f"Only {sum(t.qty for t in dropped)} units of that item were dropped "
                                               f"from this order, so {qty} cannot be replaced")
+    was, instead = inventory.get_sku(db, dropped_sku_id), inventory.get_sku(db, substitute_sku_id)
+    if instead.category != was.category:                # the rule the offer follows (find_substitute)
+        db.rollback()
+        raise DomainError(409, "not_a_substitute", f"{instead.name} is not a {was.category} item like {was.name}, "
+                                                   "so it cannot replace it")
     try:
         inventory.swap_line(db, db.get(Reservation, job.reservation_id), dropped_sku_id, substitute_sku_id, qty)
     except DomainError:
@@ -223,15 +228,23 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
             db.add(PickTask(job_id=job.id, sku_id=dropped_sku_id, qty=take, status="substituted"))
         left -= take
     db.flush()
-    fulfilment.add_pick_tasks(db, job, substitute_sku_id, qty)
-    fulfilment.resequence(db, job)
-    name = inventory.get_sku(db, substitute_sku_id).name
     events.publish(db, "order.line_substituted", job.store_id,
                    {"order_id": job.order_id, "job_id": job.id, "dropped_sku_id": dropped_sku_id,
                     "substitute_sku_id": substitute_sku_id, "qty": qty,
                     "charge_amount": fulfilment.refund_for(db, {substitute_sku_id: qty})})   # priced like refunds
+    # ATP can count a batch that expired but is not written off yet, which allocate never picks: such units are
+    # dropped again here (refunded by their own order.line_dropped), and the reply says so.
+    missing = fulfilment.add_pick_tasks(db, job, substitute_sku_id, qty)
+    fulfilment.resequence(db, job)
     db.commit()
-    return {"message": f"{qty} × {name} added to the order. Pick it on this walk.", "job": fulfilment.job_view(job)}
+    name = instead.name
+    if missing == qty:
+        message = f"{name} could not be found on the shelves after all, so it is refunded too."
+    elif missing:
+        message = f"{qty - missing} × {name} added to the order; {missing} could not be found and are refunded."
+    else:
+        message = f"{qty} × {name} added to the order. Pick it on this walk."
+    return {"message": message, "added": qty - missing, "job": fulfilment.job_view(job)}
 
 
 def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker",

@@ -26,15 +26,16 @@ from pathlib import Path
 if __package__ in (None, ""):          # run as a file: make `import app` work
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# (key, label, HLD 12 target, unit, is the target met?). A time-based KPI is never judged: with walking compressed and
+# (key, label, HLD 12 target, unit, is the target met?). Targets are plain ASCII ("<=", not the symbol), because a
+# Windows console (cp1252) cannot print it. A time-based KPI is never judged: with walking compressed and
 # scanning taking no time, a "yes" beside it would be quoted as a pass for a number that means nothing.
 COMPRESSED = "n/a (compressed time)"
 KPIS = [
-    ("seconds_to_pack_p90", "Order to packed (p90)", "≤ 120 s", "s", COMPRESSED),
+    ("seconds_to_pack_p90", "Order to packed (p90)", "<= 120 s", "s", COMPRESSED),
     ("seconds_to_pack_p50", "Order to packed (p50)", "", "s", None),
     ("seconds_claim_to_pack_p90", "Claim to packed (p90)", "", "s", None),
-    ("fill_rate", "Fill rate", "≥ 99% of units", "%", lambda v: v >= 0.99),
-    ("items_per_picker_hour", "Items per picker-hour", "≥ 100", "", COMPRESSED),
+    ("fill_rate", "Fill rate", ">= 99% of units", "%", lambda v: v >= 0.99),
+    ("items_per_picker_hour", "Items per picker-hour", ">= 100", "", COMPRESSED),
 ]
 
 
