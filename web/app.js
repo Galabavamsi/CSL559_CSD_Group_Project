@@ -195,6 +195,11 @@ function showOrderStatus(job) {
   if (missing && job.state !== "cancelled") {
     text += ` ${missing} ${missing === 1 ? "item was" : "items were"} out of stock and will be refunded.`;
   }
+  // Dropped units the customer took a substitute for (task 2.4): one entry per item, however its lines were split.
+  const swapped = {};
+  for (const t of job.tasks.filter((t) => t.status === "substituted")) swapped[t.sku] = (swapped[t.sku] || 0) + t.qty;
+  const swappedText = Object.entries(swapped).map(([name, qty]) => `${qty} × ${name}`).join(", ");
+  if (swappedText && job.state !== "cancelled") text += ` ${swappedText} replaced by a substitute.`;
   $("paid-status").textContent = text;
   const cancellable = job.state === "created" || job.state === "picking";
   $("cancel-paid").hidden = !cancellable;
