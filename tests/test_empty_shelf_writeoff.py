@@ -7,10 +7,13 @@ for, and never below what is held on the item, so the stock audit stays clean al
 when their own picker reports the same empty bin.
 
 Store 1 has 30 sugar in one bin; milk is 6 in batch M-OLD and 24 in M-NEW, in two bins."""
+from datetime import timedelta
+
 from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.models import StockItem, StockLedger
+from app.modules.inventory import service as inventory
 
 from .conftest import assert_stock_is_consistent, place_paid_order
 from .test_order_flow import next_job
@@ -135,5 +138,45 @@ def test_a_line_moved_to_another_bin_still_empties_the_bin_it_left(client, sku):
 
     assert (result["reallocated"], result["dropped"]) == (4, 0)
     assert (batch_qty("M-OLD"), batch_qty("M-NEW")) == (0, 24)   # M-OLD's other 2 were not there either
+    assert stock(client, milk)[:2] == (24, 4)
+    assert_stock_is_consistent()
+
+
+def second_batch_in_the_bin_of(batch_no: str, sku_id: int, new_batch: str, qty: int, days_later: int) -> None:
+    """A later delivery put into the bin that already holds `batch_no`, as receiving does, as a batch of its own."""
+    with SessionLocal() as session:
+        first = session.scalar(select(StockItem).where(StockItem.store_id == 1, StockItem.sku_id == sku_id,
+                                                       StockItem.batch_no == batch_no))
+        inventory.receive(session, 1, sku_id, qty, first.bin_id, new_batch,
+                          first.expiry_date + timedelta(days=days_later))
+        session.commit()
+
+
+def test_every_batch_in_the_empty_bin_goes_and_the_line_is_not_sent_back_to_it(client, sku):
+    sugar = sku("Sugar")
+    seeded = client.get("/v1/stores/1/stock").json()
+    first_batch = next(row["batch_no"] for row in seeded if row["sku_id"] == sugar)
+    second_batch_in_the_bin_of(first_batch, sugar, "S-NEW", 10, days_later=30)
+    place_paid_order(client, "o-1", 1, [(sugar, 1)])            # FEFO: from the first batch
+
+    result = short(client)
+
+    assert (result["reallocated"], result["dropped"]) == (0, 1)  # was sent back to S-NEW in the same bin
+    assert stock(client, sugar) == (0, 0, 0)                     # S-NEW's 10 were still for sale
+    assert written_off(sugar) == 40
+    assert_stock_is_consistent()
+
+
+def test_a_line_moves_to_another_bin_not_to_a_second_batch_in_the_empty_one(client, sku):
+    milk = sku("Toned milk")
+    second_batch_in_the_bin_of("M-OLD", milk, "M-MID", 5, days_later=1)   # expires before M-NEW: FEFO picks it first
+    place_paid_order(client, "o-1", 1, [(milk, 4)])              # all 4 from M-OLD
+
+    result = short(client)
+
+    assert (result["reallocated"], result["dropped"]) == (4, 0)
+    lines = [t for t in result["job"]["tasks"] if t["status"] == "pending"]
+    assert {t["batch_no"] for t in lines} == {"M-NEW"}           # not M-MID, in the bin just reported empty
+    assert (batch_qty("M-OLD"), batch_qty("M-MID"), batch_qty("M-NEW")) == (0, 0, 24)
     assert stock(client, milk)[:2] == (24, 4)
     assert_stock_is_consistent()

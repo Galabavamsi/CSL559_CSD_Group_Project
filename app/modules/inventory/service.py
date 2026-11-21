@@ -697,8 +697,10 @@ def write_off_missing(db: Session, item: StockItem, qty: int, reference: str, ac
 
 
 def write_off_unpromised(db: Session, item: StockItem, reference: str, actor: str) -> int:
-    """A picker found this bin empty: write off the units in it that no unpacked order's line covers, and return how
-    many. Call it after `write_off_missing` has taken the picker's own line. Does not commit.
+    """A picker found this bin empty: write off the units of this item in it that no unpacked order's line covers, and
+    return how many. Every batch in the bin, not only the picker's: a delivery goes into the bin that already holds
+    the item as a batch of its own, and an empty shelf is empty of all of them. Call it after `write_off_missing` has
+    taken the picker's own line. Does not commit.
 
     They are not on the shelf either, and left in the count they stay in ATP, so customers could keep buying stock
     that is not there until the bin is counted. Units another unpacked order is waiting for stay: that order holds
@@ -708,6 +710,12 @@ def write_off_unpromised(db: Session, item: StockItem, reference: str, actor: st
     hold in `reserve`: a hold placed at the same moment either lands first (and nothing goes) or sees the smaller
     count."""
     db.flush()
+    batches = db.scalars(select(StockItem).where(StockItem.store_id == item.store_id, StockItem.sku_id == item.sku_id,
+                                                 StockItem.bin_id == item.bin_id)).all()
+    return sum(_write_off_unpromised_batch(db, batch, reference, actor) for batch in batches)
+
+
+def _write_off_unpromised_batch(db: Session, item: StockItem, reference: str, actor: str) -> int:
     db.refresh(item, ["qty"])
     take = item.qty - _promised(db, item)
     level = get_level(db, item.store_id, item.sku_id)
@@ -744,9 +752,11 @@ def _promised(db: Session, item: StockItem) -> int:
 
 
 def allocate(db: Session, store_id: int, sku_id: int, qty: int,
-             exclude_item_ids: tuple[int, ...] = ()) -> tuple[list[tuple[StockItem, int]], int]:
+             exclude_item_ids: tuple[int, ...] = (),
+             exclude_bin_ids: tuple[int, ...] = ()) -> tuple[list[tuple[StockItem, int]], int]:
     """Choose which bins to pick `qty` units from: first-expiry-first-out, then nearest bin. Expired batches are
-    never chosen, even before the hourly write-off has removed them.
+    never chosen, even before the hourly write-off has removed them. `exclude_bin_ids`: bins a picker has just
+    found empty, whatever batches the records still put there.
 
     Units already promised to an unpacked order (pending or already scanned) are skipped.
     Returns (list of (stock item, quantity), quantity that could not be found).
@@ -764,7 +774,7 @@ def allocate(db: Session, store_id: int, sku_id: int, qty: int,
     for item in items:
         if remaining == 0:
             break
-        if item.id in exclude_item_ids:
+        if item.id in exclude_item_ids or item.bin_id in exclude_bin_ids:
             continue
         free = item.qty - _promised(db, item)
         if free <= 0:
