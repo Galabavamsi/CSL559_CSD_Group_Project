@@ -69,7 +69,7 @@ def test_counters_for_reservations_events_and_scans(client, sku):
 
     place_paid_order(client, "metrics-1", 1, [(sku("Tea"), 1)])
     client.post("/v1/reservations", json={"order_id": "metrics-2", "store_id": 1,
-                                          "lines": [{"sku_id": sku("Tea"), "qty": 10_000}]})
+                                          "lines": [{"sku_id": sku("Tea"), "qty": 999}]})   # under the cap, over stock
     task = client.get("/v1/pickers/p1/next-task", params={"store_id": 1}).json()["job"]["tasks"][0]
     client.post(f"/v1/pick-tasks/{task['task_id']}/scans", json={"barcode": "0000000000000", "qty": task["qty"]})
     client.post(f"/v1/pick-tasks/{task['task_id']}/scans", json={"barcode": task["barcode"], "qty": task["qty"]})

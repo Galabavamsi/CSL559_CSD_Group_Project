@@ -628,8 +628,12 @@ def commit_sale(db: Session, task: PickTask, reference: str, actor: str) -> None
 
 def write_off_missing(db: Session, item: StockItem, qty: int, reference: str, actor: str) -> None:
     """The picker could not find units the system thought were in a bin. Remove them from the
-    count; the hold on them stays until the caller re-allocates or unreserves. Does not commit."""
-    take = min(item.qty, qty)
+    count; the hold on them stays until the caller re-allocates or unreserves. Does not commit.
+
+    Units already scanned into a tote are off the shelf but still in `item.qty` until their order is packed, so they
+    are never written off here (as in expire_stock). Without this, a write-off after an expiry write-off took the tote
+    units a second time, and packing that order failed with stock_mismatch."""
+    take = min(item.qty - _in_totes(db, item), qty)
     if take <= 0:
         return
     _change_item_qty(db, item, -take)
