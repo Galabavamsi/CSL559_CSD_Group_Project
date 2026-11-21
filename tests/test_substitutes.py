@@ -302,3 +302,42 @@ def test_a_substitute_whose_only_batch_has_expired_is_refunded_and_the_reply_say
     assert (charged, refunded_peas) == (95, [95])                     # charged and refunded: nothing owed
     assert stock(client, peas)[1] == 0                                # no hold left on the peas
     assert_stock_is_consistent()
+
+
+def test_fewer_units_than_were_dropped_can_take_the_offer(client, sku):
+    """Found in a later review of #49: the offer was worked out again for the units accepted, not the units dropped.
+    3 atta dropped and rice offered, because only 2 oil are left; then rice for 1 atta was refused, naming oil."""
+    atta, oil, rice = sku("Wheat atta"), sku("Sunflower oil"), sku("Basmati rice")
+    hold(client, "most-of-the-oil", oil, atp(client, 1, oil) - 2)              # 2 oil left; 3 would be needed
+    offer = report_empty(client, atta, order_qty=3)["substitute_offer"]        # 3 atta dropped, Rs 245 each
+    job_id = next_job(client)["job_id"]
+    assert offer["sku_id"] == rice                                             # Rs 140: oil is nearer, but too few
+
+    first = accept(client, job_id, atta, rice, qty=1)
+    assert first.status_code == 200, first.text                                # was 409 not_offered, naming oil
+    rest = accept(client, job_id, atta, rice, qty=2)                           # the offer still stands for the rest
+    assert rest.status_code == 200, rest.text
+
+    tasks = rest.json()["job"]["tasks"]
+    assert sorted((t["status"], t["qty"]) for t in tasks if t["sku_id"] == atta) == [("substituted", 1),
+                                                                                     ("substituted", 2)]
+    assert sum(t["qty"] for t in tasks if t["sku_id"] == rice and t["status"] == "pending") == 3
+    assert stock(client, rice)[1] == 3
+    charged = sorted(e["charge_amount"] for e in events_of(client, "order.line_substituted"))
+    assert charged == [140, 280] and sum(charged) <= events_of(client, "order.line_dropped")[0]["refund_amount"]
+    assert_stock_is_consistent()
+
+
+def test_taking_fewer_units_lets_in_no_item_that_was_never_on_offer(client, sku):
+    atta, oil, sugar = sku("Wheat atta"), sku("Sunflower oil"), sku("Sugar")
+    hold(client, "most-of-the-oil", oil, atp(client, 1, oil) - 2)
+    report_empty(client, atta, order_qty=3)
+    job_id = next_job(client)["job_id"]
+
+    res = accept(client, job_id, atta, sugar, qty=1)                           # cheaper, but never the nearest
+    assert res.status_code == 409 and res.json()["error"]["code"] == "not_offered"
+    assert res.json()["error"]["details"]["offered"]["sku_id"] == oil          # the offer for 1 unit
+    assert stock(client, sugar)[1] == 0                                        # nothing held for it
+
+    assert accept(client, job_id, atta, oil, qty=1).status_code == 200         # the offer it named can be taken
+    assert_stock_is_consistent()
