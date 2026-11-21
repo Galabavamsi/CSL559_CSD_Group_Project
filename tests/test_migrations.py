@@ -59,8 +59,13 @@ def test_a_new_database_gets_its_tables_and_is_marked_as_up_to_date(empty_engine
 
 
 def test_a_database_from_before_migrations_is_adopted_and_keeps_its_data(empty_engine):
-    Base.metadata.create_all(empty_engine)                      # how the tables were made until now
+    # The tables as the code just before migrations made them, which is migration 0001 without its version record.
+    # (Not Base.metadata.create_all: models.py has moved on since, so that would build tables the old code never had.)
+    alembic = Config(str(ALEMBIC_INI))
     with empty_engine.begin() as connection:
+        alembic.attributes["connection"] = connection
+        command.upgrade(alembic, db.FIRST_MIGRATION)
+        connection.execute(text("DROP TABLE alembic_version"))
         connection.execute(text("INSERT INTO stores (name, lat, lng, radius_km, status, hub_name) "
                                 "VALUES ('Old store', 1, 2, 3, 'open', 'Hub')"))
     assert _version(empty_engine) is None
@@ -69,6 +74,7 @@ def test_a_database_from_before_migrations_is_adopted_and_keeps_its_data(empty_e
     db.init_db()                                                # starting the app again changes nothing
 
     assert _version(empty_engine) == _head()
+    assert _differences(empty_engine) == []                     # every later migration was applied
     with empty_engine.connect() as connection:
         assert connection.scalar(text("SELECT name FROM stores")) == "Old store"
 

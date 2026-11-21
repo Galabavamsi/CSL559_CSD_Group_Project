@@ -258,6 +258,36 @@ class TransferOrderLine(Base):
     sku: Mapped[SKU] = relationship()
 
 
+class GoodsReceipt(Base):
+    """A truck being received (HLD 6.3): opened, scanned onto the dock, put away line by line, then closed.
+    open -> closed. transfer_order_id is empty for a receipt that came without a transfer order."""
+    __tablename__ = "goods_receipts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    transfer_order_id: Mapped[int | None] = mapped_column(ForeignKey("transfer_orders.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(10), default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lines: Mapped[list["GoodsReceiptLine"]] = relationship(cascade="all, delete-orphan", order_by="GoodsReceiptLine.id")
+
+
+class GoodsReceiptLine(Base):
+    """One SKU and batch off a truck. Good units (qty_scanned) wait on the dock until they are put away; damaged units
+    and batches refused for too little shelf life left (qty_rejected) are recorded but never enter stock."""
+    __tablename__ = "goods_receipt_lines"
+    __table_args__ = (UniqueConstraint("receipt_id", "sku_id", "batch_no"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    receipt_id: Mapped[int] = mapped_column(ForeignKey("goods_receipts.id"), index=True)
+    sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
+    batch_no: Mapped[str] = mapped_column(String(30))
+    expiry_date: Mapped[date] = mapped_column(Date)
+    qty_scanned: Mapped[int] = mapped_column(Integer, default=0)
+    qty_damaged: Mapped[int] = mapped_column(Integer, default=0)
+    qty_rejected: Mapped[int] = mapped_column(Integer, default=0)
+    qty_put_away: Mapped[int] = mapped_column(Integer, default=0)
+    sku: Mapped[SKU] = relationship()
+
+
 class Forecast(Base):
     """Latest demand forecast per store + SKU (units per day)."""
     __tablename__ = "forecasts"
