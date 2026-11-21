@@ -62,17 +62,21 @@ def test_with_nothing_left_in_the_category_the_offer_is_null_but_the_refund_is_s
     assert_stock_is_consistent()
 
 
-def test_the_nearest_price_wins_among_items_customers_can_still_buy(client, sku):
-    rice, oil, sugar = sku("Basmati rice"), sku("Sunflower oil"), sku("Sugar")
+def test_the_nearest_price_wins_among_items_customers_can_still_buy_and_never_a_dearer_one(client, sku):
+    atta, oil, rice, sugar = sku("Wheat atta"), sku("Sunflower oil"), sku("Basmati rice"), sku("Sugar")
 
-    first = report_empty(client, rice, order_qty=6, found=4, order_id="s-1")   # 2 rice dropped, Rs 140 each
-    assert first["substitute_offer"]["sku_id"] == oil                          # Rs 155: 15 away
-    assert events_of(client, "order.line_dropped")[0]["refund_amount"] == 280
+    first = report_empty(client, atta, order_qty=6, found=4, order_id="s-1")   # 2 atta dropped, Rs 245 each
+    assert first["substitute_offer"]["sku_id"] == oil                          # Rs 155: 90 away (rice 105, sugar 197)
+    assert events_of(client, "order.line_dropped")[0]["refund_amount"] == 490
 
     hold(client, "most-of-the-oil", oil, atp(client, 1, oil) - 1)              # 1 oil left; 2 are needed
     client.post(f"/v1/fulfilment-jobs/{first['job']['job_id']}/packed", json={"crate_slot": "S-01"})
-    second = report_empty(client, rice, order_qty=3, found=1, order_id="s-2")
-    assert second["substitute_offer"]["sku_id"] == sugar                       # Rs 48: 92 away, atta is 105
+    second = report_empty(client, atta, order_qty=3, found=1, order_id="s-2")
+    assert second["substitute_offer"]["sku_id"] == rice                        # Rs 140: 105 away
+
+    client.post(f"/v1/fulfilment-jobs/{second['job']['job_id']}/packed", json={"crate_slot": "S-02"})
+    third = report_empty(client, rice, order_qty=6, found=4, order_id="s-3")   # rice is Rs 140; oil (155) is dearer
+    assert third["substitute_offer"]["sku_id"] == sugar                        # Rs 48: the only one not dearer
     assert_stock_is_consistent()
 
 
@@ -101,11 +105,11 @@ def test_units_that_cannot_be_found_when_the_order_is_paid_are_refunded_too(clie
     assert_stock_is_consistent()
 
 
-def test_find_substitute_looks_only_in_the_same_category(db, sku):
+def test_find_substitute_looks_only_in_the_same_category_and_never_offers_a_dearer_item(db, sku):
     assert pickpack.find_substitute(db, 1, sku("White bread"), 1) is None       # the only Bakery item
     assert pickpack.find_substitute(db, 1, sku("Tea"), 1) is None               # the only Beverage
-    assert pickpack.find_substitute(db, 1, sku("Frozen green peas"), 1)["sku_id"] == sku("Vanilla ice cream")
-    assert pickpack.find_substitute(db, 1, sku("Frozen green peas"), 2) is None  # only 1 ice cream
+    assert pickpack.find_substitute(db, 1, sku("Vanilla ice cream"), 1)["sku_id"] == sku("Frozen green peas")
+    assert pickpack.find_substitute(db, 1, sku("Frozen green peas"), 1) is None  # ice cream (Rs 120) is dearer
 
 
 def test_dropped_lines_and_a_later_cancel_never_refund_more_than_the_order(client, sku):
@@ -174,7 +178,8 @@ def test_a_substitute_sold_out_since_the_offer_changes_nothing(client, sku):
 
     res = accept(client, job_id, ice_cream, peas)
 
-    assert res.status_code == 409 and res.json()["error"]["code"] == "insufficient_stock"
+    assert res.status_code == 409 and res.json()["error"]["code"] == "not_offered"
+    assert res.json()["error"]["details"]["offered"] is None                     # nothing similar is in stock now
     tasks = client.get(f"/v1/fulfilment-jobs/{job_id}").json()["tasks"]
     assert [t["status"] for t in tasks] == ["short"]                             # still dropped, no peas line
     assert events_of(client, "order.line_substituted") == []
@@ -182,20 +187,20 @@ def test_a_substitute_sold_out_since_the_offer_changes_nothing(client, sku):
 
 
 def test_only_units_the_order_dropped_can_be_replaced(client, sku):
-    rice, oil = sku("Basmati rice"), sku("Sunflower oil")
-    job = report_empty(client, rice, order_qty=6, found=4)                     # 4 picked, 2 dropped
+    rice, sugar = sku("Basmati rice"), sku("Sugar")
+    job = report_empty(client, rice, order_qty=6, found=4)                     # 4 picked, 2 dropped; sugar offered
     job_id = job["job"]["job_id"]
 
-    too_many = accept(client, job_id, rice, oil, qty=3)
-    one = accept(client, job_id, rice, oil, qty=1)
-    again = accept(client, job_id, rice, oil, qty=2)                           # only 1 dropped unit is left
+    too_many = accept(client, job_id, rice, sugar, qty=3)
+    one = accept(client, job_id, rice, sugar, qty=1)
+    again = accept(client, job_id, rice, sugar, qty=2)                         # only 1 dropped unit is left
 
     assert too_many.status_code == 409 and too_many.json()["error"]["code"] == "not_dropped"
     assert one.status_code == 200
     assert again.status_code == 409 and again.json()["error"]["code"] == "not_dropped"
     rice_lines = sorted((t["status"], t["qty"]) for t in one.json()["job"]["tasks"] if t["sku_id"] == rice)
     assert rice_lines == [("picked", 4), ("short", 1), ("substituted", 1)]
-    assert stock(client, oil) == (30, 1)
+    assert stock(client, sugar) == (30, 1)
     assert_stock_is_consistent()
 
 
@@ -249,3 +254,51 @@ def test_another_pickers_handheld_or_store_cannot_accept(client, client_as, sku)
     assert accept(client_as("picker", 2), job_id, ice_cream, peas).status_code == 403
     assert accept(client, job_id, ice_cream, peas, qty=0).status_code == 422
     assert stock(client, peas) == (30, 0)
+
+
+
+def test_only_the_offered_substitute_can_be_accepted(client, sku):
+    """Found in the review of #49 (Member 3): the server took any item, so whoever accepted could swap a cheap missing
+    item for a dear one and charge the customer for it. Now only the offer is accepted, and the offer is never dearer
+    than the missing item, so the customer is never charged more than they were refunded."""
+    rice, sugar, oil, atta, ice_cream = (sku("Basmati rice"), sku("Sugar"), sku("Sunflower oil"), sku("Wheat atta"),
+                                         sku("Vanilla ice cream"))
+    offer = report_empty(client, rice)["substitute_offer"]                     # 1 rice dropped, Rs 140
+    job_id = next_job(client)["job_id"]
+    assert offer["sku_id"] == sugar
+
+    for not_offered in (oil, atta, ice_cream):                                 # dearer, dearer, another category
+        res = accept(client, job_id, rice, not_offered)
+        assert res.status_code == 409 and res.json()["error"]["code"] == "not_offered"
+        assert res.json()["error"]["details"]["offered"]["sku_id"] == sugar
+    assert [stock(client, s)[1] for s in (oil, atta, ice_cream)] == [0, 0, 0]  # nothing held for them
+
+    assert accept(client, job_id, rice, sugar).status_code == 200
+    refunded = events_of(client, "order.line_dropped")[0]["refund_amount"]
+    charged = events_of(client, "order.line_substituted")[0]["charge_amount"]
+    assert (refunded, charged) == (140, 48) and charged <= refunded
+    assert_stock_is_consistent()
+
+
+def test_a_substitute_whose_only_batch_has_expired_is_refunded_and_the_reply_says_so(client, db, sku):
+    """Found in the review of #49: ATP still counts a batch that expired but is not written off yet; allocate never
+    picks it, so the substitute is dropped again in the same call. The reply now says so, and the money nets out."""
+    ice_cream, peas = sku("Vanilla ice cream"), sku("Frozen green peas")
+    report_empty(client, ice_cream)
+    job_id = next_job(client)["job_id"]
+    db.scalar(select(StockItem).where(StockItem.sku_id == peas, StockItem.store_id == 1)).expiry_date = (
+        date.today() - timedelta(days=1))
+    db.commit()
+
+    res = accept(client, job_id, ice_cream, peas)
+
+    assert res.status_code == 200
+    assert res.json()["added"] == 0
+    assert res.json()["message"] == ("Frozen green peas 500 g could not be found on the shelves after all, "
+                                     "so it is refunded too.")
+    assert [t["status"] for t in res.json()["job"]["tasks"] if t["sku_id"] == peas] == ["short"]
+    charged = events_of(client, "order.line_substituted")[0]["charge_amount"]
+    refunded_peas = [e["refund_amount"] for e in events_of(client, "order.line_dropped") if e["sku_id"] == peas]
+    assert (charged, refunded_peas) == (95, [95])                     # charged and refunded: nothing owed
+    assert stock(client, peas)[1] == 0                                # no hold left on the peas
+    assert_stock_is_consistent()
