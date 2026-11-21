@@ -105,7 +105,10 @@ function renderCart() {
 
 async function checkout() {
   const lines = Object.entries(state.cart).map(([skuId, qty]) => ({ sku_id: Number(skuId), qty }));
-  const orderId = "ORD-" + Date.now().toString(36).toUpperCase();
+  // Random, not the clock: two shoppers in the same millisecond, or someone guessing, must never share an order id.
+  // (crypto.randomUUID needs HTTPS; getRandomValues also works on the lab server's plain-HTTP address.)
+  const random = crypto.getRandomValues(new Uint8Array(8));
+  const orderId = "ORD-" + Array.from(random, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
   try {
     state.hold = await api("POST", "/v1/reservations",
       { order_id: orderId, store_id: state.shopStore, h3_cell: state.shopCell, lines });
