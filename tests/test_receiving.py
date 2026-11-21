@@ -7,7 +7,7 @@ from sqlalchemy import func, select, update
 
 from app.db import SessionLocal
 from app.errors import DomainError
-from app.models import SKU, Bin, StockItem
+from app.models import SKU, Bin, StockItem, StockLedger
 from app.modules.inbound import service as inbound
 from app.modules.slotting import service as slotting
 
@@ -259,3 +259,45 @@ def test_a_short_dated_line_does_not_sink_a_one_call_receipt(client, sku):
     assert [(row["sku_id"], row["qty"]) for row in body["rejected"]] == [(bread, 40)]
     assert {"sku_id": bread, "sku": "White bread 400 g", "ordered": 40, "received": 0} in body["discrepancies"]
     assert_stock_is_consistent()
+
+
+def test_two_putaways_of_one_line_never_stock_more_than_was_scanned(client, db, sku, monkeypatch):
+    bread = sku("White bread")
+    before = atp(client, 1, bread)
+    _, receipt = open_truck(client)
+    scan(client, db, receipt, bread, 40, batch_no="B-RACE")
+    room = slotting.room_in
+
+    def room_slowly(session, bin_):
+        time.sleep(0.3)                    # both look at the dock before either writes, unless they take turns
+        return room(session, bin_)
+
+    monkeypatch.setattr(slotting, "room_in", room_slowly)
+
+    def put(_):
+        with SessionLocal() as session:
+            try:
+                inbound.put_away(session, receipt["receipt_id"], bread, "B-RACE", "A-01-01", 40)
+                return "put"
+            except DomainError as error:
+                return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(put, range(2))) == ["put", "too_many"]
+    assert atp(client, 1, bread) == before + 40
+    assert_stock_is_consistent()
+
+
+def test_the_ledger_names_who_received_the_stock(client_as, db, sku):
+    bread = sku("White bread")
+    receiver = client_as("receiver", 1)
+    receipt = receiver.post("/v1/goods-receipts/open", json={"store_id": 1}).json()
+    receiver.post(f"/v1/goods-receipts/{receipt['receipt_id']}/scans",
+                  json={"barcode": db.get(SKU, bread).barcode, "qty": 4, "batch_no": "B-WHO"})
+    receiver.post(f"/v1/goods-receipts/{receipt['receipt_id']}/putaway",
+                  json={"sku_id": bread, "batch_no": "B-WHO", "bin_code": "A-01-01", "qty": 4, "actor": "someone"})
+    receiver.post("/v1/goods-receipts",
+                  json={"store_id": 1, "actor": "someone", "lines": [{"sku_id": bread, "qty": 2, "batch_no": "B-1"}]})
+    actors = db.scalars(select(StockLedger.actor).where(StockLedger.store_id == 1, StockLedger.sku_id == bread,
+                                                         StockLedger.reference.like("grn:%"))).all()
+    assert actors == ["test-receiver", "test-receiver"]       # from the login, not from the request body

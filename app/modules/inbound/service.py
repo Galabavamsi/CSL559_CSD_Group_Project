@@ -10,7 +10,7 @@ Idempotency-Key gets its saved answer instead of being done twice.
 """
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ... import config, events
@@ -38,10 +38,20 @@ def receipt_view(receipt: GoodsReceipt) -> dict:
                        "on_dock": line.qty_scanned - line.qty_put_away} for line in receipt.lines]}
 
 
-def _changeable(db: Session, receipt_id: int) -> GoodsReceipt:
-    receipt = get_receipt(db, receipt_id)
-    if receipt.status != "open":
-        raise DomainError(409, "receipt_closed", f"Goods receipt {receipt.id} is closed")
+def _lock_open(db: Session, receipt_id: int) -> GoodsReceipt:
+    """The receipt, if it is open, locked to this transaction. The update changes nothing, but other steps on the same
+    receipt (on SQLite, every other write) wait at it until this transaction ends and then see what it wrote: two
+    putaways of one line cannot both take the same units, and a closing receipt cannot take a late scan.
+    404; 409 receipt_closed."""
+    locked = db.execute(update(GoodsReceipt).where(GoodsReceipt.id == receipt_id, GoodsReceipt.status == "open")
+                        .values(status="open").execution_options(synchronize_session=False)).rowcount
+    if not locked:
+        get_receipt(db, receipt_id)                             # 404 when there is no such receipt
+        raise DomainError(409, "receipt_closed", f"Goods receipt {receipt_id} is closed")
+    receipt = db.get(GoodsReceipt, receipt_id, populate_existing=True)
+    db.scalars(select(GoodsReceiptLine).where(GoodsReceiptLine.receipt_id == receipt_id)
+               .execution_options(populate_existing=True)).all()   # this session may hold older copies of the lines
+    db.expire(receipt, ["lines"])
     return receipt
 
 
@@ -75,7 +85,7 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     away. Damaged units, and a batch with less than MIN_REMAINING_SHELF_LIFE of its shelf life left, are recorded on
     the receipt and never stocked. Missing details get the one-call defaults: today's batch, full shelf life.
     422 unknown_barcode; 422 batch_mismatch for a batch already scanned with another expiry; 409 receipt_closed."""
-    receipt = _changeable(db, receipt_id)
+    receipt = _lock_open(db, receipt_id)
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Scanned quantity must be at least 1")
     sku = db.scalar(select(SKU).where(SKU.barcode == barcode))
@@ -137,25 +147,30 @@ def put_away(db: Session, receipt_id: int, sku_id: int, batch_no: str, bin_code:
     """Move units from the dock into a bin (HLD 6.3, step 4). They are sellable as soon as this commits, whatever is
     still on the dock. 422 not_scanned, too_many (more than is on the dock), bad_bin, wrong_zone; 409 bin_full when
     the bin has no room, checked again right after writing; 409 receipt_closed."""
-    receipt = _changeable(db, receipt_id)
+    receipt = _lock_open(db, receipt_id)
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Quantity to put away must be at least 1")
     line = next((ln for ln in receipt.lines if ln.sku_id == sku_id and ln.batch_no == batch_no), None)
     if line is None or line.qty_scanned == 0:
         raise DomainError(422, "not_scanned", f"No good units of SKU {sku_id}, batch {batch_no}, were scanned onto "
                                               f"goods receipt {receipt.id}")
-    on_dock = line.qty_scanned - line.qty_put_away
-    if qty > on_dock:
+    bin_ = db.scalar(select(Bin).where(Bin.store_id == receipt.store_id, Bin.code == bin_code))
+    # Take the units off the dock in one conditional update, so they can be taken only once even without the lock.
+    on_the_dock = GoodsReceiptLine.qty_scanned - GoodsReceiptLine.qty_put_away
+    taken = db.execute(update(GoodsReceiptLine).where(GoodsReceiptLine.id == line.id, on_the_dock >= qty)
+                       .values(qty_put_away=GoodsReceiptLine.qty_put_away + qty)
+                       .execution_options(synchronize_session=False)).rowcount
+    db.refresh(line)
+    if not taken:
+        on_dock = line.qty_scanned - line.qty_put_away
         raise DomainError(422, "too_many", f"Only {on_dock} of {line.sku.name}, batch {batch_no}, are on the dock, "
                                            f"not {qty}", {"on_dock": on_dock})
-    bin_ = db.scalar(select(Bin).where(Bin.store_id == receipt.store_id, Bin.code == bin_code))
     if bin_ is None:
         raise DomainError(422, "bad_bin", f"Store {receipt.store_id} has no bin {bin_code}")
     slotting.ensure_room(db, receipt.store_id, bin_.id, qty)
     inventory.receive(db, receipt.store_id, sku_id, qty, bin_.id, batch_no, line.expiry_date, _reference(receipt),
                       actor)
     slotting.ensure_not_overfilled(db, bin_.id)
-    line.qty_put_away += qty
     db.flush()
     view = receipt_view(receipt)
     view["put"] = {"sku_id": sku_id, "sku": line.sku.name, "batch_no": batch_no, "qty": qty, "bin": bin_.code}
@@ -173,7 +188,7 @@ def close_receipt(db: Session, receipt_id: int, commit: bool = True) -> dict:
     """Finish a receipt (HLD 6.3, step 5): the transfer order is marked received with what was put away, every SKU
     ordered or scanned is reported as ordered versus received (with damaged and rejected units), and goods.received
     is published. 409 still_on_dock while good units wait on the dock; 409 receipt_closed."""
-    receipt = _changeable(db, receipt_id)
+    receipt = _lock_open(db, receipt_id)
     waiting = [f"{line.qty_scanned - line.qty_put_away} {line.sku.name} (batch {line.batch_no})"
                for line in receipt.lines if line.qty_scanned > line.qty_put_away]
     if waiting:

@@ -23,7 +23,6 @@ class GoodsReceiptIn(BaseModel):
     store_id: int
     transfer_order_id: int | None = None
     lines: list[ReceiptLineIn] = Field(min_length=1)
-    actor: str = "receiver"
 
 
 class OpenReceiptIn(BaseModel):
@@ -44,7 +43,6 @@ class PutawayIn(BaseModel):
     batch_no: str = Field(min_length=1, max_length=30)
     bin_code: str = Field(min_length=1, max_length=20)
     qty: int = Field(gt=0)
-    actor: str = "receiver"
 
 
 @router.post("/v1/goods-receipts", status_code=201)
@@ -52,7 +50,7 @@ def create_goods_receipt(body: GoodsReceiptIn, db: Session = Depends(get_db),
                          staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, body.store_id)
     return service.receive_goods(db, body.store_id, [line.model_dump() for line in body.lines],
-                                 body.transfer_order_id, body.actor)
+                                 body.transfer_order_id, actor=staff["sub"])
 
 
 @router.post("/v1/goods-receipts/open", status_code=201, summary="Start receiving a truck (no stock changes yet)")
@@ -82,10 +80,11 @@ def putaway_tasks(receipt_id: int, db: Session = Depends(get_db),
 def put_away(receipt_id: int, body: PutawayIn, db: Session = Depends(get_db),
              staff: dict = Depends(require_role("receiver", "manager"))):
     check_store(staff, service.get_receipt(db, receipt_id).store_id)
-    return service.put_away(db, receipt_id, body.sku_id, body.batch_no, body.bin_code, body.qty, body.actor)
+    return service.put_away(db, receipt_id, body.sku_id, body.batch_no, body.bin_code, body.qty,
+                            actor=staff["sub"])
 
 
-@router.post("/v1/goods-receipts/{receipt_id}/close", summary="Finish a receipt: the order is received, shortfalls reported")
+@router.post("/v1/goods-receipts/{receipt_id}/close", summary="Finish a receipt: order received, shortfalls reported")
 def close_receipt(receipt_id: int, db: Session = Depends(get_db),
                   staff: dict = Depends(require_role("receiver", "manager"))):
     """Refused while good units wait on the dock. Reports ordered versus received (with damaged and rejected units)
