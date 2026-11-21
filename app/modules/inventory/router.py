@@ -114,7 +114,7 @@ def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db),
     check_store(staff, body.store_id)
     return run_once(db, "stock-adjustment", idempotency_key, body.model_dump(),
                     lambda: service.adjust(db, body.store_id, body.sku_id, body.delta, body.reason, body.bin_id,
-                                           actor=staff["sub"], commit=False))
+                                           actor=staff["sub"], commit=False, shelf_rules=True))
 
 
 @router.get("/v1/stores/{store_id}/stock")

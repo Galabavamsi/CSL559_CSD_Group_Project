@@ -211,3 +211,12 @@ def test_reset_never_leaves_another_connection_without_its_tables(monkeypatch, d
     assert "Left over" not in [store.name for store in stores]
     assert stores[0].id == 1                                       # ids start at 1 again, as the demo expects
     assert_stock_is_consistent()
+
+
+def test_calling_an_adjustment_a_count_does_not_get_round_the_shelf_rules(client, db, sku):
+    rice_bin = item_of(db, sku("Basmati rice")).bin_id
+
+    res = client.post("/v1/stock-adjustments", json={"store_id": 1, "sku_id": sku("Vanilla ice cream"), "delta": 5,
+                                                     "reason": "count", "bin_id": rice_bin})
+
+    assert res.status_code == 422 and res.json()["error"]["code"] == "wrong_zone"

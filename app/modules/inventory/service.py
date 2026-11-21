@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ... import config, events, metrics
 from ...cache import atp_cache
 from ...errors import DomainError, not_found
-from ...models import (SKU, Bin, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
+from ...models import (SKU, Bin, CycleCount, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
                        StockLedger, StockLevel, Store, utcnow)
 
 # --------------------------------------------------------------------------- lookups
@@ -466,9 +466,11 @@ def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str 
     commit. Nothing is gained or lost: two ledger rows with reason `move` (out of one bin, into the other) that sum
     to zero, and qty_on_hand is untouched, so ATP does not change.
 
-    Refused: a bin of the wrong temperature zone (422 wrong_zone), and units a picker has been sent to this bin for
-    (409 promised_to_picker). Bin capacity is Slotting's rule, so the caller checks it. Returns the batch's row
-    in the new bin."""
+    Refused: a bin of the wrong temperature zone (422 wrong_zone), units a picker has been sent to this bin for
+    (409 promised_to_picker), and a move out of or into a bin with an open cycle count (409 bin_being_counted): the
+    counter's numbers are compared with the records when they are handed in, so units moved in between would be
+    added a second time or written off. Bin capacity is Slotting's rule, so the caller checks it. Returns the
+    batch's row in the new bin."""
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Moved quantity must be at least 1")
     to_bin = db.get(Bin, to_bin_id)
@@ -480,6 +482,11 @@ def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str 
     if to_bin.zone != sku.storage_type:
         raise DomainError(422, "wrong_zone",
                           f"{sku.name} needs {sku.storage_type} storage but bin {to_bin.code} is {to_bin.zone}")
+    counted = db.scalar(select(Bin.code).join(CycleCount, CycleCount.bin_id == Bin.id)
+                        .where(CycleCount.bin_id.in_((item.bin_id, to_bin.id)), CycleCount.status == "open").limit(1))
+    if counted is not None:
+        raise DomainError(409, "bin_being_counted",
+                          f"Bin {counted} is being counted; move the stock after the count is handed in")
     db.refresh(item, ["qty"])
     free = item.qty - _promised(db, item)
     if qty > free:
@@ -502,19 +509,22 @@ def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str 
 
 def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin_id: int | None = None,
            actor: str = "manager", reference: str | None = None, commit: bool = True,
-           shelf_rules: bool = True) -> dict:
+           shelf_rules: bool | None = None) -> dict:
     """Correct the stock count (FR-11): damage, expiry, theft, or a cycle-count difference.
 
     Negative delta removes units (from `bin_id` if given, otherwise earliest-expiry first). Units already scanned
     into a tote are never taken, as in expire_stock and write_off_missing: they are off the shelf, and their order
     could not be packed without them (409 in_tote when the shelf alone does not have enough).
     Positive delta adds found units and needs a `bin_id`. The bin must be of the SKU's temperature zone
-    (422 wrong_zone) and have room (409 bin_full), as for a goods receipt. A cycle count passes `shelf_rules=False`:
-    it records what is really on the shelf, even where it should not be.
+    (422 wrong_zone) and have room (409 bin_full), as for a goods receipt. A cycle count is exempt: it records what
+    is really on the shelf, even where it should not be. So `shelf_rules` is on by default for every reason but
+    `count`; the stock-adjustment endpoint always passes True, whatever reason the request gives.
     `commit=False` leaves the transaction open, so the caller can save an idempotency record with it.
     """
     if delta == 0:
         raise DomainError(422, "bad_quantity", "delta cannot be 0")
+    if shelf_rules is None:
+        shelf_rules = reason != "count"
     get_store(db, store_id)
     sku = get_sku(db, sku_id)
 
