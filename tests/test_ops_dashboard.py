@@ -168,3 +168,14 @@ def test_kpis_are_per_store_except_for_ops(client_as):
     assert client_as("picker", 1).get("/v1/stores/2/kpis").status_code == 403
     assert client_as("manager", 1).get("/v1/stores/1/kpis").status_code == 200
     assert client_as("ops").get("/v1/stores/2/kpis").status_code == 200
+
+
+def test_an_impossible_store_id_or_list_size_is_a_422_not_a_500(client):
+    huge = 10**20                                        # overflowed the database integer: a 500 before
+    for path in (f"/v1/stores/{huge}/dashboard", f"/v1/stores/{huge}/kpis", "/v1/stores/0/kpis"):
+        assert client.get(path).status_code == 422, path
+    assert client.get("/v1/events", params={"store_id": huge}).status_code == 422
+    for limit in (-1, 0, 501):                           # SQLite read -1 as "every event ever"
+        assert client.get("/v1/events", params={"limit": limit}).status_code == 422, limit
+    assert client.get("/v1/events", params={"limit": 500}).status_code == 200
+    assert client.get("/v1/stores/99/kpis").status_code == 404     # possible but unknown: still not found
