@@ -121,8 +121,10 @@ found stay picked. The rest move to another bin with spare stock if there is one
 refunded through \texttt{order.line\_dropped}, and a substitute is offered.
 
 To accept a substitute, the demo has the picker approve it on the customer's behalf; a real app would ask the
-customer on their phone. The substitute is held in the same transaction that changes the order line
-(\texttt{inventory.swap\_line}, from Member~1). % TODO: update once swap_line lands (task 2.4, second half).
+customer on their phone. Only units the order really dropped can be replaced, and they are marked so they cannot be
+replaced twice. The substitute is held in the same transaction that changes the order line
+(\texttt{inventory.swap\_line}, from Member~1); if it sold out since the offer, nothing changes. It joins the walk as
+a new line, and \texttt{order.line\_substituted} charges for it, since the dropped units were already refunded.
 
 \paragraph{Cancel and refunds.} Until packing, a cancel gives back every hold, and \texttt{order.cancelled} refunds
 only those units. Units dropped earlier were refunded by their own \texttt{order.line\_dropped}, so the two never add up
@@ -198,7 +200,7 @@ What batching still costs:
 
 \section{Limits and open items}
 
-Two limits wait on Member~1's Inventory work; the rest are prototype shortcuts, each with a clear next step
+One limit waits on Member~1's Inventory work; the rest are prototype shortcuts, each with a clear next step
 (Table~\ref{tab:limits}).
 
 \begin{table}[!htb]
@@ -209,9 +211,9 @@ Two limits wait on Member~1's Inventory work; the rest are prototype shortcuts, 
     \toprule
     Limit & What it means & Next step \\
     \midrule
-    A substitute is offered but cannot be accepted
-      & The customer is refunded instead of getting the substitute
-      & Accept endpoint and button once \texttt{inventory.swap\_line} exists (task 2.4) \\
+    The picker accepts a substitute for the customer
+      & The customer is not asked; the picker decides on their behalf
+      & Ask the customer on their phone, with a timeout \\
     \addlinespace[3pt]
     Expiry write-off in the middle of a line
       & The order cannot be packed (\texttt{stock\_mismatch}) and has to be cancelled

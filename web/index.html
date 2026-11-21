@@ -90,6 +90,14 @@
         <h3 id="job-title"></h3>
         <p class="note">Lines are in walking order. Scan each item, or report it if the shelf is empty. When the store is busy you get up to three orders at once: put each item in the tote shown.</p>
         <ol id="task-list" class="task-list"></ol>
+        <div id="offer-row" class="block hold" hidden>
+          <p id="offer-text"></p>
+          <p class="note">In the demo the picker answers for the customer, who would decide on their phone.</p>
+          <div class="row">
+            <button id="accept-offer" class="btn btn-primary">Customer accepts</button>
+            <button id="decline-offer" class="btn">No thanks</button>
+          </div>
+        </div>
         <div id="pack-row" class="row" hidden>
           <label class="visually-hidden" for="crate-slot">Crate slot</label>
           <input id="crate-slot" value="S-01" autocomplete="off" aria-label="Crate slot">
