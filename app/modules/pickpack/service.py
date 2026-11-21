@@ -176,11 +176,15 @@ def scan(db: Session, task_id: int, barcode: str, qty: int = 1, picker_id: str |
 
 def find_substitute(db: Session, store_id: int, sku_id: int, qty: int) -> dict | None:
     """Something the customer might take instead of `qty` units that cannot be found (HLD 9.2 saga, task 2.4): same
-    category, enough that a customer could buy it (ATP, after the safety buffer), and the nearest price. Only an
-    offer: nothing is held. None when nothing fits."""
+    category, enough that a customer could buy it (ATP, after the safety buffer), no dearer than the missing item, and
+    the nearest price. Only an offer: nothing is held. None when nothing fits.
+
+    No dearer, because in this prototype nobody asks the customer: whoever accepts the offer can never make them pay
+    more than they paid for the missing item, and every refund (a cancel too) stays exact."""
     wanted = inventory.get_sku(db, sku_id)
     options = [row for row in inventory.availability(db, store_id)
-               if row["category"] == wanted.category and row["sku_id"] != sku_id and row["atp"] >= qty]
+               if row["category"] == wanted.category and row["sku_id"] != sku_id and row["atp"] >= qty
+               and row["price"] <= wanted.price]
     if not options:
         return None
     best = min(options, key=lambda row: (abs(row["price"] - wanted.price), row["price"], row["name"]))
@@ -192,7 +196,8 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
     """The customer takes a substitute for units dropped from their order (task 2.4; in the demo the picker answers
     for the customer). Commits.
 
-    Only units this order really dropped can be replaced: their hold is already gone, so `inventory.swap_line` holds
+    Only units this order really dropped can be replaced, and only by the item on offer (`409 not_offered` names the
+    current offer): their hold is already gone, so `inventory.swap_line` holds
     the substitute and rewrites the order's lines in this same transaction, and the dropped lines it answers are marked
     `substituted` so they cannot be replaced twice. If the substitute sold out since it was offered, swap_line's
     `409 insufficient_stock` comes back and nothing changes. The substitute becomes a new pending line in walking
@@ -208,6 +213,13 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
         db.rollback()
         raise DomainError(409, "not_dropped", f"Only {sum(t.qty for t in dropped)} units of that item were dropped "
                                               f"from this order, so {qty} cannot be replaced")
+    # Only the item on offer, worked out again now: nobody can pick a dearer one for the customer.
+    offer = find_substitute(db, job.store_id, dropped_sku_id, qty)
+    if offer is None or offer["sku_id"] != substitute_sku_id:
+        db.rollback()
+        raise DomainError(409, "not_offered", "Only the substitute on offer can be accepted: " + (
+            f"{offer['name']} (Rs {offer['price']:g})" if offer else "nothing similar is in stock now"),
+            {"offered": offer})
     try:
         inventory.swap_line(db, db.get(Reservation, job.reservation_id), dropped_sku_id, substitute_sku_id, qty)
     except DomainError:
@@ -223,15 +235,23 @@ def substitute(db: Session, job_id: int, dropped_sku_id: int, substitute_sku_id:
             db.add(PickTask(job_id=job.id, sku_id=dropped_sku_id, qty=take, status="substituted"))
         left -= take
     db.flush()
-    fulfilment.add_pick_tasks(db, job, substitute_sku_id, qty)
-    fulfilment.resequence(db, job)
-    name = inventory.get_sku(db, substitute_sku_id).name
     events.publish(db, "order.line_substituted", job.store_id,
                    {"order_id": job.order_id, "job_id": job.id, "dropped_sku_id": dropped_sku_id,
                     "substitute_sku_id": substitute_sku_id, "qty": qty,
                     "charge_amount": fulfilment.refund_for(db, {substitute_sku_id: qty})})   # priced like refunds
+    # ATP can count a batch that expired but is not written off yet, which allocate never picks: such units are
+    # dropped again here (refunded by their own order.line_dropped), and the reply says so.
+    missing = fulfilment.add_pick_tasks(db, job, substitute_sku_id, qty)
+    fulfilment.resequence(db, job)
     db.commit()
-    return {"message": f"{qty} × {name} added to the order. Pick it on this walk.", "job": fulfilment.job_view(job)}
+    name = offer["name"]
+    if missing == qty:
+        message = f"{name} could not be found on the shelves after all, so it is refunded too."
+    elif missing:
+        message = f"{qty - missing} × {name} added to the order; {missing} could not be found and are refunded."
+    else:
+        message = f"{qty} × {name} added to the order. Pick it on this walk."
+    return {"message": message, "added": qty - missing, "job": fulfilment.job_view(job)}
 
 
 def report_short(db: Session, task_id: int, found: int | None = None, actor: str = "picker",

@@ -75,7 +75,8 @@ books; until then the units are only held, so a cancel never has to put stock ba
   \item \textbf{Empty shelf.} The picker says how many were there, and those stay picked. For the rest, the count is
     corrected (a \texttt{not\_found} ledger row) and the line moves to another bin with spare stock, never units
     another customer holds. With none left it is dropped: the hold is released, \texttt{order.line\_dropped} carries
-    the refund, and a substitute is offered (same category, enough to sell, nearest price).
+    the refund, and a substitute is offered (same category, enough to sell, no dearer than the missing item, nearest
+    price).
   \item \textbf{Packing.} Commits the sale for every picked line (\texttt{qty\_on\_hand} and \texttt{qty\_reserved}
     both drop) and publishes \texttt{order.ready\_for\_pickup}. An order with nothing picked is cancelled instead.
   \item \textbf{The handheld.} \texttt{/picker.html} is a phone screen: one line at a time (``Go to bin A-01-04,
@@ -121,7 +122,9 @@ found stay picked. The rest move to another bin with spare stock if there is one
 refunded through \texttt{order.line\_dropped}, and a substitute is offered.
 
 To accept a substitute, the demo has the picker approve it on the customer's behalf; a real app would ask the
-customer on their phone. Only units the order really dropped can be replaced, and they are marked so they cannot be
+customer on their phone. Only the item on offer can be accepted, and it is never dearer than the missing one, so
+whoever accepts can never make the customer pay more than they were refunded. Only units the order really dropped
+can be replaced, and they are marked so they cannot be
 replaced twice. The substitute is held in the same transaction that changes the order line
 (\texttt{inventory.swap\_line}, from Member~1); if it sold out since the offer, nothing changes. It joins the walk as
 a new line, and \texttt{order.line\_substituted} charges for it, since the dropped units were already refunded.
@@ -200,8 +203,7 @@ What batching still costs:
 
 \section{Limits and open items}
 
-One limit waits on Member~1's Inventory work; the rest are prototype shortcuts, each with a clear next step
-(Table~\ref{tab:limits}).
+The fulfilment prototype's limits are shortcuts, each with a clear next step (Table~\ref{tab:limits}).
 
 \begin{table}[!htb]
   \centering
@@ -212,12 +214,12 @@ One limit waits on Member~1's Inventory work; the rest are prototype shortcuts, 
     Limit & What it means & Next step \\
     \midrule
     The picker accepts a substitute for the customer
-      & The customer is not asked; the picker decides on their behalf
+      & The customer is not asked; the picker decides on their behalf, but only for the offered item, never a dearer one
       & Ask the customer on their phone, with a timeout \\
     \addlinespace[3pt]
-    Expiry write-off in the middle of a line
-      & The order cannot be packed (\texttt{stock\_mismatch}) and has to be cancelled
-      & Inventory's write-off must leave units already in a tote; passed to Member~1 \\
+    Units already in a tote when their batch expires
+      & They are still packed and delivered; only the rest of the batch is refused at the scanner
+      & Check the expiry date again at packing \\
     \addlinespace[3pt]
     Units typed as ``found'' are not scanned
       & They skip the barcode check

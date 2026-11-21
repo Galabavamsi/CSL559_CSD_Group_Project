@@ -105,7 +105,10 @@ function renderCart() {
 
 async function checkout() {
   const lines = Object.entries(state.cart).map(([skuId, qty]) => ({ sku_id: Number(skuId), qty }));
-  const orderId = "ORD-" + Date.now().toString(36).toUpperCase();
+  // Random, not the clock: two shoppers in the same millisecond, or someone guessing, must never share an order id.
+  // (crypto.randomUUID needs HTTPS; getRandomValues also works on the lab server's plain-HTTP address.)
+  const random = crypto.getRandomValues(new Uint8Array(8));
+  const orderId = "ORD-" + Array.from(random, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
   try {
     state.hold = await api("POST", "/v1/reservations",
       { order_id: orderId, store_id: state.shopStore, h3_cell: state.shopCell, lines });
@@ -401,12 +404,25 @@ async function acceptOffer() {
   state.offer = null;
   const result = await api("POST", `/v1/fulfilment-jobs/${offer.jobId}/substitutions`,
     { dropped_sku_id: offer.droppedSkuId, substitute_sku_id: offer.sku_id, qty: offer.qty, picker_id: picker() },
-    picker()).catch((error) => { renderJob(); return explainIfOrderGone(error, job); });
+    picker()).catch((error) => {
+      if (error.code === "not_offered") return offerChanged(offer, error.details?.offered, job);
+      renderJob();
+      return explainIfOrderGone(error, job);
+    });
   if (!result) return;
   updateJob(result.job);
   say($("picker-message"), toteLabel(job) + result.message, "good");
   renderJob();
   refreshOps();
+}
+
+/** Stock moved since the offer was shown: show the one on offer now, or say there is none (409 not_offered). */
+function offerChanged(old, now, job) {
+  state.offer = now ? { ...old, ...now } : null;
+  say($("picker-message"), toteLabel(job) + (now
+    ? `The offer changed: ${now.name} (Rs ${now.price}) is on offer now.`
+    : "Nothing similar is in stock any more: the missing item stays refunded."), "bad");
+  renderJob();
 }
 
 function declineOffer() {

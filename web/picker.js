@@ -141,6 +141,13 @@ async function acceptOffer() {
     result = await api("POST", `/v1/fulfilment-jobs/${offer.jobId}/substitutions`,
       { dropped_sku_id: offer.droppedSkuId, substitute_sku_id: offer.sku_id, qty: offer.qty, picker_id: me() }, me());
   } catch (error) {
+    if (error.code === "not_offered") {         // stock moved since the offer was shown
+      const now = error.details?.offered;
+      phone.offer = now ? { ...offer, ...now } : null;
+      say($("message"), now ? `The offer changed: ${now.name} (Rs ${now.price}) is on offer now.`
+        : "Nothing similar is in stock any more: the missing item stays refunded.", "bad");
+      return render();
+    }
     render();
     return orderGone(error, job);
   }

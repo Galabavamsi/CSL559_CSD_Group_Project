@@ -182,7 +182,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | H3 delivery zones | H3 cells (resolution 9) mapped to stores | Member 4: done |
 | Hourly forecasts, ML model | Daily forecast: three simple models compared by WAPE, weekday average in use | Member 3 |
 | Reservation timeout sweeper | Automatic sweep every `SWEEP_INTERVAL_SECONDS`, plus the manual endpoint | Member 1: done |
-| Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered; accepted with `POST /v1/fulfilment-jobs/{id}/substitutions` (`inventory.swap_line`), the picker answering for the customer | Member 2: done |
+| Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered (same category, never dearer); only that offer can be accepted, with `POST /v1/fulfilment-jobs/{id}/substitutions` (`inventory.swap_line`), the picker answering for the customer | Member 2: done |
 | Stuck orders | No claim, scan or shelf report for `PICK_STALL_MINUTES`: back to the queue every `STALL_CHECK_SECONDS` (`fulfilment.recover_stalled`), or flagged if items are in a tote | Member 2: done |
 | Batch picking at peak | Up to `BATCH_SIZE` oldest orders in one walk at peak, one tote each; not grouped by where their items are | Member 2: done |
 | Scan-item-then-bin putaway | Saved goods receipts in five steps: open, scan onto the dock, putaway tasks, put away line by line (sellable at once), close with the shortfalls; damaged and short-dated units are never stocked; `Idempotency-Key` on every write | Member 3: done; the ops screen still receives in one call |
