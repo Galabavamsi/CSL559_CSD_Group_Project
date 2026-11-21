@@ -110,6 +110,7 @@ WebSocket feed) and marks them published; delivery is at least once.
 | `rider.assigned` (payload: `job_id`, `order_id`, `rider_id`) | fulfilment riders | nobody yet (live feed shows it) |
 | `order.cancelled` (payload: `order_id`, `job_id`, `reason`, `refund_amount`) | fulfilment | nobody yet (the Order service would refund `refund_amount`: the units still held; dropped units were refunded by `order.line_dropped`) |
 | `order.line_dropped` (payload: `order_id`, `job_id`, `sku_id`, `qty`, `refund_amount`) | fulfilment (when a job is created), pickpack (empty shelf) | nobody yet (the Order service would refund that line) |
+| `order.line_substituted` (payload: `order_id`, `job_id`, `dropped_sku_id`, `substitute_sku_id`, `qty`, `charge_amount`) | pickpack (substitute accepted) | nobody yet (the Order service would charge for the substitute; the dropped units were refunded by `order.line_dropped`) |
 | `store.status_changed` | fulfilment | nobody yet |
 | `transfer_order.created` / `.dispatched` | replenishment | nobody yet (the hub WMS would) |
 | `goods.received` | inbound | nobody yet |
@@ -179,7 +180,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | H3 delivery zones | H3 cells (resolution 9) mapped to stores | Member 4: done |
 | Hourly forecasts, ML model | Daily forecast: three simple models compared by WAPE, weekday average in use | Member 3 |
 | Reservation timeout sweeper | Automatic sweep every `SWEEP_INTERVAL_SECONDS`, plus the manual endpoint | Member 1: done |
-| Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered; accepting it waits for `inventory.swap_line` | Member 2 |
+| Substitution and refund saga | Line is dropped, hold released, `order.line_dropped` for the refund, a substitute offered; accepted with `POST /v1/fulfilment-jobs/{id}/substitutions` (`inventory.swap_line`), the picker answering for the customer | Member 2: done |
 | Stuck orders | No claim, scan or shelf report for `PICK_STALL_MINUTES`: back to the queue every `STALL_CHECK_SECONDS` (`fulfilment.recover_stalled`), or flagged if items are in a tote | Member 2: done |
 | Batch picking at peak | Up to `BATCH_SIZE` oldest orders in one walk at peak, one tote each; not grouped by where their items are | Member 2: done |
 | Scan-item-then-bin putaway | One call receives and puts away | Member 3 |

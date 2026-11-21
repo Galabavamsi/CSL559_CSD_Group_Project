@@ -1,6 +1,6 @@
-"""Substitutes for dropped lines, first half (Member 2 guide, task 2.4): the offer and the refund event.
+"""Substitutes for dropped lines (Member 2 guide, task 2.4): the offer, the refund event, and accepting the offer
+(POST /v1/fulfilment-jobs/{id}/substitutions, on Member 1's inventory.swap_line).
 
-Accepting an offer (POST /v1/fulfilment-jobs/{id}/substitutions) needs Member 1's inventory.swap_line and comes next.
 Store 1 has one vanilla ice cream (Rs 120, Frozen) and 30 frozen green peas (Rs 95, Frozen); Staples are rice (Rs 140),
 oil (Rs 155), sugar (Rs 48) and atta (Rs 245), 30 of each, each in one bin."""
 from datetime import date, timedelta
@@ -125,3 +125,127 @@ def test_dropped_lines_and_a_later_cancel_never_refund_more_than_the_order(clien
     assert (dropped, cancelled["refund_amount"]) == (400, 560)                 # the 4 rice in the tote
     assert dropped + cancelled["refund_amount"] == 6 * 140 + 120
     assert_stock_is_consistent()
+
+
+
+# --------------------------------------------------------------------------- accepting the offer (second half)
+
+def accept(client, job_id: int, dropped: int, substitute: int, qty: int = 1, **extra):
+    return client.post(f"/v1/fulfilment-jobs/{job_id}/substitutions",
+                       json={"dropped_sku_id": dropped, "substitute_sku_id": substitute, "qty": qty, **extra})
+
+
+def stock(client, sku_id: int) -> tuple[int, int]:
+    row = client.get("/v1/stores/1/availability", params={"skus": str(sku_id)}).json()[0]
+    return row["on_hand"], row["reserved"]
+
+
+def test_the_customer_takes_the_peas_for_the_missing_ice_cream(client, sku):
+    """The guide's check: accepting creates a pending task for peas and lowers the peas ATP by 1."""
+    ice_cream, peas = sku("Vanilla ice cream"), sku("Frozen green peas")
+    peas_before = atp(client, 1, peas)
+    offer = report_empty(client, ice_cream)["substitute_offer"]
+    job_id = next_job(client)["job_id"]
+
+    res = accept(client, job_id, ice_cream, offer["sku_id"])
+
+    assert res.status_code == 200, res.text
+    assert res.json()["message"] == "1 × Frozen green peas 500 g added to the order. Pick it on this walk."
+    tasks = res.json()["job"]["tasks"]
+    assert [(t["status"], t["qty"], t["bin"]) for t in tasks if t["sku_id"] == peas] == [("pending", 1, "F-01-02")]
+    assert [t["status"] for t in tasks if t["sku_id"] == ice_cream] == ["substituted"]
+    assert atp(client, 1, peas) == peas_before - 1
+    [event] = events_of(client, "order.line_substituted")
+    assert event == {"order_id": "s-1", "job_id": job_id, "dropped_sku_id": ice_cream, "substitute_sku_id": peas,
+                     "qty": 1, "charge_amount": 95}
+    peas_line = next(t for t in tasks if t["sku_id"] == peas)                     # pick and pack it as usual
+    client.post(f"/v1/pick-tasks/{peas_line['task_id']}/scans", json={"barcode": peas_line["barcode"]})
+    packed = client.post(f"/v1/fulfilment-jobs/{job_id}/packed", json={"crate_slot": "S-01"}).json()
+    assert packed["state"] == "packed"
+    assert stock(client, peas) == (29, 0)
+    assert_stock_is_consistent()
+
+
+def test_a_substitute_sold_out_since_the_offer_changes_nothing(client, sku):
+    ice_cream, peas = sku("Vanilla ice cream"), sku("Frozen green peas")
+    report_empty(client, ice_cream)
+    job_id = next_job(client)["job_id"]
+    hold(client, "someone-else", peas, atp(client, 1, peas))                   # every pea is held by another customer
+
+    res = accept(client, job_id, ice_cream, peas)
+
+    assert res.status_code == 409 and res.json()["error"]["code"] == "insufficient_stock"
+    tasks = client.get(f"/v1/fulfilment-jobs/{job_id}").json()["tasks"]
+    assert [t["status"] for t in tasks] == ["short"]                             # still dropped, no peas line
+    assert events_of(client, "order.line_substituted") == []
+    assert_stock_is_consistent()
+
+
+def test_only_units_the_order_dropped_can_be_replaced(client, sku):
+    rice, oil = sku("Basmati rice"), sku("Sunflower oil")
+    job = report_empty(client, rice, order_qty=6, found=4)                     # 4 picked, 2 dropped
+    job_id = job["job"]["job_id"]
+
+    too_many = accept(client, job_id, rice, oil, qty=3)
+    one = accept(client, job_id, rice, oil, qty=1)
+    again = accept(client, job_id, rice, oil, qty=2)                           # only 1 dropped unit is left
+
+    assert too_many.status_code == 409 and too_many.json()["error"]["code"] == "not_dropped"
+    assert one.status_code == 200
+    assert again.status_code == 409 and again.json()["error"]["code"] == "not_dropped"
+    rice_lines = sorted((t["status"], t["qty"]) for t in one.json()["job"]["tasks"] if t["sku_id"] == rice)
+    assert rice_lines == [("picked", 4), ("short", 1), ("substituted", 1)]
+    assert stock(client, oil) == (30, 1)
+    assert_stock_is_consistent()
+
+
+def test_a_line_that_was_picked_cannot_be_swapped(client, sku):
+    rice, sugar = sku("Basmati rice"), sku("Sugar")
+    place_paid_order(client, "s-5", 1, [(rice, 1)])
+    job = next_job(client)
+    line = job["tasks"][0]
+    client.post(f"/v1/pick-tasks/{line['task_id']}/scans", json={"barcode": line["barcode"]})
+
+    res = accept(client, job["job_id"], rice, sugar)
+
+    assert res.status_code == 409 and res.json()["error"]["code"] == "not_dropped"
+    assert stock(client, sugar) == (30, 0)
+
+
+def test_a_substitute_joins_only_an_order_still_being_picked(client, sku):
+    ice_cream, peas = sku("Vanilla ice cream"), sku("Frozen green peas")
+    report_empty(client, ice_cream)
+    job_id = next_job(client)["job_id"]
+    client.post(f"/v1/fulfilment-jobs/{job_id}/cancel", json={"reason": "Customer changed their mind"})
+
+    res = accept(client, job_id, ice_cream, peas)
+
+    assert res.status_code == 409 and res.json()["error"]["code"] == "job_not_picking"
+    assert stock(client, peas) == (30, 0)
+
+
+def test_cancelling_after_a_substitution_gives_the_substitute_back_and_refunds_it(client, sku):
+    ice_cream, peas = sku("Vanilla ice cream"), sku("Frozen green peas")
+    report_empty(client, ice_cream)
+    job_id = next_job(client)["job_id"]
+    accept(client, job_id, ice_cream, peas)
+
+    client.post(f"/v1/fulfilment-jobs/{job_id}/cancel", json={"reason": "Customer changed their mind"})
+
+    assert stock(client, peas) == (30, 0)
+    refunded = events_of(client, "order.line_dropped")[0]["refund_amount"]      # the ice cream, Rs 120
+    charged = events_of(client, "order.line_substituted")[0]["charge_amount"]   # the peas, Rs 95
+    cancelled = events_of(client, "order.cancelled")[0]["refund_amount"]        # the peas again, Rs 95
+    assert refunded - charged + cancelled == 120                               # the customer gets back what they paid
+    assert_stock_is_consistent()
+
+
+def test_another_pickers_handheld_or_store_cannot_accept(client, client_as, sku):
+    ice_cream, peas = sku("Vanilla ice cream"), sku("Frozen green peas")
+    report_empty(client, ice_cream)
+    job_id = next_job(client)["job_id"]                                        # claimed by picker-1
+
+    assert accept(client, job_id, ice_cream, peas, picker_id="picker-2").json()["error"]["code"] == "not_your_order"
+    assert accept(client_as("picker", 2), job_id, ice_cream, peas).status_code == 403
+    assert accept(client, job_id, ice_cream, peas, qty=0).status_code == 422
+    assert stock(client, peas) == (30, 0)
