@@ -26,7 +26,7 @@ DB_POOL_OVERFLOW = int(os.getenv("DB_POOL_OVERFLOW", "40"))
 
 # Login (HLD 10). The default secret is fake and public: always set JWT_SECRET outside local development.
 DEFAULT_JWT_SECRET = "dev-only-change-me-not-a-real-secret"
-JWT_SECRET = os.getenv("JWT_SECRET", DEFAULT_JWT_SECRET)
+JWT_SECRET = os.getenv("JWT_SECRET") or DEFAULT_JWT_SECRET    # an empty JWT_SECRET= line must not sign with ""
 TOKEN_MINUTES = int(os.getenv("TOKEN_MINUTES", "30"))
 # Password of every seeded demo account (picker1, manager1, admin, ...). The demo screens log in with it.
 DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo")

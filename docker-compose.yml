@@ -1,7 +1,10 @@
 services:
   app:
     build: .
-    ports: ["8000:8000"]
+    ports: ["${APP_PORT:-8000}:8000"]
+    env_file:                    # server settings (JWT_SECRET and the rest): copy deploy.env.example to deploy.env
+      - path: deploy.env         # and start with `docker compose --env-file deploy.env up -d --build` (docs/DEPLOY_AWS.md)
+        required: false
     environment:
       # SQLite in a volume by default. For PostgreSQL (task 1.7), start with `--profile postgres` and
       #   DARKSTORE_DB=postgresql://darkstore:darkstore@postgres:5432/darkstore
