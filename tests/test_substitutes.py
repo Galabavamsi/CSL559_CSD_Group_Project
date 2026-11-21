@@ -1,17 +1,35 @@
 """Substitutes for dropped lines (Member 2 guide, task 2.4): the offer, the refund event, and accepting the offer
 (POST /v1/fulfilment-jobs/{id}/substitutions, on Member 1's inventory.swap_line).
 
-Store 1 has one vanilla ice cream (Rs 120, Frozen) and 30 frozen green peas (Rs 95, Frozen); Staples are rice (Rs 140),
-oil (Rs 155), sugar (Rs 48) and atta (Rs 245), 30 of each, each in one bin."""
+Store 1 has one vanilla ice cream (Rs 120, Frozen) and 30 frozen green peas (Rs 95, Frozen). Rice (Rs 140), oil
+(Rs 155), sugar (Rs 48) and atta (Rs 245), 30 of each, each in one bin, are each a category of their own (#62); tests
+that need several items to choose from put them in one with the `staples` fixture."""
 from datetime import date, timedelta
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import select, update
 
-from app.models import StockItem
+from app.cache import atp_cache
+from app.db import SessionLocal
+from app.models import SKU, StockItem
+from app.modules.inventory import service as inventory
 from app.modules.pickpack import service as pickpack
 
 from .conftest import assert_stock_is_consistent, atp, place_paid_order
 from .test_order_flow import next_job
+
+
+STAPLES = ("Basmati rice 1 kg", "Wheat atta 5 kg", "Sugar 1 kg", "Sunflower oil 1 L")
+
+
+@pytest.fixture()
+def staples(fresh_data):
+    """The demo catalogue has one item of each kind (#62), so the only offer in it is peas for ice cream. The nearest-
+    price rule needs a category with several items at different prices: put rice, atta, sugar and oil in one."""
+    with SessionLocal() as session:
+        session.execute(update(SKU).where(SKU.name.in_(STAPLES)).values(category="Staples"))
+        session.commit()
+    atp_cache.clear()                                   # whole-store availability, with its categories, is cached
 
 
 def events_of(client, event_type: str) -> list[dict]:
@@ -67,7 +85,7 @@ def test_with_nothing_left_in_the_category_the_offer_is_null_but_the_refund_is_s
     assert_stock_is_consistent()
 
 
-def test_the_nearest_price_wins_among_items_customers_can_still_buy_and_never_a_dearer_one(client, sku):
+def test_the_nearest_price_wins_among_items_customers_can_still_buy_and_never_a_dearer_one(client, sku, staples):
     atta, oil, rice, sugar = sku("Wheat atta"), sku("Sunflower oil"), sku("Basmati rice"), sku("Sugar")
     # Both atta orders are paid before the shelf is found empty: after that, atta cannot be bought any more.
     place_paid_order(client, "s-1", 1, [(atta, 6)])
@@ -111,6 +129,17 @@ def test_units_that_cannot_be_found_when_the_order_is_paid_are_refunded_too(clie
     [dropped] = events_of(client, "order.line_dropped")
     assert (dropped["order_id"], dropped["sku_id"], dropped["qty"], dropped["refund_amount"]) == ("s-9", milk, 2, 56)
     assert_stock_is_consistent()
+
+
+def test_in_the_demo_catalogue_only_peas_stand_in_for_ice_cream(db):
+    """#62: Staples, Dairy and Snacks were split by kind, so nobody is offered sugar for rice, eggs for paneer or chips
+    for noodles. What is left: ice cream (Rs 120) gets peas (Rs 95); the other way round would be dearer."""
+    offers = {}
+    for row in inventory.availability(db, 1):
+        offer = pickpack.find_substitute(db, 1, row["sku_id"], 1)
+        if offer:
+            offers[row["name"]] = offer["name"]
+    assert offers == {"Vanilla ice cream 500 ml": "Frozen green peas 500 g"}
 
 
 def test_find_substitute_looks_only_in_the_same_category_and_never_offers_a_dearer_item(db, sku):
@@ -194,7 +223,7 @@ def test_a_substitute_sold_out_since_the_offer_changes_nothing(client, sku):
     assert_stock_is_consistent()
 
 
-def test_only_units_the_order_dropped_can_be_replaced(client, sku):
+def test_only_units_the_order_dropped_can_be_replaced(client, sku, staples):
     rice, sugar = sku("Basmati rice"), sku("Sugar")
     job = report_empty(client, rice, order_qty=6, found=4)                     # 4 picked, 2 dropped; sugar offered
     job_id = job["job"]["job_id"]
@@ -265,7 +294,7 @@ def test_another_pickers_handheld_or_store_cannot_accept(client, client_as, sku)
 
 
 
-def test_only_the_offered_substitute_can_be_accepted(client, sku):
+def test_only_the_offered_substitute_can_be_accepted(client, sku, staples):
     """Found in the review of #49 (Member 3): the server took any item, so whoever accepted could swap a cheap missing
     item for a dear one and charge the customer for it. Now only the offer is accepted, and the offer is never dearer
     than the missing item, so the customer is never charged more than they were refunded."""
@@ -312,7 +341,7 @@ def test_a_substitute_whose_only_batch_has_expired_is_refunded_and_the_reply_say
     assert_stock_is_consistent()
 
 
-def test_fewer_units_than_were_dropped_can_take_the_offer(client, sku):
+def test_fewer_units_than_were_dropped_can_take_the_offer(client, sku, staples):
     """Found in a later review of #49: the offer was worked out again for the units accepted, not the units dropped.
     3 atta dropped and rice offered, because only 2 oil are left; then rice for 1 atta was refused, naming oil."""
     atta, oil, rice = sku("Wheat atta"), sku("Sunflower oil"), sku("Basmati rice")
@@ -336,7 +365,7 @@ def test_fewer_units_than_were_dropped_can_take_the_offer(client, sku):
     assert_stock_is_consistent()
 
 
-def test_taking_fewer_units_lets_in_no_item_that_was_never_on_offer(client, sku):
+def test_taking_fewer_units_lets_in_no_item_that_was_never_on_offer(client, sku, staples):
     atta, oil, sugar = sku("Wheat atta"), sku("Sunflower oil"), sku("Sugar")
     hold(client, "most-of-the-oil", oil, atp(client, 1, oil) - 2)
     report_empty(client, atta, order_qty=3)

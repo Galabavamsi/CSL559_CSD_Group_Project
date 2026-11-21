@@ -121,7 +121,9 @@ failure path cheap: before packing, any way out only gives a hold back.
 
 \paragraph{When an item is missing} (the HLD 9.2 saga: next bin, else substitute, else refund). Units the picker
 found stay picked. The rest move to another bin with spare stock if there is one. Otherwise they are dropped and
-refunded through \texttt{order.line\_dropped}, and a substitute is offered.
+refunded through \texttt{order.line\_dropped}, and a substitute is offered: an item of the same category. A category
+is one kind of item (rice, flour, sugar and oil are four), so nobody is offered sugar for missing rice; in the demo
+catalogue the only offer left is frozen peas for missing ice cream.
 
 To accept a substitute, the demo has the picker approve it on the customer's behalf; a real app would ask the
 customer on their phone. Only the item on offer can be accepted, and it is never dearer than the missing one, so
