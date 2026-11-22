@@ -61,9 +61,12 @@ The Bangalore radius is our assumption, not a measured figure.
 - The app no longer starts with zero setup: it needs a PostgreSQL server. `docker compose up -d postgres` gives one.
 - The experiment scripts used to work on a temporary SQLite file. They now create a throwaway database beside the
   app's and drop it at exit (`scripts/scratch.py`). The database login therefore needs the right to create databases.
-- The test suite takes about four and a half minutes (610 tests), all of it on PostgreSQL. Emptying tables with
-  `TRUNCATE` instead of dropping and creating them did not make it faster, so the time goes somewhere else. Not yet
-  found.
+- The test suite (610 tests) took about four and a half minutes on the dev server, all of it on PostgreSQL. Emptying
+  tables with `TRUNCATE` instead of dropping and creating them did not make it faster. The time was going to the
+  disk: every test commits many times, and each commit waited for the server's network disk to confirm the write.
+  With `fsync`, `synchronous_commit` and `full_page_writes` switched off on the test database, the same suite takes
+  2 min 9 s. Those settings are for a throwaway test database only: a crash can corrupt it. GitHub's CI machines,
+  with local disks, already ran the suite in under three minutes.
 - The H3 delivery-zone lookup is unchanged. Serviceability still answers from the zone table; the PostGIS queries sit
   beside it and are used for the "nearest hub" in a not-serviceable answer.
 - Bhilai has no hubs yet. They come from hub placement.
@@ -81,4 +84,5 @@ The Bangalore radius is our assumption, not a measured figure.
   https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.PostgreSQL.CommonDBATasks.PostGIS.html
 - Our own measurements, on PostgreSQL 16 with PostGIS 3.4 on a 4 vCPU server: the query plans in the table above
   (two hubs in the table, sequential scans switched off so the plan shows what the index can do, not what is
-  cheapest for two rows), and the full suite, 610 passed in 4 min 28 s.
+  cheapest for two rows), and the full suite: 610 passed in 4 min 28 s with default durability settings and in
+  2 min 9 s with disk syncing off.
