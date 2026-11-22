@@ -44,8 +44,9 @@ def test_a_password_changed_since_it_was_fetched_is_fetched_again_and_the_connec
     with caplog.at_level("WARNING", logger="darkstore.db"), engine.connect() as connection:
         assert connection.scalar(text("SELECT 1")) == 1
     assert asked == [False, True]                    # refused once, then asked for the newest
-    assert "refused the remembered password" in caplog.text      # the change is visible in the log
-    assert "the-password-from-before-the-change" not in caplog.text and login[1] not in caplog.text
+    said = " ".join(caplog.messages)
+    assert "refused the remembered password" in said             # the change is visible in the log
+    assert "the-password-from-before-the-change" not in said and login[1] not in said     # and no password is
     engine.dispose()
 
 
