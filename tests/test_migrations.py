@@ -9,6 +9,7 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
+from sqlalchemy.engine import make_url
 
 from app import config, db
 from app.db import ALEMBIC_INI, Base, include_object, make_engine
@@ -89,3 +90,23 @@ def test_hosted_database_urls_are_opened_with_the_installed_driver():
     assert config._database_url("postgresql+psycopg://u:p@host/db") == "postgresql+psycopg://u:p@host/db"
     with pytest.raises(ValueError, match="PostgreSQL"):
         config._database_url("sqlite:///./darkstore.db")
+
+
+def test_the_database_url_can_be_put_together_from_separate_settings(monkeypatch):
+    """On AWS the address and the login arrive separately, and the password comes from Secrets Manager as it is."""
+    for name in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    assert config._database_url_from_parts() is None                      # no DB_HOST: not configured this way
+
+    password = "p@ss:w/rd#1%?&="                                          # every character that breaks a naive URL
+    monkeypatch.setenv("DB_HOST", "db.internal")
+    monkeypatch.setenv("DB_USER", "farm2home")
+    monkeypatch.setenv("DB_PASSWORD", password)
+    monkeypatch.setenv("DB_NAME", "farm2home")
+    url = make_url(config._database_url(config._database_url_from_parts()))
+
+    assert (url.drivername, url.host, url.port, url.database) == ("postgresql+psycopg", "db.internal", 5432, "farm2home")
+    assert (url.username, url.password) == ("farm2home", password)
+
+    monkeypatch.setenv("DB_PORT", "6543")
+    assert make_url(config._database_url_from_parts()).port == 6543

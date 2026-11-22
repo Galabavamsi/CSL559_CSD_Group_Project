@@ -1,6 +1,8 @@
 """All tunable settings in one place. Override any of them with environment variables."""
 import os
 
+from sqlalchemy.engine import URL
+
 # Database: PostgreSQL with the PostGIS extension, and nothing else (the HLD's geo queries have no SQLite form).
 # Sharding by store_id is design only.
 DEFAULT_DATABASE_URL = "postgresql://darkstore:darkstore@localhost:5432/darkstore"    # local development only
@@ -18,7 +20,19 @@ def _database_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _database_url(os.getenv("DARKSTORE_DB") or DEFAULT_DATABASE_URL)
+def _database_url_from_parts() -> str | None:
+    """On AWS the database's address and its login arrive as separate settings, the password straight from Secrets
+    Manager, so the URL is put together here. The password may hold any character, and is escaped."""
+    host = os.getenv("DB_HOST")
+    if not host:
+        return None
+    return URL.create("postgresql+psycopg", username=os.getenv("DB_USER"), password=os.getenv("DB_PASSWORD"),
+                      host=host, port=int(os.getenv("DB_PORT") or 5432),
+                      database=os.getenv("DB_NAME") or "darkstore").render_as_string(hide_password=False)
+
+
+# DARKSTORE_DB wins; without it DB_HOST (with DB_PORT, DB_NAME, DB_USER, DB_PASSWORD); without either, the local default.
+DATABASE_URL = _database_url(os.getenv("DARKSTORE_DB") or _database_url_from_parts() or DEFAULT_DATABASE_URL)
 # Database connections kept open per app process, and how many more may be opened in a burst.
 # Keep the sum at 40 or more: the web server answers up to 40 requests at once, each on its own thread and each
 # with one connection. With fewer connections than threads, threads wait for a connection while the finished

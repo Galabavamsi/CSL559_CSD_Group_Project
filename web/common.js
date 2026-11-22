@@ -1,18 +1,17 @@
 // Helpers shared by the demo pages (index.html and picker.html). Plain JavaScript, no build step.
+// Load staff-login.js first.
 
 const $ = (id) => document.getElementById(id);
 
-// Staff logins (HLD 10). Each station logs in as a seeded demo user; the customer station needs no login.
-const DEMO_PASSWORD = "demo"; // same as DEMO_PASSWORD in app/config.py; demo accounts only
+// Staff logins (HLD 10). Each station logs in as a seeded demo user (staffLogin, in staff-login.js); the customer
+// station needs no login.
 const tokens = {}; // username -> promise of a bearer token, so calls made together share one login
 
 function tokenFor(user) {
-  tokens[user] ??= api("POST", "/v1/auth/login", { username: user, password: DEMO_PASSWORD })
-    .then((session) => session.access_token)
-    .catch((error) => {
-      delete tokens[user]; // let the next call try to log in again
-      throw error;
-    });
+  tokens[user] ??= staffLogin(user).catch((error) => {
+    delete tokens[user]; // let the next call try to log in again
+    throw error;
+  });
   return tokens[user];
 }
 
