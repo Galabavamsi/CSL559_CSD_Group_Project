@@ -119,6 +119,23 @@ RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
 # An open WebSocket gets a ping this often, so a viewer that has gone away is noticed and dropped.
 LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
 
+# Farm supply (HLD flow A). A listing goes to the nearest open hub within HUB_SEARCH_KM of the farm that has
+# shelves for the item and room for the weight; the nearest HUB_CANDIDATES hubs are tried.
+HUB_SEARCH_KM = float(os.getenv("HUB_SEARCH_KM", "60"))
+HUB_CANDIDATES = int(os.getenv("HUB_CANDIDATES", "5"))
+# A farm's location taken from the phone is kept only when the phone is sure of it to this many metres (HLD 16).
+FARM_LOCATION_MAX_ACCURACY_M = float(os.getenv("FARM_LOCATION_MAX_ACCURACY_M", "50"))
+LISTING_MAX_KG = float(os.getenv("LISTING_MAX_KG", "2000"))            # one lot
+LISTING_MAX_DAYS_AHEAD = int(os.getenv("LISTING_MAX_DAYS_AHEAD", "7")) # how long before its harvest a lot may be listed
+# Hubs take produce in a morning window (HLD 11), in the cities' own time, which is this far ahead of UTC.
+INTAKE_START_HOUR = int(os.getenv("INTAKE_START_HOUR", "6"))
+INTAKE_HOURS = int(os.getenv("INTAKE_HOURS", "3"))
+LOCAL_UTC_OFFSET_MINUTES = int(os.getenv("LOCAL_UTC_OFFSET_MINUTES", "330"))      # India
+INTAKE_OVER_TOLERANCE = float(os.getenv("INTAKE_OVER_TOLERANCE", "0.1"))   # a lot may weigh this much over its listing
+# Add the produce items and their units (tomato, onion, spinach...) to the demo data. Off for the tests, which
+# count the original catalogue; on for a hosted copy.
+DEMO_PRODUCE = os.getenv("DEMO_PRODUCE", "off") == "on"
+
 # App users (customers, farmers, delivery agents) sign in with a six-digit code sent by email.
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "10"))           # a code is dead after this long
 OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))          # and after this many tries, right or wrong

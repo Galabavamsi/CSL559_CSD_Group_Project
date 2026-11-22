@@ -30,7 +30,7 @@ def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def _point(lat: float, lng: float):
+def point(lat: float, lng: float):
     """The point as PostGIS geography. Longitude comes first in PostGIS."""
     return func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326).cast(Store.location.type)
 
@@ -39,7 +39,7 @@ def nearest_store(db: Session, lat: float, lng: float, city_id: int | None = Non
                   include_closed: bool = False) -> tuple[Store, float] | None:
     """The hub nearest to a point and its distance in km, or None when there is no hub (HLD 8, query 1).
     `location <-> point` walks the GiST index outwards from the point, so it does not measure every hub."""
-    point = _point(lat, lng)
+    point = point(lat, lng)
     query = select(Store, func.ST_Distance(Store.location, point, False)).order_by(Store.location.op("<->")(point))
     if not include_closed:
         query = query.where(Store.status != "closed")
@@ -52,7 +52,7 @@ def nearest_store(db: Session, lat: float, lng: float, city_id: int | None = Non
 def stores_covering(db: Session, lat: float, lng: float) -> list[tuple[Store, float]]:
     """Open or busy hubs whose service radius reaches this point, nearest first, each with its distance in km
     (HLD 8, query 2: ST_DWithin). Unlike the H3 zones, this measures to the exact point and ignores the busy rule."""
-    point = _point(lat, lng)
+    point = point(lat, lng)
     km = func.ST_Distance(Store.location, point, False) / 1000
     # Two conditions on purpose. The radius is each hub's own, and PostGIS cannot use the index when the distance
     # differs per row (the plan is a full scan; see docs/journal/2026-11-23-postgresql-postgis-only.md). The first
