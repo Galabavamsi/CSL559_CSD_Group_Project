@@ -36,7 +36,10 @@ from app.seed import seed_if_empty  # noqa: E402
 # Milk, curd, eggs and paneer sell as the dairy they are, rice, flour, sugar and oil as staples: those categories
 # were split so substitutes make sense (#62), and every item kept its demand, so the history is the same.
 BASE_DEMAND = {"Milk": 20, "Curd": 20, "Eggs": 20, "Paneer": 20, "Bakery": 12,
-               "Rice": 4, "Flour": 4, "Sugar": 4, "Oil": 4, "Frozen": 2}
+               "Rice": 4, "Flour": 4, "Sugar": 4, "Oil": 4, "Frozen": 2,
+               # The old names: there is no migration, so a database made before the split keeps them until Reset
+               # demo data, and must draw the same history meanwhile. (Snacks already sold DEFAULT_DEMAND.)
+               "Dairy": 20, "Staples": 4}
 DEFAULT_DEMAND = 3
 WEEKEND_FACTOR = 1.35                         # Saturday and Sunday are busier
 FESTIVAL_FACTOR = 2.0                         # demand doubles on a festival day
