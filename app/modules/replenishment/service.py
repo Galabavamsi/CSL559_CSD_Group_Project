@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import SKU, Bin, StockItem, StockLedger, StockLevel, Store, TransferOrder, TransferOrderLine, utcnow
+from ...models import (SKU, Bin, EventLog, StockItem, StockLedger, StockLevel, Store, TransferOrder, TransferOrderLine,
+                       utcnow)
 from ..forecasting import service as forecasting
 from ..inventory import service as inventory
 
@@ -30,16 +31,32 @@ log = logging.getLogger(__name__)
 
 @events.subscribe("stock.changed")
 def on_stock_changed(db: Session, store_id: int | None, payload: dict) -> None:
-    """Raise stock.low when a SKU's ATP falls below its reorder point, unless a manager stopped reordering it."""
+    """Raise stock.low when a SKU's ATP falls below its reorder point, unless a manager stopped reordering it.
+
+    Once per SKU until stock comes in again: each later sale, hold or write-off while it stays low says nothing new,
+    and used to publish another stock.low every time. A delivery, or units found by a count, starts over."""
     if payload.get("cause") not in LOW_STOCK_CAUSES:
         return
     level = inventory.get_level(db, store_id, payload["sku_id"])
     if level is None or level.reorder_stopped:      # it is being run down on purpose: no alert
         return
     atp = level.qty_on_hand - level.qty_reserved
-    if atp < level.reorder_point:
+    if atp < level.reorder_point and not _low_reported_since_restock(db, store_id, level.sku_id):
         events.publish(db, "stock.low", store_id,
                        {"sku_id": level.sku_id, "atp": atp, "reorder_point": level.reorder_point})
+
+
+def _low_reported_since_restock(db: Session, store_id: int, sku_id: int) -> bool:
+    """True when stock.low was already published for this SKU after units last came in (a receipt, or units found by
+    a count; a move between bins brings nothing in). Read-only."""
+    restocked = db.scalar(select(func.max(StockLedger.ts)).where(
+        StockLedger.store_id == store_id, StockLedger.sku_id == sku_id, StockLedger.delta > 0,
+        StockLedger.reason != "move"))
+    reported = select(EventLog.id).where(EventLog.type == "stock.low", EventLog.store_id == store_id,
+                                         EventLog.payload["sku_id"].as_integer() == sku_id)
+    if restocked is not None:
+        reported = reported.where(EventLog.ts > restocked)
+    return db.scalar(reported.limit(1)) is not None
 
 
 def in_transit(db: Session, store_id: int) -> dict[int, int]:

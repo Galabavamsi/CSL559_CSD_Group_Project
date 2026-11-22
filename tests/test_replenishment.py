@@ -9,8 +9,9 @@ from sqlalchemy import event, func, select, update
 from app import background, config, events
 from app.db import SessionLocal, engine
 from app.errors import DomainError
-from app.models import Bin, Forecast, StockItem, StockLevel, Store, TransferOrder
+from app.models import Bin, EventLog, Forecast, StockItem, StockLevel, Store, TransferOrder
 from app.modules.inbound import service as inbound
+from app.modules.inventory import service as inventory
 from app.modules.replenishment import service as replenishment
 from app.modules.slotting import service as slotting
 
@@ -372,3 +373,42 @@ def test_a_target_lowered_meanwhile_still_refuses_the_reorder_point(client, db, 
     assert refused.status_code == 422, refused.text
     assert refused.json()["error"]["details"] == {"target_stock": 25}
     assert saved_settings(db, milk) == (20, False)              # what the forecast run saved
+
+
+def _low_alerts(db, sku_id: int) -> list[dict]:
+    """The stock.low events store 1 published for one SKU, oldest first."""
+    return [event.payload for event in db.scalars(select(EventLog).where(EventLog.type == "stock.low",
+                                                                         EventLog.store_id == 1)
+                                                  .order_by(EventLog.id)) if event.payload["sku_id"] == sku_id]
+
+
+def _damage(client, sku_id: int, units: int) -> None:
+    written_off = client.post("/v1/stock-adjustments",
+                              json={"store_id": 1, "sku_id": sku_id, "delta": -units, "reason": "damage"})
+    assert written_off.status_code == 200, written_off.text
+
+
+def _units_over_reorder_point(db, sku_id: int) -> int:
+    level = inventory.get_level(db, 1, sku_id)
+    return level.qty_on_hand - level.qty_reserved - level.reorder_point
+
+
+def test_an_item_that_stays_low_is_reported_once_not_on_every_change(client, db, sku):
+    """stock.low marks the moment an item drops below its reorder point. Each later sale, hold or write-off while it
+    stays low used to publish another one (five holds, five alerts)."""
+    milk = sku("Toned milk")
+    _damage(client, milk, _units_over_reorder_point(db, milk) + 1)          # one unit under the reorder point
+    for _ in range(3):
+        _damage(client, milk, 1)
+    alerts = _low_alerts(db, milk)
+    assert len(alerts) == 1, alerts
+    assert alerts[0]["atp"] == alerts[0]["reorder_point"] - 1
+
+
+def test_after_a_delivery_an_item_that_drops_low_again_is_reported_again(client, db, sku):
+    milk = sku("Toned milk")
+    _damage(client, milk, _units_over_reorder_point(db, milk) + 1)          # under the reorder point: reported
+    delivered = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [{"sku_id": milk, "qty": 1}]})
+    assert delivered.status_code == 201, delivered.text                       # back at the reorder point
+    _damage(client, milk, 1)                                                  # under it again, after a delivery
+    assert len(_low_alerts(db, milk)) == 2
