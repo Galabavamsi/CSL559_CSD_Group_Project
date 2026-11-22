@@ -36,7 +36,8 @@ def ask(client, address=ASHA, role="customer"):
 
 
 def emails_to(address=ASHA) -> list:
-    return [message for message in email.outbox if message.to == address]
+    """Emails sent to this address. They go to the address in lower case, however it was typed."""
+    return [message for message in email.outbox if message.to == address.strip().lower()]
 
 
 def code_sent_to(address=ASHA) -> str:
