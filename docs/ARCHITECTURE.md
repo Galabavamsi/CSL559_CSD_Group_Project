@@ -100,7 +100,7 @@ WebSocket feed) and marks them published; delivery is at least once.
 
 | Event | Published by | Handled by (today) |
 | --- | --- | --- |
-| `stock.changed` | inventory, pickpack | replenishment (raises `stock.low`); inventory counts (opens a count of the bin when the cause is `not_found`) |
+| `stock.changed` | inventory, pickpack | replenishment (raises `stock.low`); inventory counts (opens a count of the bin when the cause is `not_found`; while that count is open, held units given back in that bin are written off, not put back on sale) |
 | `stock.low` | replenishment | nobody yet |
 | `count.needs_approval` | inventory counts (difference above `COUNT_AUTO_APPROVE_VALUE`) | nobody yet (live feed shows it) |
 | `item.near_expiry` | inventory (hourly job, once per batch per day) | nobody yet (live feed shows it) |

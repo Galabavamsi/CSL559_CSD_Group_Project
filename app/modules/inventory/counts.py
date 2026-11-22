@@ -218,3 +218,36 @@ def count_bin_found_short(db: Session, store_id: int | None, payload: dict) -> N
         return
     start(db, store_id, payload["bin_id"], created_by="system", reason="not_found",
           also_sku_ids=(payload["sku_id"],), commit=False)
+
+
+# Causes of stock.changed that give held units back to ATP: a cart released or run out of time, an order cancelled,
+# a line swapped for a substitute.
+HOLD_GIVEN_BACK = ("released", "expired", "cancelled", "substituted")
+
+
+@events.subscribe("stock.changed")
+def keep_a_bin_found_empty_off_sale(db: Session, store_id: int | None, payload: dict) -> None:
+    """An empty-shelf report leaves in the bin the units another order holds (`inventory.write_off_unpromised`).
+    When that hold ends they would go back on sale, and the next order would be sent to the same empty shelf (review
+    of #67). So while the count the report opened is still open, they are written off from that bin instead.
+
+    Only while it is open: a count is compared with the records when it is handed in, so a change before then is
+    counted right. After that its difference is fixed, approving it would take the same units again, and what the
+    counter found decides. A delivery into the bin is not written off: only causes that end a hold are handled."""
+    if payload.get("cause") not in HOLD_GIVEN_BACK or store_id is None:
+        return
+    sku_id = payload["sku_id"]
+    found_empty = db.execute(
+        select(CycleCount.id, StockItem)
+        .join(StockItem, StockItem.bin_id == CycleCount.bin_id)
+        .where(CycleCount.store_id == store_id, CycleCount.reason == "not_found", CycleCount.status == "open",
+               StockItem.sku_id == sku_id)
+    ).all()
+    done: set[int] = set()
+    for count_id, item in found_empty:
+        if item.bin_id in done:
+            continue                                      # write_off_unpromised takes every batch in the bin at once
+        done.add(item.bin_id)
+        if inventory.write_off_unpromised(db, item, reference=f"count:{count_id}", actor="system"):
+            events.publish(db, "stock.changed", store_id,
+                           {"sku_id": sku_id, "cause": "not_found", "bin_id": item.bin_id})
