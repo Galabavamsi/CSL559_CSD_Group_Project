@@ -11,7 +11,7 @@ Description: >-
 Parameters:
   RepositoryUrl:
     Type: String
-    Default: https://github.com/agastya-nath123/CSL559_CSD_Group_Project.git
+    Default: https://github.com/Galabavamsi/CSL559_CSD_Group_Project.git
     Description: Public Git repository to build from.
 
 Resources:
