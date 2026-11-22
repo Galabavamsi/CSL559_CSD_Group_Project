@@ -57,7 +57,10 @@ staff token. Three tests hold that line.
 - 32 tests, on a real PostgreSQL, including: two uses of the right code at the same moment sign in once; the sixth
   try fails even with the right code; a code for one address is no good for another; a spent refresh token ends
   every session; an email that cannot be sent does not fail the request and puts no code in the log.
-- On staging: see the end of this entry.
+- On staging, from outside: a code asked for Amazon SES's simulator address was accepted, SES recorded one send,
+  and the app's log held no send error and no code. Asking again at once was refused with the wait; a wrong code,
+  a bad address, an unknown refresh token and a made-up access token were each refused as designed.
+- Not checked on staging: a complete sign-in, which needs a real inbox to read the code from.
 
 ## What it costs or leaves open
 
