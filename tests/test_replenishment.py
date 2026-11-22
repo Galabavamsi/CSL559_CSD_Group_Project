@@ -4,12 +4,12 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 
 from app import background, config, events
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.errors import DomainError
-from app.models import Bin, Forecast, StockItem, Store, TransferOrder
+from app.models import Bin, Forecast, StockItem, StockLevel, Store, TransferOrder
 from app.modules.inbound import service as inbound
 from app.modules.replenishment import service as replenishment
 from app.modules.slotting import service as slotting
@@ -261,3 +261,114 @@ def test_only_a_manager_of_the_store_can_stop_reordering(client, client_as, sku)
     client.delete(f"/v1/stores/2/assortment/{bananas}")                    # store 2 stops carrying bananas
     missing = client.put(f"/v1/stores/2/reorder-settings/{bananas}", json={"reorder_stopped": True})
     assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_carried"
+
+
+def saved_settings(db, sku_id: int) -> tuple[int, bool]:
+    """(reorder point, reorder stopped) of the SKU in store 1, read straight from the database."""
+    level = db.get(StockLevel, (1, sku_id), populate_existing=True)
+    return level.reorder_point, level.reorder_stopped
+
+
+def set_reorder_point(db, sku_id: int, reorder_point: int) -> None:
+    """Save a reorder point in store 1 without the API, as a forecast run or an older version of the app did."""
+    db.execute(update(StockLevel).where(StockLevel.store_id == 1, StockLevel.sku_id == sku_id)
+               .values(reorder_point=reorder_point))
+    db.commit()
+
+
+def test_a_reorder_point_sent_to_reorder_settings_is_saved_and_used(client, db, sku):
+    """Review of PR #69: a reorder_point sent here was ignored with a 200, so a reorder point saved before the limits
+    of issue #63 could only be corrected by dropping the SKU and adding it again. 0 here: stock is never below it."""
+    milk = sku("Toned milk")                                   # case of 12; target 40
+    set_reorder_point(db, milk, 0)
+    client.post("/v1/stock-adjustments", json={"store_id": 1, "sku_id": milk, "delta": -30, "reason": "damage"})
+    order = client.post("/v1/replenishment/run", params={"store_id": 1}).json()["transfer_order"]
+    assert milk not in {line["sku_id"] for line in order["lines"]}          # sold out, and still not reordered
+    saved = client.put(f"/v1/stores/1/reorder-settings/{milk}", json={"reorder_point": 10})
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"store_id": 1, "sku_id": milk, "sku": "Toned milk 500 ml", "reorder_stopped": False,
+                            "reorder_point": 10}
+    feed = client.get("/v1/events", params={"store_id": 1, "limit": 100}).json()
+    assert {"sku_id": milk, "reorder_stopped": False, "reorder_point": 10} in [
+        e["payload"] for e in feed if e["type"] == "reordering.changed"]   # the live feed shows the change
+    order = client.post("/v1/replenishment/run", params={"store_id": 1}).json()["transfer_order"]
+    assert {line["sku_id"]: line["qty_ordered"] for line in order["lines"]}.get(milk) == 48   # 40 -> 4 cases of 12
+
+
+def test_a_reorder_point_that_cannot_work_is_refused_as_when_adding(client, db, sku):
+    """The limits of adding a SKU (issue #63): at least 1, at most what a bin holds, and below the target stock, as a
+    reorder refills up to the target. A refused body changes nothing, not even the reorder_stopped sent with it."""
+    milk = sku("Toned milk")                                   # reorder point 10, target 40
+    url = f"/v1/stores/1/reorder-settings/{milk}"
+    for bad in (-5, 0, 100_001):
+        refused = client.put(url, json={"reorder_stopped": True, "reorder_point": bad})
+        assert refused.status_code == 422, bad
+    for bad in (40, 41):                                       # not below the target
+        refused = client.put(url, json={"reorder_stopped": True, "reorder_point": bad})
+        assert refused.status_code == 422, bad
+        assert refused.json()["error"]["code"] == "bad_reorder_point"
+        assert refused.json()["error"]["details"] == {"target_stock": 40}
+    assert saved_settings(db, milk) == (10, False)
+    for works in (1, 39):                                      # the lowest and the highest that work
+        assert client.put(url, json={"reorder_point": works}).status_code == 200, works
+    assert saved_settings(db, milk) == (39, False)
+
+
+def test_reorder_settings_with_only_reorder_stopped_work_as_before(client, db, sku):
+    """The body every caller sent before reorder_point could be changed here: it still only stops or restarts
+    reordering, and the reorder point stays as it was."""
+    milk = sku("Toned milk")
+    set_reorder_point(db, milk, 25)
+    url = f"/v1/stores/1/reorder-settings/{milk}"
+    stopped = client.put(url, json={"reorder_stopped": True})
+    assert stopped.status_code == 200 and stopped.json()["reorder_stopped"] is True
+    assert saved_settings(db, milk) == (25, True)
+    restarted = client.put(url, json={"reorder_stopped": False})
+    assert restarted.status_code == 200 and restarted.json()["reorder_stopped"] is False
+    assert saved_settings(db, milk) == (25, False)
+
+
+def test_reorder_settings_with_only_a_reorder_point_keep_reordering_stopped(client, db, sku):
+    milk = sku("Toned milk")
+    url = f"/v1/stores/1/reorder-settings/{milk}"
+    client.put(url, json={"reorder_stopped": True})
+    changed = client.put(url, json={"reorder_point": 20})
+    assert changed.status_code == 200, changed.text
+    assert saved_settings(db, milk) == (20, True)               # still being run down
+
+
+def test_reorder_settings_refuse_an_empty_body_and_fields_they_cannot_change(client, db, sku):
+    """Nothing is ignored in silence. A body with nothing to change is a 422, as it was when reorder_stopped was
+    required; so is a field this route does not change (target_stock) or a misspelt one, even next to a good one."""
+    milk = sku("Toned milk")
+    url = f"/v1/stores/1/reorder-settings/{milk}"
+    for body in ({}, {"target_stock": 60}, {"reorder_stopped": True, "target_stock": 60},
+                 {"reorder_stopped": True, "reorderpoint": 20}):
+        assert client.put(url, json=body).status_code == 422, body
+    assert saved_settings(db, milk) == (10, False)
+
+
+def test_a_target_lowered_meanwhile_still_refuses_the_reorder_point(client, db, sku):
+    """The check is in the update itself, like every contested change in this app: a forecast run that lowers the
+    target just before the save cannot let through a reorder point at or above the new target."""
+    milk = sku("Toned milk")                                   # reorder point 10, target 40
+    forecast_ran = []
+
+    def forecast_runs_first(conn, cursor, statement, parameters, context, executemany):
+        """Runs just before the save's UPDATE is sent to the database."""
+        if not forecast_ran and statement.startswith("UPDATE stock_levels"):
+            forecast_ran.append(True)
+            with SessionLocal() as other:
+                other.execute(update(StockLevel).where(StockLevel.store_id == 1, StockLevel.sku_id == milk)
+                              .values(reorder_point=20, target_stock=25))
+                other.commit()
+
+    event.listen(engine, "before_cursor_execute", forecast_runs_first)
+    try:
+        refused = client.put(f"/v1/stores/1/reorder-settings/{milk}", json={"reorder_point": 30})
+    finally:
+        event.remove(engine, "before_cursor_execute", forecast_runs_first)
+    assert forecast_ran == [True]
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["details"] == {"target_stock": 25}
+    assert saved_settings(db, milk) == (20, False)              # what the forecast run saved
