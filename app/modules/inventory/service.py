@@ -413,6 +413,18 @@ def _change_item_qty(db: Session, item: StockItem, delta: int) -> None:
     db.refresh(item, ["qty"])
 
 
+def other_batch_date(db: Session, store_id: int, sku_id: int, batch_no: str, expiry_date: date) -> date | None:
+    """The expiry date that units of this batch number already have in the store, if it is not `expiry_date`; None
+    when the number is new, emptied, or has that date. Read-only. `receive` refuses a delivery for which this is a
+    date (409 batch_expiry_mismatch); Inbound asks at the scan, while the case can still be given its own number."""
+    return db.scalar(
+        select(StockItem.expiry_date).where(
+            StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.batch_no == batch_no,
+            StockItem.qty > 0, StockItem.expiry_date != expiry_date,
+        ).limit(1)
+    )
+
+
 def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batch_no: str,
             expiry_date: date, reference: str | None = None, actor: str = "receiver") -> StockItem:
     """Put received stock into a bin (FR-9). The units are sellable as soon as this returns.
@@ -430,12 +442,7 @@ def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batc
     if bin_.zone != sku.storage_type:
         raise DomainError(422, "wrong_zone",
                           f"{sku.name} needs {sku.storage_type} storage but bin {bin_.code} is {bin_.zone}")
-    other_date = db.scalar(
-        select(StockItem.expiry_date).where(
-            StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.batch_no == batch_no,
-            StockItem.qty > 0, StockItem.expiry_date != expiry_date,
-        ).limit(1)
-    )
+    other_date = other_batch_date(db, store_id, sku_id, batch_no, expiry_date)
     if other_date is not None:
         raise DomainError(409, "batch_expiry_mismatch",
                           f"Batch {batch_no} of {sku.name} is already in this store with expiry date "

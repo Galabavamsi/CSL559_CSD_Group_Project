@@ -47,7 +47,7 @@ needs a message to the other person *before* the pull request, and their review 
 | Provided by | What | Used by | For |
 | --- | --- | --- | --- |
 | Member 1 | `inventory.allocate`, `commit_sale`, `unreserve`, `write_off_missing`, `write_off_unpromised` | Member 2 | Creating pick tasks, packing, dropped lines |
-| Member 1 | `inventory.receive` | Member 3 | Putaway |
+| Member 1 | `inventory.receive`, `other_batch_date` | Member 3 | Putaway; refusing a batch number at the scan |
 | Member 1 | `inventory.get_level`, `availability` | Members 2, 3, 4 | Reading stock |
 | Member 1 | `stock.changed` event (payload: `sku_id`, `cause`) | Member 3 | Low-stock detection |
 | Member 1 | `order.paid` event (payload: `order_id`, `reservation_id`) | Member 2 | Creating the fulfilment job |

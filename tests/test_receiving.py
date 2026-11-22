@@ -10,6 +10,7 @@ from app.db import SessionLocal
 from app.errors import DomainError
 from app.models import SKU, Bin, StockItem, StockLedger, TransferOrder
 from app.modules.inbound import service as inbound
+from app.modules.inventory import service as inventory
 from app.modules.replenishment import service as replenishment
 from app.modules.slotting import service as slotting
 
@@ -622,3 +623,86 @@ def test_an_idempotency_key_belongs_to_whoever_sent_it(client, client_as, db, sk
     other = client_as("manager", 1).post(url, json=body, headers={"Idempotency-Key": "k-1"})
     assert first.status_code == 200
     assert other.status_code == 422 and other.json()["error"]["code"] == "idempotency_key_reused"
+
+
+# --------------------------------------------------------------------------- one batch number, one date (review of #71)
+
+
+def receive_now(client, sku_id: int, qty: int, batch_no: str, expires_in: int):
+    """Put a batch on the shelf in store 1 with the one-call receipt."""
+    return client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [
+        {"sku_id": sku_id, "qty": qty, "batch_no": batch_no, "expiry_date": in_days(expires_in)}]})
+
+
+def open_receipt(client) -> dict:
+    """A receipt in store 1 without a transfer order."""
+    opened = client.post("/v1/goods-receipts/open", json={"store_id": 1})
+    assert opened.status_code == 201, opened.text
+    return opened.json()
+
+
+def test_a_batch_number_on_the_shelf_with_another_date_is_refused_at_the_scan(client, db, sku):
+    """Since #71, putaway refuses a batch number the store already has with another date. The scan accepted it, so the
+    line was stuck on the dock and the receipt could close only by sending good units back. Now the scan refuses it,
+    while the receiver can still give the case its own number."""
+    bread = sku("White bread")                                          # shelf life 4 days
+    assert receive_now(client, bread, 5, "LOT1", expires_in=3).status_code == 201
+    receipt = open_receipt(client)
+    refused = scan(client, db, receipt, bread, 4)                       # LOT1 again, expiring in 4 days
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "batch_expiry_mismatch"
+    assert refused.json()["error"]["details"] == {"batch_no": "LOT1", "expiry_date": in_days(3)}
+    assert client.get(f"/v1/goods-receipts/{receipt['receipt_id']}").json()["lines"] == []    # nothing recorded
+    same_date = scan(client, db, receipt, bread, 2, expiry_date=in_days(3))     # the shelf's date: a normal top-up
+    own_number = scan(client, db, receipt, bread, 4, batch_no="LOT2")
+    assert (same_date.status_code, own_number.status_code) == (200, 200)
+    put_all(client, receipt, bread)
+    assert close(client, receipt).status_code == 200
+    assert_stock_is_consistent()
+
+
+def test_damaged_units_are_recorded_whatever_their_batch_number(client, db, sku):
+    """Units that never reach the shelf cannot clash with it."""
+    bread = sku("White bread")
+    assert receive_now(client, bread, 5, "LOT1", expires_in=3).status_code == 201
+    body = scan(client, db, open_receipt(client), bread, 2, damaged=True)      # LOT1, expiring in 4 days
+    assert body.status_code == 200 and body.json()["scan"]["outcome"] == "damaged"
+
+
+def test_a_batch_number_on_another_open_receipts_dock_with_another_date_is_refused(client, db, sku):
+    """Two receipts open at once: the second line put away would be refused, so its scan is refused instead. Only an
+    open receipt's dock counts."""
+    bread = sku("White bread")
+    first, second = open_receipt(client), open_receipt(client)
+    assert scan(client, db, first, bread, 5, expiry_date=in_days(3)).status_code == 200
+    refused = scan(client, db, second, bread, 4)                        # LOT1, expiring in 4 days
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "batch_expiry_mismatch"
+    assert refused.json()["error"]["details"] == {"batch_no": "LOT1", "expiry_date": in_days(3),
+                                                  "receipt_id": first["receipt_id"]}
+    assert client.post(f"/v1/goods-receipts/{first['receipt_id']}/cancel").status_code == 200
+    assert scan(client, db, second, bread, 4).status_code == 200        # nothing waits on the first dock now
+
+
+def test_a_line_whose_batch_number_reached_the_shelf_with_another_date_gets_no_bin(client, db, sku):
+    """If the shelf gets the number with another date after the scan (two receipts scanning it at the same moment),
+    putaway would refuse the line. Its task says so instead of naming a bin, and the line can still be sent back."""
+    bread = sku("White bread")
+    receipt = open_receipt(client)
+    assert scan(client, db, receipt, bread, 4).status_code == 200       # LOT1, expiring in 4 days
+    inventory.receive(db, 1, bread, 5, slotting.suggest_bin(db, 1, bread).id, "LOT1",
+                      date.today() + timedelta(days=3))
+    db.commit()
+    [task] = tasks_for(client, receipt, bread)
+    assert (task["bin_code"], task["qty"]) == (None, 4) and "send_back" in task["problem"]
+    sent = client.post(f"/v1/goods-receipts/{receipt['receipt_id']}/close", params={"send_back": True})
+    assert sent.status_code == 200 and line_of(sent.json(), bread)["sent_back"] == 4
+    assert_stock_is_consistent()
+
+
+def test_a_one_call_receipt_with_a_clashing_batch_number_keeps_nothing(client, sku):
+    bread = sku("White bread")
+    assert receive_now(client, bread, 5, "LOT1", expires_in=3).status_code == 201
+    before = atp(client, 1, bread)
+    refused = receive_now(client, bread, 4, "LOT1", expires_in=4)
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "batch_expiry_mismatch"
+    assert atp(client, 1, bread) == before
+    assert_stock_is_consistent()
