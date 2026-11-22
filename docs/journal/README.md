@@ -20,4 +20,5 @@ from. They are raw material for the report, the documentation and blog posts, so
 | 2026-11-23 | [CI failed on tables we never created](2026-11-23-ci-tiger-search-path.md) | The PostGIS image's geocoder tables looked like ours; fixed with the search path |
 | 2026-11-23 | [AWS groundwork](2026-11-23-aws-groundwork.md) | Sign-in, cost guard, DNS, certificates, email and a dev server before any app code |
 | 2026-11-23 | [Customers buy fixed packs; farmers deliver kilograms](2026-11-23-fixed-packs.md) | A departure from the HLD: stock stays in whole units, and kg become units at putaway |
+| 2026-11-23 | [Accounts: signing in with a code sent by email](2026-11-23-accounts-and-email-codes.md) | No passwords; the rules each code follows and where they come from; a hole it closed |
 | 2026-11-23 | [Staging on AWS](2026-11-23-staging-on-aws.md) | First run on AWS; a password that would have expired before the demo; a forced failover; real prices |

@@ -172,6 +172,7 @@ Resources:
               Value: !ImportValue farm2home-VpcCidr
             # Sign-in codes go out through Amazon SES, from an address on the domain verified there.
             - {Name: EMAIL_BACKEND, Value: ses}
+            - {Name: EMAIL_REGION, Value: !Ref "AWS::Region"}
             - Name: EMAIL_FROM
               Value: !Sub "Farm2Home <no-reply@${BaseDomain}>"
             - {Name: BACKGROUND_JOBS, Value: "on"}
