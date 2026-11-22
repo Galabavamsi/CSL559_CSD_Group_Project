@@ -1,0 +1,21 @@
+# Engineering journal
+
+Notes written while the work happens: what was decided, what went wrong, how it was fixed and where the facts came
+from. They are raw material for the report, the documentation and blog posts, so each entry stands on its own.
+
+## How an entry is written
+
+- One Markdown file per topic, named `YYYY-MM-DD-short-title.md`.
+- Sections, in this order: **Context**, **What happened** or **Decision**, **Why**, **What it cost or leaves open**,
+  **Sources**.
+- A fact that comes from outside the project (a manual, a vendor page, a paper) gets a link under **Sources**. A fact
+  we measured ourselves says how it was measured.
+- No account numbers, server ids, addresses or secrets: this repository is public.
+
+## Entries
+
+| Date | Entry | In one line |
+| --- | --- | --- |
+| 2026-11-23 | [PostgreSQL with PostGIS only, and two cities](2026-11-23-postgresql-postgis-only.md) | SQLite removed; hub locations are PostGIS points; Bangalore and Bhilai |
+| 2026-11-23 | [CI failed on tables we never created](2026-11-23-ci-tiger-search-path.md) | The PostGIS image's geocoder tables looked like ours; fixed with the search path |
+| 2026-11-23 | [AWS groundwork](2026-11-23-aws-groundwork.md) | Sign-in, cost guard, DNS, certificates, email and a dev server before any app code |

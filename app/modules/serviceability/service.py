@@ -13,7 +13,7 @@ import math
 import h3
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from ... import config
 from ...models import City, ServiceabilityMiss, Store, StoreZone
@@ -54,9 +54,16 @@ def stores_covering(db: Session, lat: float, lng: float) -> list[tuple[Store, fl
     (HLD 8, query 2: ST_DWithin). Unlike the H3 zones, this measures to the exact point and ignores the busy rule."""
     point = _point(lat, lng)
     km = func.ST_Distance(Store.location, point, False) / 1000
-    rows = db.execute(select(Store, km).where(Store.status != "closed",
-                                              func.ST_DWithin(Store.location, point, Store.radius_km * 1000, False))
-                      .order_by(km)).all()
+    # Two conditions on purpose. The radius is each hub's own, and PostGIS cannot use the index when the distance
+    # differs per row (the plan is a full scan; see docs/journal/2026-11-23-postgresql-postgis-only.md). The first
+    # condition uses one distance for every row, the largest radius any hub has, so the index narrows the hubs
+    # down; the second then applies each hub's real radius.
+    any_hub = aliased(Store)        # a second name for the table, so the subquery is not tied to the outer row
+    widest_km = select(func.max(any_hub.radius_km)).scalar_subquery()
+    rows = db.execute(select(Store, km).where(
+        Store.status != "closed",
+        func.ST_DWithin(Store.location, point, widest_km * 1000, False),
+        func.ST_DWithin(Store.location, point, Store.radius_km * 1000, False)).order_by(km)).all()
     return [(store, distance) for store, distance in rows]
 
 
