@@ -21,7 +21,10 @@ def make_engine(url: str | None = None):
     return create_engine(
         url, pool_size=config.DB_POOL_SIZE, max_overflow=config.DB_POOL_OVERFLOW,    # see config.py for why
         pool_pre_ping=True,       # a connection the server dropped (restart, idle cut-off) is replaced, not used
-        connect_args={"options": f"-c lock_timeout={LOCK_WAIT_SECONDS * 1000}"})
+        # search_path: only our own schema. The postgis Docker image also installs a US address geocoder and puts
+        # its `tiger` schema on the database's search path; its ~35 tables then looked like ours to Alembic and to
+        # the "is this database empty?" check below.
+        connect_args={"options": f"-c lock_timeout={LOCK_WAIT_SECONDS * 1000} -c search_path=public"})
 
 
 engine = make_engine()
