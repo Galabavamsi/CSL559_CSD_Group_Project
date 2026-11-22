@@ -2,11 +2,11 @@
 from datetime import date, time, timedelta
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from app import seed
 from app.errors import DomainError
-from app.models import StockLedger
+from app.models import SKU, StockLedger
 from app.modules.inventory import service as inventory
 from scripts.generate_sales import (BASE_DEMAND, DEFAULT_DEMAND, FESTIVAL_DAYS_AGO, UTC_OFFSET, draw_history,
                                     generate, main)
@@ -123,4 +123,18 @@ def test_command_line_writes_every_store_and_reports_errors(capsys):
 
 def test_each_store_gets_its_own_history(db):
     assert generate(1, db=db)["units"] != generate(2, db=db)["units"]
+    assert_stock_is_consistent()
+
+
+def test_a_database_from_before_the_split_draws_the_same_history(db):
+    """#62 has no migration: a database keeps Dairy, Staples and Snacks until Reset demo data. Drawing its history
+    again must give the same sales, or every forecast built on it changes (Member 3's review of #76)."""
+    old = {"Dairy": ("Toned milk 500 ml", "Curd 400 g", "Paneer 200 g", "Eggs (pack of 6)"),
+           "Staples": ("Basmati rice 1 kg", "Wheat atta 5 kg", "Sugar 1 kg", "Sunflower oil 1 L"),
+           "Snacks": ("Instant noodles (pack of 4)", "Potato chips 90 g")}
+    now = generate(1, db=db)
+    for category, names in old.items():
+        db.execute(update(SKU).where(SKU.name.in_(names)).values(category=category))
+    db.commit()
+    assert generate(1, db=db) == now
     assert_stock_is_consistent()
