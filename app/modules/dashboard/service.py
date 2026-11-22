@@ -24,11 +24,13 @@ def store_dashboard(db: Session, store_id: int) -> dict:
             .group_by(FulfilmentJob.state)
         ).all()
     )
-    packed = db.scalars(
-        select(FulfilmentJob).where(FulfilmentJob.store_id == store_id, FulfilmentJob.packed_at.is_not(None),
-                                    FulfilmentJob.state.in_(("packed", "handed_over")))
+    # Over the KPI board's window, not all time: the same span as its order-to-pack time, and it doesn't grow (#83)
+    packed = db.execute(
+        select(FulfilmentJob.created_at, FulfilmentJob.packed_at).where(
+            FulfilmentJob.store_id == store_id, FulfilmentJob.state.in_(("packed", "handed_over")),
+            FulfilmentJob.packed_at >= utcnow() - timedelta(days=config.KPI_WINDOW_DAYS))
     ).all()
-    pack_times = [(j.packed_at - j.created_at).total_seconds() for j in packed]
+    pack_times = [(packed_at - created_at).total_seconds() for created_at, packed_at in packed]
     levels = db.scalars(
         select(StockLevel).where(StockLevel.store_id == store_id).execution_options(populate_existing=True)
     ).all()

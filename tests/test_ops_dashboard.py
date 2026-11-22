@@ -179,3 +179,17 @@ def test_an_impossible_store_id_or_list_size_is_a_422_not_a_500(client):
         assert client.get("/v1/events", params={"limit": limit}).status_code == 422, limit
     assert client.get("/v1/events", params={"limit": 500}).status_code == 200
     assert client.get("/v1/stores/99/kpis").status_code == 404     # possible but unknown: still not found
+
+
+def test_average_pack_time_counts_only_the_kpi_window(client, db, sku):
+    """An all-time average got slower with every order ever packed and disagreed with the KPI board (#83)."""
+    took = {"old-bag": (config.KPI_WINDOW_DAYS + 60, 300), "new-bag": (1, 60)}     # days ago packed, seconds to pack
+    for order_id in took:                                    # every API write first: SQLite has one writer
+        place_paid_order(client, order_id, 1, [(sku("Tea"), 1)])
+    for order_id, (days_ago, seconds) in took.items():
+        job = db.scalar(select(FulfilmentJob).where(FulfilmentJob.order_id == order_id))
+        job.state, job.packed_at = "packed", utcnow() - timedelta(days=days_ago)
+        job.created_at = job.packed_at - timedelta(seconds=seconds)
+    db.commit()
+
+    assert client.get("/v1/stores/1/dashboard").json()["avg_seconds_to_pack"] == 60.0
