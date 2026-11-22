@@ -37,13 +37,15 @@ def test_every_new_connection_logs_in_with_what_the_provider_says_then(real_logi
     engine.dispose()
 
 
-def test_a_password_changed_since_it_was_fetched_is_fetched_again_and_the_connection_succeeds(real_login):
+def test_a_password_changed_since_it_was_fetched_is_fetched_again_and_the_connection_succeeds(real_login, caplog):
     url, login = real_login
     engine, asked = _engine_with(url, [(login[0], "the-password-from-before-the-change"), login])
 
-    with engine.connect() as connection:
+    with caplog.at_level("WARNING", logger="darkstore.db"), engine.connect() as connection:
         assert connection.scalar(text("SELECT 1")) == 1
     assert asked == [False, True]                    # refused once, then asked for the newest
+    assert "refused the remembered password" in caplog.text      # the change is visible in the log
+    assert "the-password-from-before-the-change" not in caplog.text and login[1] not in caplog.text
     engine.dispose()
 
 

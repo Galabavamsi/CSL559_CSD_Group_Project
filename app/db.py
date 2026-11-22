@@ -1,5 +1,6 @@
 """Database engine (PostgreSQL + PostGIS), session handling, and bringing the tables up to date (migrations)."""
 import json
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -15,6 +16,7 @@ class Base(DeclarativeBase):
     pass
 
 
+log = logging.getLogger("darkstore.db")
 LOCK_WAIT_SECONDS = 15       # a statement blocked by another transaction for this long fails instead of hanging
 
 
@@ -68,6 +70,8 @@ def _log_in_with(engine, login: LoginProvider) -> None:
             except Exception as error:
                 if refresh or not _refused_password(error):
                     raise
+                # Worth a line in the log: it marks the moment a password change reached this process.
+                log.warning("The database refused the remembered password; fetching the login again")
 
 
 def make_engine(url: str | None = None, login: LoginProvider | None = None):

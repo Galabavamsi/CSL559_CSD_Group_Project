@@ -43,8 +43,10 @@ It has no inbound network rule at all and no SSH key; commands reach it through 
 
 - The dev server is about 0.20 USD an hour while it runs.
 - The hosted zone is 0.50 USD a month.
-- The repository is public and owned by another account, so the deploy pipeline must only ever trust the `main`
-  branch and release tags of this repository, never any branch.
+- The repository is public and was, at the time, owned by another account, so the deploy pipeline must not trust
+  whatever is pushed to it. (Later the same day the repository was transferred to the project owner's account. The
+  rule stayed, in a stricter form: nothing in GitHub starts a build or a deployment at all. See
+  [Staging on AWS](2026-11-23-staging-on-aws.md).)
 - Teammates, if they need access, get their own IAM users limited to resources with this project's tag.
 
 ## Sources
