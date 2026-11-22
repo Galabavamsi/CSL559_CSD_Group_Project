@@ -120,7 +120,7 @@ like the sales, so the history rows always add up to zero.
 1. Create `scripts/generate_sales.py` with a function `generate(store_id, days=60, seed=42)`.
 2. For each SKU the store carries, for each of the last `days` days (not today), draw units sold:
    ```python
-   base = BASE_DEMAND.get(sku.category, 3)            # e.g. Dairy 20, Bakery 12, Staples 4, Frozen 2
+   base = BASE_DEMAND.get(sku.category, 3)            # e.g. Milk 20, Bakery 12, Rice 4, Frozen 2
    weekday_factor = 1.35 if day.weekday() >= 5 else 1.0      # busier weekends
    festival_factor = 2.0 if day in FESTIVAL_DAYS else 1.0    # pick two dates in the window
    units = rng.poisson(base * weekday_factor * festival_factor)    # or random.gauss, floored at 0

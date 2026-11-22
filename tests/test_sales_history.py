@@ -8,7 +8,8 @@ from app import seed
 from app.errors import DomainError
 from app.models import StockLedger
 from app.modules.inventory import service as inventory
-from scripts.generate_sales import FESTIVAL_DAYS_AGO, UTC_OFFSET, draw_history, generate, main
+from scripts.generate_sales import (BASE_DEMAND, DEFAULT_DEMAND, FESTIVAL_DAYS_AGO, UTC_OFFSET, draw_history,
+                                    generate, main)
 
 from .conftest import assert_stock_is_consistent
 
@@ -27,6 +28,16 @@ def test_seed_history_rows_balance_on_their_own(db):
     db.execute(delete(StockLedger).where(StockLedger.reference == "history"))
     db.commit()
     assert_stock_is_consistent()
+
+
+def test_every_item_kept_its_demand_when_the_categories_were_split():
+    """#62 split Dairy, Staples and Snacks by kind. Each item must still sell as much as before, or the history and
+    every forecast built on it would change."""
+    before = {"Toned milk 500 ml": 20, "Curd 400 g": 20, "Paneer 200 g": 20, "Eggs (pack of 6)": 20,
+              "White bread 400 g": 12, "Basmati rice 1 kg": 4, "Wheat atta 5 kg": 4, "Sugar 1 kg": 4,
+              "Sunflower oil 1 L": 4, "Vanilla ice cream 500 ml": 2, "Frozen green peas 500 g": 2}
+    demand = {name: BASE_DEMAND.get(category, DEFAULT_DEMAND) for name, category, *_rest in seed.SKUS}
+    assert demand == {name: before.get(name, 3) for name, *_rest in seed.SKUS}
 
 
 def test_same_seed_draws_the_same_history():

@@ -25,21 +25,22 @@ STORES = [
     ("DS-02 North", 13.0350, 77.5970),
 ]
 
-# name, category, storage type, shelf life (days), price (INR)
+# name, category, storage type, shelf life (days), price (INR). A category is a kind of item a customer would take
+# instead of a missing one (substitutes are offered only within it), so rice and atta are not one "Staples" (#62).
 SKUS = [
-    ("Toned milk 500 ml", "Dairy", "chilled", 3, 28),
-    ("Curd 400 g", "Dairy", "chilled", 7, 35),
-    ("Paneer 200 g", "Dairy", "chilled", 10, 90),
+    ("Toned milk 500 ml", "Milk", "chilled", 3, 28),
+    ("Curd 400 g", "Curd", "chilled", 7, 35),
+    ("Paneer 200 g", "Paneer", "chilled", 10, 90),
     ("White bread 400 g", "Bakery", "ambient", 4, 45),
-    ("Eggs (pack of 6)", "Dairy", "ambient", 14, 60),
+    ("Eggs (pack of 6)", "Eggs", "ambient", 14, 60),
     ("Bananas (6 pcs)", "Fruits", "ambient", 4, 40),
-    ("Basmati rice 1 kg", "Staples", "ambient", 365, 140),
-    ("Wheat atta 5 kg", "Staples", "ambient", 120, 245),
-    ("Sugar 1 kg", "Staples", "ambient", 365, 48),
+    ("Basmati rice 1 kg", "Rice", "ambient", 365, 140),
+    ("Wheat atta 5 kg", "Flour", "ambient", 120, 245),
+    ("Sugar 1 kg", "Sugar", "ambient", 365, 48),
     ("Tea 250 g", "Beverages", "ambient", 365, 130),
-    ("Instant noodles (pack of 4)", "Snacks", "ambient", 240, 56),
-    ("Potato chips 90 g", "Snacks", "ambient", 120, 30),
-    ("Sunflower oil 1 L", "Staples", "ambient", 270, 155),
+    ("Instant noodles (pack of 4)", "Noodles", "ambient", 240, 56),
+    ("Potato chips 90 g", "Chips", "ambient", 120, 30),
+    ("Sunflower oil 1 L", "Oil", "ambient", 270, 155),
     ("Vanilla ice cream 500 ml", "Frozen", "frozen", 180, 120),
     ("Frozen green peas 500 g", "Frozen", "frozen", 270, 95),
     ("Bath soap (pack of 3)", "Personal care", "ambient", 730, 99),

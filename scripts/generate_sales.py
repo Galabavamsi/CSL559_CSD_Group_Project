@@ -33,7 +33,10 @@ from app.modules.inventory import service as inventory  # noqa: E402
 from app.seed import seed_if_empty  # noqa: E402
 
 # Units sold on an ordinary weekday, by category (guide task 3.1, step 2). Other categories sell DEFAULT_DEMAND.
-BASE_DEMAND = {"Dairy": 20, "Bakery": 12, "Staples": 4, "Frozen": 2}
+# Milk, curd, eggs and paneer sell as the dairy they are, rice, flour, sugar and oil as staples: those categories
+# were split so substitutes make sense (#62), and every item kept its demand, so the history is the same.
+BASE_DEMAND = {"Milk": 20, "Curd": 20, "Eggs": 20, "Paneer": 20, "Bakery": 12,
+               "Rice": 4, "Flour": 4, "Sugar": 4, "Oil": 4, "Frozen": 2}
 DEFAULT_DEMAND = 3
 WEEKEND_FACTOR = 1.35                         # Saturday and Sunday are busier
 FESTIVAL_FACTOR = 2.0                         # demand doubles on a festival day
