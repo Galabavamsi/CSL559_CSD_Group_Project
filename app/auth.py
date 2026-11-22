@@ -7,6 +7,15 @@ Routers use three things from here:
     check_store(staff, store_id)                       # and only for their own store
 
 `staff` is the decoded token: {"sub": username, "role": ..., "store_id": ... or None, "exp": ...}.
+
+People who use the phone app (customers, farmers, delivery agents) are a second kind of caller, with their own
+roles and their own dependencies:
+
+    user: dict = Depends(current_user)                 # any signed-in app user
+    user: dict = Depends(require_user_role("farmer"))  # only these roles
+
+`user` is {"sub": "user:<id>", "user_id": ..., "role": ..., "exp": ...}. The two kinds never pass for each other:
+a staff endpoint refuses an app user's token, and the other way round.
 """
 import hashlib
 import hmac
@@ -25,7 +34,8 @@ from .db import get_db
 from .errors import DomainError
 from .models import Staff
 
-ROLES = ("picker", "packer", "receiver", "manager", "ops", "admin")
+ROLES = ("picker", "packer", "receiver", "manager", "ops", "admin")      # hub and platform staff
+USER_ROLES = ("customer", "farmer", "agent")                              # people who use the phone app
 ALGORITHM = "HS256"
 
 router = APIRouter(tags=["auth"])
@@ -60,6 +70,13 @@ def make_token(username: str, role: str, store_id: int | None, minutes: float | 
     return jwt.encode(claims, config.JWT_SECRET, algorithm=ALGORITHM)
 
 
+def make_user_token(user_id: int, role: str) -> str:
+    """Access token of an app user. Short-lived: the app renews it with its refresh token (accounts.service)."""
+    claims = {"sub": f"user:{user_id}", "user_id": user_id, "role": role, "store_id": None,
+              "exp": datetime.now(timezone.utc) + timedelta(minutes=config.USER_TOKEN_MINUTES)}
+    return jwt.encode(claims, config.JWT_SECRET, algorithm=ALGORITHM)
+
+
 def login(db: Session, username: str, password: str) -> dict:
     """Check a username and password and return a token. Does not write to the database."""
     staff = db.scalar(select(Staff).where(Staff.username == username))
@@ -82,12 +99,41 @@ def decode_token(token: str) -> dict:
         raise DomainError(401, "bad_token", "The token is invalid or has expired; log in again") from None
 
 
+def decode_staff_token(token: str) -> dict:
+    """`decode_token`, for the staff side: 403 for a valid token that belongs to an app user. Without this check a
+    customer's token would pass every endpoint that asks only for "any logged-in staff", and, having no store,
+    would count as city-wide."""
+    claims = decode_token(token)
+    if claims["role"] not in ROLES:
+        raise DomainError(403, "forbidden", "This is for hub staff")
+    return claims
+
+
 def current_staff(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
     """Decode the bearer token or raise 401. The caller is kept on the request for the audit log."""
     if credentials is None:
         raise DomainError(401, "not_logged_in", "Log in and send the token as 'Authorization: Bearer <token>'")
-    request.state.staff = decode_token(credentials.credentials)
+    request.state.staff = decode_staff_token(credentials.credentials)
     return request.state.staff
+
+
+def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
+    """The signed-in app user's token contents, or 401; 403 for a staff token."""
+    if credentials is None:
+        raise DomainError(401, "not_logged_in", "Sign in and send the token as 'Authorization: Bearer <token>'")
+    claims = decode_token(credentials.credentials)
+    if claims["role"] not in USER_ROLES or "user_id" not in claims:
+        raise DomainError(403, "forbidden", "This is for people signed in to the app")
+    return claims
+
+
+def require_user_role(*roles: str):
+    """Dependency: 403 unless the app user has one of these roles."""
+    def dependency(user: dict = Depends(current_user)) -> dict:
+        if user["role"] not in roles:
+            raise DomainError(403, "forbidden", f"A {user['role']} may not do this")
+        return user
+    return dependency
 
 
 def require_role(*roles: str):

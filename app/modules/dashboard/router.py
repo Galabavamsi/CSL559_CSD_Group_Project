@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from ... import config
-from ...auth import check_store, current_staff, decode_token
+from ...auth import check_store, current_staff, decode_staff_token
 from ...db import get_db
 from ...errors import DomainError
 from ...ids import MAX_ID, PathId
@@ -46,7 +46,7 @@ async def live_events(websocket: WebSocket, store_id: int = Query(ge=1, le=MAX_I
     headers, so send the bearer token as the first message. Staff see only their own store."""
     await websocket.accept()
     try:
-        staff = decode_token(await asyncio.wait_for(websocket.receive_text(), timeout=5))
+        staff = decode_staff_token(await asyncio.wait_for(websocket.receive_text(), timeout=5))
         check_store(staff, store_id)
     except WebSocketDisconnect:
         return

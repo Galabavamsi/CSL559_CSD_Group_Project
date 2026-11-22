@@ -19,9 +19,10 @@ from fastapi.responses import JSONResponse
 
 from . import config
 
-# Login, serviceability, the store list, availability, the catalogue and checkout: every route that needs no login,
-# except /health and /metrics.
-OPEN_PATHS = re.compile(r"/v1/(auth/login|serviceability|stores|skus|stores/[^/]+/availability|reservations(/[^/]+)*)")
+# Login (staff passwords, and app users' codes and sessions), serviceability, the store list, availability, the
+# catalogue and checkout: every route that needs no login, except /health and /metrics.
+OPEN_PATHS = re.compile(r"/v1/(auth/(login|logout|refresh|otp/request|otp/verify)|serviceability|stores|cities|skus"
+                        r"|stores/[^/]+/availability|reservations(/[^/]+)*)")
 MAX_CLIENTS = 10_000
 # client -> (tokens left, when they were counted). Kept in the order clients were last seen, oldest first.
 _buckets: dict[str, tuple[float, float]] = {}

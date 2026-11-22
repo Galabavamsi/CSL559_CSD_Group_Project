@@ -119,6 +119,20 @@ RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
 # An open WebSocket gets a ping this often, so a viewer that has gone away is noticed and dropped.
 LIVE_PING_SECONDS = float(os.getenv("LIVE_PING_SECONDS", "20"))
 
+# App users (customers, farmers, delivery agents) sign in with a six-digit code sent by email.
+OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "10"))           # a code is dead after this long
+OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))          # and after this many tries, right or wrong
+OTP_RESEND_SECONDS = int(os.getenv("OTP_RESEND_SECONDS", "60"))     # an address may ask for a new code this often
+OTP_MAX_PER_HOUR = int(os.getenv("OTP_MAX_PER_HOUR", "5"))          # and this many times an hour
+# Their session: a short-lived access token, and a refresh token the app exchanges for a new pair.
+USER_TOKEN_MINUTES = float(os.getenv("USER_TOKEN_MINUTES", "60"))
+REFRESH_TOKEN_DAYS = int(os.getenv("REFRESH_TOKEN_DAYS", "30"))
+# Email (app/email.py). `log` sends nothing and writes each message, sign-in codes included, to the log: for a
+# laptop only. `ses` sends through Amazon SES from EMAIL_FROM, an address on a domain verified there.
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "log")
+EMAIL_FROM = os.getenv("EMAIL_FROM", "Farm2Home <no-reply@localhost>")
+EMAIL_REGION = os.getenv("EMAIL_REGION", "")      # the SES region, when it is not the one the app runs in
+
 # Monitoring (HLD 12): when set, GET /metrics answers only 'Authorization: Bearer <METRICS_TOKEN>'. Leave it empty
 # for local development; set it anywhere /metrics is reachable from outside.
 METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")

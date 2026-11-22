@@ -139,6 +139,48 @@ class Staff(Base):
     store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
 
 
+# --------------------------------------------------------------------------- people who use the phone app
+
+class User(Base):
+    """Someone who signs in to the phone app with a code sent to their email: a customer, a farmer or a delivery
+    agent. Hub staff are in `staff`, log in with a password, and are a separate kind of login."""
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role: Mapped[str] = mapped_column(String(10))                     # customer | farmer | agent
+    email: Mapped[str] = mapped_column(String(254), unique=True)      # lower case; it is the login
+    name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    city_id: Mapped[int | None] = mapped_column(ForeignKey("cities.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LoginCode(Base):
+    """A one-time sign-in code emailed to an address. Only a keyed hash of the code is kept (accounts.service).
+    `role` is the role the address will have: its account's, or the one asked for at a first sign-in."""
+    __tablename__ = "login_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    role: Mapped[str] = mapped_column(String(10))
+    code_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)         # tries made against this code, right or wrong
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)   # set when used, replaced or void
+
+
+class RefreshToken(Base):
+    """One session of an app user. The token itself is never stored, only its hash; `revoked_at` is set when it is
+    exchanged for a new one or signed out."""
+    __tablename__ = "refresh_tokens"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 # --------------------------------------------------------------------------- stock
 
 class StockLevel(Base):

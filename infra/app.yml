@@ -94,8 +94,8 @@ Resources:
                   - !Ref StaffPassword
 
   # What the app's own code may do in AWS: read the database login, which it does whenever it opens a connection
-  # (RDS changes the password every seven days), and let an administrator open a shell in the container (ECS Exec)
-  # to look at a problem.
+  # (RDS changes the password every seven days); send email from this project's domain; and let an administrator
+  # open a shell in the container (ECS Exec) to look at a problem.
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -114,6 +114,16 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
+        - PolicyName: send-email-from-this-domain
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${BaseDomain}"
+                Condition:
+                  StringLike:
+                    "ses:FromAddress": !Sub "*@${BaseDomain}"
         - PolicyName: ecs-exec
           PolicyDocument:
             Version: "2012-10-17"
@@ -160,6 +170,10 @@ Resources:
             # caller wrote into the header itself (docs/journal/2026-11-23-staging-on-aws.md).
             - Name: FORWARDED_ALLOW_IPS
               Value: !ImportValue farm2home-VpcCidr
+            # Sign-in codes go out through Amazon SES, from an address on the domain verified there.
+            - {Name: EMAIL_BACKEND, Value: ses}
+            - Name: EMAIL_FROM
+              Value: !Sub "Farm2Home <no-reply@${BaseDomain}>"
             - {Name: BACKGROUND_JOBS, Value: "on"}
             - {Name: REPLENISHMENT_INTERVAL_MINUTES, Value: "15"}
             - {Name: DEMO_HISTORY_ON_RESET, Value: "on"}
