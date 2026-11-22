@@ -34,12 +34,13 @@ $ psql -U darkstore -d darkstore -tAc "SHOW search_path"
 So `tiger` is on the search path of the image's default database. SQLAlchemy, asked for "the tables" with no schema
 named, returns every table visible through the search path, and the geocoder's tables came back beside ours.
 
-Two things would have gone wrong, not one:
+The `tiger` schema of a fresh container holds 34 tables. Two things went wrong because of them, not one:
 
-1. `alembic check` reported about 35 tables to remove. This is the failure CI showed.
+1. `alembic check` reported those tables as tables to remove. This is the failure CI showed.
 2. When the app starts, it decides whether a database is new by asking whether it has any tables. A new database
-   from this image would have looked old, and the app would have tried to migrate tables that did not exist. That
-   would have broken the first `docker compose up`. CI never reached it.
+   from this image looked old. CI never reached this, so we tried it: starting the app's database set-up
+   (`db.init_db()`) with the code from before the fix against a fresh container failed with a database
+   `ProgrammingError`. The first `docker compose up` would have failed the same way.
 
 ## Why the dev server did not show it
 
@@ -53,8 +54,13 @@ deployment would ever see.
 Every connection the app opens now sets `search_path=public`, next to the lock timeout it already set
 (`app/db.py`, `make_engine`). The app sees only its own schema, whatever else is installed in the database.
 
-Checked by starting a fresh `postgis/postgis:16-3.4` container exactly as CI does: `alembic upgrade head` and
-`alembic check` report no differences, and the full suite passes (610 tests). CI on the pull request passes too.
+Checked on fresh `postgis/postgis:16-3.4` containers, started exactly as CI starts them:
+
+- `alembic upgrade head` and `alembic check` report no differences, and the full suite passes (610 tests).
+- `db.init_db()` with the fix succeeds and leaves 26 tables in `public` (ours and Alembic's version table).
+- `docker compose up --build` from nothing: the app starts, loads the demo data and answers `/v1/cities`,
+  `/v1/stores?city=bangalore` and `/v1/serviceability`, with no error in its log.
+- CI on the pull request passes.
 
 ## What it taught
 
@@ -69,5 +75,5 @@ Checked by starting a fresh `postgis/postgis:16-3.4` container exactly as CI doe
 - The official PostGIS Docker image, which documents the extensions it installs in the default database
   (`postgis`, `postgis_topology`, and `postgis_tiger_geocoder` for PostGIS before 3.7):
   https://github.com/postgis/docker-postgis
-- Seen ourselves, not taken from a document: the search path above, read from a fresh `postgis/postgis:16-3.4`
-  container, and the CI log line quoted above.
+- Seen ourselves, not taken from a document: the search path and the count of 34 tables, read from a fresh
+  `postgis/postgis:16-3.4` container; the CI log line quoted above; and the failed and successful first starts.
