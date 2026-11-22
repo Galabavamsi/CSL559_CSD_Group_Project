@@ -241,8 +241,10 @@ def test_only_units_the_order_dropped_can_be_replaced(client, sku, staples):
     assert_stock_is_consistent()
 
 
-def test_a_line_that_was_picked_cannot_be_swapped(client, sku):
+def test_a_line_that_was_picked_cannot_be_swapped(client, db, sku, staples):
+    """Even the item on offer is refused for a line that was not dropped."""
     rice, sugar = sku("Basmati rice"), sku("Sugar")
+    assert pickpack.find_substitute(db, 1, rice, 1)["sku_id"] == sugar
     place_paid_order(client, "s-5", 1, [(rice, 1)])
     job = next_job(client)
     line = job["tasks"][0]
