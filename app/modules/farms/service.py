@@ -117,7 +117,7 @@ def choose_hub(db: Session, farm: Farm, item: ProduceItem, qty_g: int) -> tuple[
     """The nearest open hub that can take this lot (HLD 5, flow A step 2): within HUB_SEARCH_KM of the farm, with
     shelves of the item's temperature zone, and with room for the weight. Hubs are tried nearest first, on the
     GiST index. 409 no_hub_with_room, saying why each hub in reach was passed over."""
-    point = serviceability.point(farm.lat, farm.lng)
+    point = serviceability.as_point(farm.lat, farm.lng)
     metres = func.ST_Distance(Store.location, point, False)
     nearby = db.execute(select(Store, metres).where(Store.status != "closed",
                                                     func.ST_DWithin(Store.location, point,
