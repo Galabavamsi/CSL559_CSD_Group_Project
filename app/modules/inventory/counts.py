@@ -51,8 +51,13 @@ def _open_count_for(db: Session, bin_id: int) -> CycleCount | None:
 def start(db: Session, store_id: int, bin_id: int, created_by: str, reason: str = "manual",
           also_sku_ids: tuple[int, ...] = (), commit: bool = True) -> CycleCount:
     """Open a count of one bin. A bin has at most one unfinished count: asking again returns that one, with any
-    SKUs in `also_sku_ids` added (a SKU the system thinks has gone can still be on the shelf)."""
+    SKUs in `also_sku_ids` added (a SKU the system thinks has gone can still be on the shelf).
+
+    The bin's row is taken first and kept until this transaction ends, so two starts at the same moment (two pickers
+    reporting the same bin empty) take turns: the second waits, then finds the first one's count instead of opening
+    another."""
     _get_bin(db, store_id, bin_id)
+    db.execute(update(Bin).where(Bin.id == bin_id).values(code=Bin.code).execution_options(synchronize_session=False))
     count = _open_count_for(db, bin_id)
     if count is None:
         count = CycleCount(store_id=store_id, bin_id=bin_id, status="open", reason=reason, created_by=created_by)
@@ -99,6 +104,15 @@ def submit(db: Session, count_id: int, counted: dict[int, int], submitted_by: st
     for sku_id in sorted(set(counted) - {line.sku_id for line in count.lines}):
         inventory.get_sku(db, sku_id)
         count.lines.append(CycleCountLine(sku_id=sku_id))
+    # Take the count from open to submitted in one conditional UPDATE, as _decide does for the next step. The check of
+    # count.status above read it a moment ago: of two submits at the same moment (a double-click, a network retry),
+    # both pass it, but only one changes this row and goes on to compare and apply. The other changes stock by nothing.
+    taken = db.execute(update(CycleCount).where(CycleCount.id == count.id, CycleCount.status == "open")
+                       .values(status="submitted").execution_options(synchronize_session=False)).rowcount
+    if not taken:
+        db.rollback()
+        db.refresh(count)
+        raise DomainError(409, "count_closed", f"This count is already {count.status}")
 
     for line in count.lines:
         line.system_qty = _on_the_shelf(db, count.bin_id, line.sku_id)
