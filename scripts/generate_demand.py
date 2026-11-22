@@ -5,7 +5,7 @@ A lookup inside a zone is served and leaves no trace; a lookup no store serves i
 what GET /v1/network-planning/suggestions works from. Two clusters sit outside every zone, so the map has
 gaps to find: a big one that should become the first suggestion and a smaller one for the second.
 
-Run it from the repository root (it uses the app's database, DARKSTORE_DB, by default ./darkstore.db):
+Run it from the repository root (it uses the app's database, DARKSTORE_DB):
 
     python scripts/generate_demand.py [--seed 7]
 """

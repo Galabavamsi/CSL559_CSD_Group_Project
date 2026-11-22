@@ -12,13 +12,12 @@ at peak. Each walk is picked and packed for real, so the stock audit still holds
 
     python scripts/compare_picking.py [--orders 30] [--batch 3] [--seed 7]
 
-It never touches darkstore.db: it works on a temporary database.
+It never touches the app's data: it works on a temporary database (scripts/scratch.py).
 """
 import argparse
 import os
 import random
 import sys
-import tempfile
 from pathlib import Path
 
 if __package__ in (None, ""):          # run as a file: make `import app` work
@@ -119,7 +118,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7, help="random seed, so a run can be repeated")
     args = parser.parse_args()
     # Before anything imports app: a throwaway database, and no timed jobs.
-    os.environ["DARKSTORE_DB"] = f"sqlite:///{tempfile.mkdtemp()}/compare_picking.db"
+    from scripts.scratch import use_scratch_database
+    use_scratch_database()
     os.environ["BACKGROUND_JOBS"] = "off"
     print(report(compare(args.orders, args.batch, args.seed)))
 

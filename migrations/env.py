@@ -1,15 +1,17 @@
 """Alembic environment: which database to migrate and which tables it should end up with.
 
 The database is the app's own engine (DARKSTORE_DB, see app/config.py), so there is no second place to configure it.
-`render_as_batch` makes column changes work on SQLite too, which cannot ALTER most things in place; on PostgreSQL it
-changes nothing. app/db.py and the tests pass their own connection in through `config.attributes`.
+`render_as_batch` is left over from SQLite; on PostgreSQL it changes nothing and the first migrations use it.
+`include_object` keeps PostGIS's own table out of the comparison with models.py. app/db.py and the tests pass their
+own connection in through `config.attributes`.
 """
 from alembic import context
 
 from app import models  # noqa: F401  (registers every table on Base.metadata)
-from app.db import Base, engine
+from app.db import Base, engine, include_object
 
-OPTIONS = {"target_metadata": Base.metadata, "render_as_batch": True, "compare_type": True}
+OPTIONS = {"target_metadata": Base.metadata, "render_as_batch": True, "compare_type": True,
+           "include_object": include_object}
 
 
 def _migrate(connection) -> None:

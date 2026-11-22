@@ -14,28 +14,61 @@ Only app/modules/inventory/service.py is allowed to change either table.
 """
 from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from geoalchemy2 import Geography
+from sqlalchemy import (JSON, Boolean, Computed, Date, DateTime, Float, ForeignKey, Index, Integer, String,
+                        UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 
 
 def utcnow() -> datetime:
-    """Naive UTC timestamp (SQLite does not store time zones)."""
+    """Naive UTC timestamp: every DateTime column is UTC without a time zone."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# --------------------------------------------------------------------------- stores
+# --------------------------------------------------------------------------- cities and stores
+
+# A point on the globe, kept by PostgreSQL itself from the row's lat and lng, so the two can never disagree.
+# geography (not geometry): distances come out in metres along the earth's surface. spatial_index=False because
+# the GiST index is declared by name below, where Alembic can see it.
+POINT_FROM_LAT_LNG = "ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography"
+
+
+def _location():
+    return mapped_column(Geography("POINT", srid=4326, spatial_index=False), Computed(POINT_FROM_LAT_LNG, persisted=True))
+
+
+class City(Base):
+    """A city the service runs in. Everything located (hubs, and later farms, customers and orders) belongs to one,
+    so a query, a simulation or a dashboard can be for one city (HLD 12: partition by city)."""
+    __tablename__ = "cities"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(40), unique=True)        # in URLs and settings, e.g. "bhilai"
+    name: Mapped[str] = mapped_column(String(80))
+    tier: Mapped[int] = mapped_column(Integer)                        # 1 = metro, 2 and 3 = smaller cities
+    lat: Mapped[float] = mapped_column(Float)                         # city centre
+    lng: Mapped[float] = mapped_column(Float)
+    radius_km: Mapped[float] = mapped_column(Float)                   # roughly how far the built-up area reaches
+    hub_radius_km: Mapped[float] = mapped_column(Float, default=3.0)  # service radius a new hub here starts with
+    location = _location()
+    __table_args__ = (Index("ix_cities_location", "location", postgresql_using="gist"),)
+
 
 class Store(Base):
+    """A hub: the micro-warehouse that stocks produce and sends out orders. (Still called a store in the code and the
+    API paths, from the dark-store prototype this grew out of.)"""
     __tablename__ = "stores"
     id: Mapped[int] = mapped_column(primary_key=True)
+    city_id: Mapped[int | None] = mapped_column(ForeignKey("cities.id"), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(80))
     lat: Mapped[float] = mapped_column(Float)
     lng: Mapped[float] = mapped_column(Float)
     radius_km: Mapped[float] = mapped_column(Float, default=3.0)
     status: Mapped[str] = mapped_column(String(10), default="open")   # open | busy | closed
     hub_name: Mapped[str] = mapped_column(String(80), default="City Mother Hub")
+    location = _location()
+    __table_args__ = (Index("ix_stores_location", "location", postgresql_using="gist"),)
 
 
 class Bin(Base):

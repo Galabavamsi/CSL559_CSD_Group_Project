@@ -1,19 +1,22 @@
-"""Serviceability Service (HLD service 1): which store serves this address, and how fast?
+"""Serviceability Service (HLD service 1): which hub serves this address, and how fast?
 
-Delivery zones are H3 hexagon cells. `rebuild_zones` works out once which store serves each cell;
+Delivery zones are H3 hexagon cells. `rebuild_zones` works out once which hub serves each cell;
 `check` then turns the customer's location into a cell and looks up that one row, instead of
-measuring the distance to every store on every request.
+measuring the distance to every hub on every request.
+
+Questions about real distance go to PostGIS, on the GiST index over `stores.location` (HLD 8):
+`nearest_store` is the nearest-neighbour search and `stores_covering` is ST_DWithin on each hub's own radius.
 """
 import logging
 import math
 
 import h3
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ... import config
-from ...models import ServiceabilityMiss, Store, StoreZone
+from ...models import City, ServiceabilityMiss, Store, StoreZone
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +28,36 @@ def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     dp, dl = p2 - p1, math.radians(lng2 - lng1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def _point(lat: float, lng: float):
+    """The point as PostGIS geography. Longitude comes first in PostGIS."""
+    return func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326).cast(Store.location.type)
+
+
+def nearest_store(db: Session, lat: float, lng: float, city_id: int | None = None,
+                  include_closed: bool = False) -> tuple[Store, float] | None:
+    """The hub nearest to a point and its distance in km, or None when there is no hub (HLD 8, query 1).
+    `location <-> point` walks the GiST index outwards from the point, so it does not measure every hub."""
+    point = _point(lat, lng)
+    query = select(Store, func.ST_Distance(Store.location, point, False)).order_by(Store.location.op("<->")(point))
+    if not include_closed:
+        query = query.where(Store.status != "closed")
+    if city_id is not None:
+        query = query.where(Store.city_id == city_id)
+    row = db.execute(query.limit(1)).first()
+    return (row[0], row[1] / 1000) if row else None
+
+
+def stores_covering(db: Session, lat: float, lng: float) -> list[tuple[Store, float]]:
+    """Open or busy hubs whose service radius reaches this point, nearest first, each with its distance in km
+    (HLD 8, query 2: ST_DWithin). Unlike the H3 zones, this measures to the exact point and ignores the busy rule."""
+    point = _point(lat, lng)
+    km = func.ST_Distance(Store.location, point, False) / 1000
+    rows = db.execute(select(Store, km).where(Store.status != "closed",
+                                              func.ST_DWithin(Store.location, point, Store.radius_km * 1000, False))
+                      .order_by(km)).all()
+    return [(store, distance) for store, distance in rows]
 
 
 def eta_minutes(store: Store, km: float) -> int:
@@ -80,16 +113,24 @@ def check(db: Session, lat: float, lng: float) -> dict:
     except SQLAlchemyError:     # a lost miss costs a little planning data; the customer still gets an answer
         db.rollback()
         log.exception("Could not save a serviceability miss")
-    # Not serviceable: say how far the nearest store is. This is the rare path, so measuring is fine here.
-    stores = db.scalars(select(Store).where(Store.status != "closed")).all()
-    ranked = sorted(((distance_km(lat, lng, s.lat, s.lng), s) for s in stores), key=lambda pair: pair[0])
-    nearest = ranked[0] if ranked else None
+    # Not serviceable: say how far the nearest hub is.
+    nearest = nearest_store(db, lat, lng)
     return {"serviceable": False, "store_id": None, "h3_cell": cell,
-            "nearest_store": nearest[1].name if nearest else None,
-            "nearest_distance_km": round(nearest[0], 2) if nearest else None}
+            "nearest_store": nearest[0].name if nearest else None,
+            "nearest_distance_km": round(nearest[1], 2) if nearest else None}
 
 
-def list_stores(db: Session) -> list[dict]:
-    stores = db.scalars(select(Store).order_by(Store.id)).all()
+def list_stores(db: Session, city: str | None = None) -> list[dict]:
+    """Every hub with its city, or only one city's hubs when `city` is its slug (an unknown slug gives none)."""
+    query = select(Store, City).outerjoin(City, City.id == Store.city_id).order_by(Store.id)
+    if city is not None:
+        query = query.where(City.slug == city)
     return [{"store_id": s.id, "name": s.name, "lat": s.lat, "lng": s.lng, "radius_km": s.radius_km,
-             "status": s.status} for s in stores]
+             "status": s.status, "city": c.slug if c else None} for s, c in db.execute(query).all()]
+
+
+def list_cities(db: Session) -> list[dict]:
+    hubs = dict(db.execute(select(Store.city_id, func.count()).group_by(Store.city_id)).all())
+    return [{"city": c.slug, "name": c.name, "tier": c.tier, "lat": c.lat, "lng": c.lng, "radius_km": c.radius_km,
+             "hub_radius_km": c.hub_radius_km, "hubs": hubs.get(c.id, 0)}
+            for c in db.scalars(select(City).order_by(City.id)).all()]

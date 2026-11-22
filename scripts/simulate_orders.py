@@ -5,7 +5,7 @@ All orders are paid before picking starts, as at a peak. Each picker asks for wo
 wait, up to BATCH_SIZE at peak; or next-task with --single), walks the route nearest bin first, sleeping --step
 seconds per walk_seq step, scans every line on the way, walks back to the desk and packs each order. The app runs
 in-process (FastAPI's test client, with real logins) on a throwaway copy of the demo data, so no server is needed and
-darkstore.db is never touched. At the end it reads GET /v1/stores/{id}/fulfilment-metrics and checks the stock audit.
+the app's own data is never touched. At the end it reads GET /v1/stores/{id}/fulfilment-metrics and checks the stock audit.
 
     python scripts/simulate_orders.py [--orders 100] [--pickers 1] [--step 0.05] [--single] [--seed 7]
 
@@ -17,7 +17,6 @@ import logging
 import os
 import random
 import sys
-import tempfile
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -165,7 +164,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7, help="random seed, so a run can be repeated")
     args = parser.parse_args()
     # Before anything imports app: a throwaway database, no timed jobs, and no rate limit (the script is one client).
-    os.environ["DARKSTORE_DB"] = f"sqlite:///{tempfile.mkdtemp()}/simulate_orders.db"
+    from scripts.scratch import use_scratch_database
+    use_scratch_database()
     os.environ["BACKGROUND_JOBS"] = "off"
     os.environ["RATE_LIMIT_PER_SECOND"] = "0"
     warnings.filterwarnings("ignore", message="Using `httpx`")    # from FastAPI's test client, not ours

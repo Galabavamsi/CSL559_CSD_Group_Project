@@ -14,16 +14,18 @@ import argparse
 import os
 import statistics
 import sys
-import tempfile
 import time
 import uuid
 from pathlib import Path
 
-os.environ.setdefault("DARKSTORE_DB", f"sqlite:///{tempfile.mkdtemp()}/bench.db")   # never touch the real data
 os.environ["BACKGROUND_JOBS"] = "off"
 os.environ["RATE_LIMIT_PER_SECOND"] = "0"          # one client sending thousands of calls would be throttled
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.scratch import use_scratch_database  # noqa: E402
+
+use_scratch_database()                             # never touch the real data
 
 from fastapi.testclient import TestClient  # noqa: E402
 
