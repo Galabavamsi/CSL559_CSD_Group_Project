@@ -3,14 +3,15 @@
 Stock position = on hand - reserved + already on its way.
 When the position drops below the reorder point, order enough to get back to target stock, in whole cases,
 within the free bin space of each zone; when a zone is short of space the most urgent SKUs go first.
-A manager can stop reordering one SKU (set_reorder_stopped), e.g. to let it run down before dropping it.
+A manager can stop reordering one SKU, e.g. to let it run down before dropping it, or change its reorder point
+(update_reorder_settings).
 """
 import logging
 import math
 import threading
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ... import config, events
@@ -122,19 +123,40 @@ def run_all(db: Session) -> list[dict]:
     return results
 
 
-def set_reorder_stopped(db: Session, store_id: int, sku_id: int, stopped: bool) -> dict:
-    """Stop or restart reordering one SKU in one store, and commit. A manager stops it to let the SKU run down, for
-    example before dropping it: run() then skips it and no stock.low is raised. Units already on their way still
-    arrive. 404 not_carried when the store does not carry the SKU."""
+def update_reorder_settings(db: Session, store_id: int, sku_id: int, *, reorder_stopped: bool | None = None,
+                            reorder_point: int | None = None) -> dict:
+    """Change the reorder settings of one SKU in one store, and commit; a setting left as None keeps its value.
+
+    reorder_stopped: a manager stops reordering to let the SKU run down, for example before dropping it: run() then
+    skips it and no stock.low is raised. Units already on their way still arrive.
+    reorder_point: must stay below the target stock, as when the SKU is added (issue #63), since a reorder refills up
+    to the target. A forecast run sets it again for a SKU that sells.
+
+    404 not_carried when the store does not carry the SKU; 422 bad_reorder_point when the reorder point is not below
+    the target. Either way nothing changes."""
     inventory.get_store(db, store_id)
     sku = inventory.get_sku(db, sku_id)
+    query = update(StockLevel).where(StockLevel.store_id == store_id, StockLevel.sku_id == sku_id)
+    changes = {}
+    if reorder_stopped is not None:
+        changes["reorder_stopped"] = reorder_stopped
+    if reorder_point is not None:
+        changes["reorder_point"] = reorder_point
+        # Checked in the same statement that saves it, so a forecast run that lowers the target meanwhile cannot slip
+        # in between the check and the save.
+        query = query.where(StockLevel.target_stock > reorder_point)
+    changed = db.execute(query.values(**changes).execution_options(synchronize_session=False)).rowcount
     level = inventory.get_level(db, store_id, sku_id)
     if level is None:
         raise DomainError(404, "not_carried", f"Store {store_id} does not carry {sku.name}")
-    level.reorder_stopped = stopped
-    events.publish(db, "reordering.changed", store_id, {"sku_id": sku_id, "reorder_stopped": stopped})
+    if not changed:                                 # the row is there, so the target check stopped it
+        raise DomainError(422, "bad_reorder_point", f"The reorder point of {sku.name} must be below its target stock "
+                          f"of {level.target_stock}, as a reorder refills up to the target",
+                          {"target_stock": level.target_stock})
+    saved = {"reorder_stopped": level.reorder_stopped, "reorder_point": level.reorder_point}
+    events.publish(db, "reordering.changed", store_id, {"sku_id": sku_id, **saved})
     db.commit()
-    return {"store_id": store_id, "sku_id": sku_id, "sku": sku.name, "reorder_stopped": stopped}
+    return {"store_id": store_id, "sku_id": sku_id, "sku": sku.name, **saved}
 
 
 def free_space(db: Session, store_id: int, levels: list[StockLevel], transit: dict[int, int]) -> dict[str, int]:
