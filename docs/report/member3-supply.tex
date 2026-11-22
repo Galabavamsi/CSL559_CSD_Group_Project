@@ -1,0 +1,333 @@
+% Member 3 report sections: supply (HLD 5 services 7, 8, 9, 6 and 2; HLD 6.2 Replenishment; HLD 6.3 Inbound; the
+% forecast model comparison of task 3.3 and the route lengths of task 3.6; one HLD 13 trade-off).
+% Body only, so the team report can \input{member3-supply}. Needs: array, booktabs, tikz (arrows.meta, positioning,
+% calc).
+% member3-standalone.tex compiles these sections on their own.
+%
+% Numbers measured on main (8c83ed9) on Sunday 22 November 2026, on throwaway SQLite databases. The generated sales
+% are drawn back from the day the script runs, so another day gives slightly different numbers. To re-run them, from
+% the repository root with the project's virtual environment:
+%   export DARKSTORE_DB=sqlite:///$(mktemp -d)/m3.db BACKGROUND_JOBS=off
+%   python -m app.seed && python scripts/generate_sales.py            # demo data and 60 days of sales (seed 42)
+%   python -c "from app.db import SessionLocal; from app.modules.forecasting.service import compare_models as c; db = SessionLocal(); [print(s, d, c(db, s, d)['wape']) for s in (1, 2) for d in (14, 28)]"
+%     -> Table tab:m3-forecast. For the ranges in the text, repeat the three lines with generate_sales.py --seed 1 to 10.
+%   python -c "from app.db import SessionLocal; from app.modules.forecasting import service as f; from app.modules.replenishment import service as r; db = SessionLocal(); print([x for x in f.run(db, 1) if x['sku_id'] == 1]); print(r.order_view(r.run(db, 1)['transfer_order'])); print(r.run(db, 1))"
+%     -> the milk example in section sec:m3-replenishment (after the comparison: it changes the reorder points).
+%   python scripts/compare_slotting.py --orders 200 --seed 7            # uses its own temporary database
+%   python scripts/compare_slotting.py --orders 5000 --seed 7           # -> Table tab:m3-slotting; --seed 1 to 10 for the range
+
+\section{Supply services (HLD 5, services 7, 8, 9, 6 and 2)}
+\label{sec:m3-services}
+
+Members 1 and 2 make sure that an order for something in stock goes well. Supply decides whether it is in stock in
+the first place: the shelf should be full before the customer asks. Four services form a loop
+(Figure~\ref{fig:m3-loop}), and Assortment sits above it, deciding which SKUs a store carries at all. None of the five
+writes a stock quantity: Inbound asks Inventory to receive and Slotting asks it to move, so Member 1's three stock
+records always agree. Forecasting writes only two planning settings on each stock row, the reorder point and the
+target stock.
+
+\begin{figure}[ht]
+  \centering
+  \begin{tikzpicture}[
+      >={Stealth[length=2.2mm]}, node distance=17mm,
+      svc/.style={draw=black!45, rounded corners=3pt, minimum width=25mm, minimum height=11mm, align=center,
+                  font=\bfseries\small},
+      shelf/.style={svc, draw=blue!70!black, fill=blue!8, line width=0.9pt, minimum width=62mm},
+      edgelabel/.style={font=\footnotesize, text=black!65, align=center}]
+    \node[svc] (fc) {Forecasting\\[-1pt]{\mdseries\scriptsize service 7}};
+    \node[svc, right=of fc] (rp) {Replenishment\\[-1pt]{\mdseries\scriptsize service 8}};
+    \node[svc, right=of rp] (ib) {Inbound\\[-1pt]{\mdseries\scriptsize service 9}};
+    \node[svc, right=of ib] (sl) {Slotting\\[-1pt]{\mdseries\scriptsize service 6}};
+    \node[svc, above=10mm of rp] (as) {Assortment\\[-1pt]{\mdseries\scriptsize service 2}};
+    \node[shelf, below=16mm of $(rp)!0.5!(ib)$] (shelf) {Stock in bins\\[-1pt]{\mdseries\scriptsize Inventory
+      (Member 1) writes every change}};
+
+    \draw[->, black!55] (fc) -- node[edgelabel, above] {reorder\\point} (rp);
+    \draw[->, black!55] (rp) -- node[edgelabel, above] {transfer\\order} (ib);
+    \draw[->, black!55] (sl) -- node[edgelabel, above] {bin per\\line} (ib);
+    \draw[->, black!55] (as) -- node[edgelabel, right] {SKUs carried} (rp);
+    \draw[->, black!55] (ib.south) -- node[edgelabel, right] {put away} (ib.south |- shelf.north);
+    \draw[->, black!55] (sl.south) |- node[edgelabel, pos=0.3, right] {moves} (shelf.east);
+    \draw[->, black!55] (shelf.west) -| node[edgelabel, pos=0.75, left] {sales\\(ledger)} (fc.south);
+  \end{tikzpicture}
+  \caption{The supply loop. Only Inventory changes stock: Inbound and Slotting ask it to receive and to move units.}
+  \label{fig:m3-loop}
+\end{figure}
+
+\subsection{Forecasting (service 7)}
+
+Forecasting predicts each SKU's daily sales and turns them into a reorder point (FR-7). Sales come from the
+\texttt{sale} rows of the ledger, in whole days ending yesterday, because today is only partly over.
+
+\begin{itemize}
+  \item \textbf{Three models with one shape.} Each forecasts a day from the days before it: the \emph{moving average}
+    of the last 7 days, the \emph{weekday average} of the same weekday in the last 4 weeks, and \emph{exponential
+    smoothing} ($\alpha = 0.3$), in which each earlier day counts 0.7 times as much as the day after it. Days before a
+    SKU's first sale are unknown, not zero, so a new SKU is not forecast as if it had sold nothing for weeks.
+  \item \textbf{A measuring stick first.} The backtest replays the last 14 days, forecasting each day from the days
+    before it, and reports the error over every SKU and day,
+    \[ \mathrm{WAPE} = \frac{\sum |\textrm{actual} - \textrm{forecast}|}{\sum \textrm{actual}}, \]
+    for which HLD 12 asks 30\% or lower. Weighting by volume stops slow sellers swamping the score. A day counts only
+    when the SKU has a week of sales before it, so on the demo data's single week of sales the answer is ``not
+    available'', not a misleading number. A comparison runs all three models on the same days, and the setting
+    \texttt{FORECAST\_MODEL} picks the one in use: the weekday average, which won (section~\ref{sec:m3-results}).
+  \item \textbf{Safety stock from the model's errors.} The reorder point uses the spread of the model's \emph{errors}
+    over the last 14 days, not the spread of raw sales: safety stock should cover what the forecast gets wrong, not
+    variation it already predicts, such as busier weekends.
+\end{itemize}
+A manager runs it for a store (\texttt{POST /v1/forecasting/run}), and each forecast is saved with its model's name.
+
+\subsection{Replenishment (service 8)}
+
+Replenishment orders from the mother hub when stock runs low (FR-8), in whole cases and within each zone's free bin
+space. It runs every 15 minutes for every open store, and whenever a manager asks; section~\ref{sec:m3-replenishment}
+follows one run. It also publishes \texttt{stock.low} when the stock not held for customers falls below the reorder point, lets
+a manager stop reordering one SKU so that it runs down before it is dropped, and reports the five supply KPIs of HLD 12
+(stock-outs, days of cover, wastage, deliveries on time and forecast WAPE) against their targets for Member 4's ops
+dashboard. The hub itself is a stand-in: a button plays its warehouse system saying ``the truck has left''.
+
+\subsection{Inbound (service 9)}
+
+Inbound receives a truck in the five steps of HLD 6.3 (section~\ref{sec:m3-inbound}). Each truck gets a saved goods
+receipt whose lines record, per SKU and batch, the units scanned, damaged, refused and put away. Putting a line away
+calls \texttt{inventory.receive} (Member 1), which writes the bin, the totals row and the ledger in one transaction.
+
+\subsection{Slotting (service 6)}
+
+Slotting decides which bin a SKU lives in. Each bin has a zone (ambient, chilled or frozen), a capacity and a
+\texttt{walk\_seq}, its place on the picker's route, where bin 1 is next to the packing desk. HLD service 6 ``places
+fast movers near the packing station'':
+\begin{itemize}
+  \item \textbf{The plan} (look only) ranks each zone's SKUs by units sold a day over the last 14 days and gives the
+    fastest the bin nearest the desk, the next one the next bin, and so on. A SKU that sold nothing stays where it is
+    unless a seller needs its bin, since moving it would not shorten any walk.
+  \item \textbf{Apply} (managers) locks the store's bins and moves each batch through \texttt{inventory.move}: two
+    ledger rows, nothing gained or lost. A batch moves only when its new bin has room at that moment, so no bin is ever
+    over capacity, and a batch that a picker has been sent to stays where it is.
+  \item \textbf{New deliveries} go to the SKU's planned bin first, then to bins already holding it, then to the
+    emptiest bins of its zone, never past capacity, so the shelf re-sorts itself as stock arrives.
+\end{itemize}
+A SKU never leaves its own temperature zone; section~\ref{sec:m3-results} shows what that costs in walking.
+
+\subsection{Assortment (service 2)}
+
+Assortment decides which SKUs each store carries. Adding a SKU creates its stock row with zero stock, so
+Replenishment starts ordering it; dropping one is refused while any unit is on the shelf, held for a customer or on its
+way. From the last 30 days of sales it suggests SKUs to \emph{add} (selling in other stores, highest demand first),
+SKUs to \emph{drop} (stock on hand 30 days ago and not one unit sold since) and the \emph{space} left in each zone
+(bins against SKUs carried, so nobody adds a fifth chilled SKU to four chilled bins). A manager decides.
+
+\section{Replenishment (HLD 6.2)}
+\label{sec:m3-replenishment}
+
+HLD 6.2 keeps every SKU above a reorder point. The HLD counts in hours and the prototype in days, with a lead time $L$
+of 1 day, $z = 1.65$ (stock should run out in at most 5\% of cycles) and 3 days of cover:
+\[
+  \textrm{reorder point} = \bigl\lceil dL + z\sigma\sqrt{L}\, \bigr\rceil \qquad\qquad
+  \textrm{target stock} = \textrm{reorder point} + \lceil 3d \rceil
+\]
+Here $d$ is the forecast daily demand and $\sigma$ the spread of the forecast's errors. The first part of the reorder
+point covers the sales expected while the truck is on its way; the second is safety stock for a busier day.
+
+\begin{enumerate}
+  \item \textbf{Check.} Each SKU's \emph{position}, on hand $-$ held $+$ in transit, is compared with its reorder
+    point. Counting what is already on its way is what makes the 15-minute timer harmless: without it, every run would
+    order the same items again until the truck came.
+  \item \textbf{Size.} A SKU below its reorder point needs target stock $-$ position, rounded up to whole cases
+    (12 milk, 6 eggs, 10 bread).
+  \item \textbf{Fit.} A zone's free space is its bins' capacity minus the units stored and the units on their way.
+    When the lines do not fit, the most urgent go first: lowest days of cover (what customers can buy $\div$ daily
+    demand), then the faster seller. The last line is cut to the cases that fit, and every cut is reported, also when
+    the timer made it.
+  \item \textbf{Order.} One transfer order takes every line (created, dispatched, received). Only one run happens at a
+    time in an app process, so the timer and a manager's button cannot both order the same stock.
+\end{enumerate}
+
+\paragraph{One run, with real numbers.} On the generated sales of section~\ref{sec:m3-results}, run on Sunday
+22 November, milk in store 1 is forecast at 32.25 a day: the mean of the last four Sundays, one of them a festival day.
+The spread of its errors is 6.5, so the reorder point is $\lceil 32.25 + 1.65 \times 6.5 \rceil = 43$ and the target
+$43 + \lceil 3 \times 32.25 \rceil = 140$. With 30 on hand, none held and none on the way, the run orders
+$140 - 30 = 110$, rounded up to 10 cases of 12: 120. The same transfer order took bread (4 left: 9 cases of 10), eggs,
+curd, paneer and ice cream, and nothing was cut: the three chilled lines needed 362 of the 510 free chilled units. A
+second run straight after ordered nothing.
+
+The example also shows a weakness: the reorder point is sized from \emph{today's} forecast only. Run on a Sunday after
+a festival Sunday, milk is sized for 32 a day; run on a weekday, it would be sized for a weekday.
+
+\section{Inbound (HLD 6.3)}
+\label{sec:m3-inbound}
+
+HLD 6.3 receives a truck in five steps and asks that ``each item becomes sellable as soon as its bin scan is
+confirmed, not when the whole truck is done''. In the prototype only step 4 changes stock.
+
+\begin{enumerate}
+  \item \textbf{Open.} A receipt is saved for the transfer order. The order is locked first, so a double click on
+    \emph{Receive truck} opens one receipt, not two.
+  \item \textbf{Scan.} Each case is scanned with its batch number and expiry date, which first-expiry-first-out
+    picking relies on. Good units wait on the dock, not yet for sale. Damaged units, and a batch with less than half
+    its shelf life left (milk, which keeps 3 days, with 1 day to go), are recorded but never stocked.
+  \item \textbf{Putaway tasks.} Slotting names a bin, or several, for each line on the dock, never past capacity.
+  \item \textbf{Put away.} The units go into the bin through \texttt{inventory.receive} and are \emph{for sale as soon
+    as this commits}, whatever is still on the dock. They stop counting as in transit at the same moment.
+  \item \textbf{Close.} The transfer order is marked received, and every SKU is reported as ordered against received,
+    with damaged, refused and sent-back units. Closing is refused while good units wait on the dock, unless the
+    receiver sends them back to the hub.
+\end{enumerate}
+
+A receipt opened by mistake can be cancelled until anything from it is put away, and the real truck can still be
+received. The tests check the property HLD 6.3 asks for: after a scan, what customers can buy is unchanged; after one
+line is put away, that SKU rises and no other does.
+
+\section{Measurements}
+\label{sec:m3-results}
+
+Both measurements run the project's own code on a throwaway copy of the demo data with 60 days of generated sales
+(\texttt{scripts/generate\_sales.py}, task 3.1, seed 42): for every SKU and day, a random (Poisson) number of units
+around a base demand per category (20 a day for dairy, including eggs, 12 for bread, 4 for staples, 2 for frozen
+food, 3 for the rest), 35\% more at weekends and twice as much on two festival days. They were measured on main on
+22 November 2026; the commands are at the top of \texttt{member3-supply.tex}. The history is drawn back from the day
+it is generated, so another day gives slightly different numbers.
+
+\subsection{Forecast models (task 3.3)}
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Model & \shortstack[r]{Store 1\\14 days} & \shortstack[r]{Store 2\\14 days} & \shortstack[r]{Store 1\\28 days}
+          & \shortstack[r]{Store 2\\28 days} \\
+    \midrule
+    Moving average, last 7 days (the baseline) & 34.4\% & 36.1\% & 30.7\% & 32.4\% \\
+    Weekday average, last 4 same weekdays      & \textbf{29.3\%} & \textbf{29.2\%} & \textbf{28.9\%} & \textbf{27.8\%} \\
+    Exponential smoothing, $\alpha = 0.3$      & 35.9\% & 39.2\% & 32.4\% & 34.3\% \\
+    \bottomrule
+  \end{tabular}
+  \caption{Forecast error (WAPE, lower is better) of each model over the last 14 and 28 days, every SKU of the store
+    (\texttt{GET /v1/forecasting/compare}). HLD 12 target: 30\% or lower.}
+  \label{tab:m3-forecast}
+\end{table}
+
+The weekday average wins in both stores and both windows (Table~\ref{tab:m3-forecast}). Over 14 days it is 5 to 7
+points better than the baseline and the only model within the 30\% target, so it is the model in use. With ten other
+random seeds for the history (40 more store-and-window cases) it was again the best every time, at 26.0 to 32.3\%
+against 30.5 to 39.1\% for the moving average and 32.1 to 41.1\% for smoothing, and it met the target in 28 of the 40.
+
+\begin{itemize}
+  \item \textbf{Why it wins.} A 7-day moving average forecasts every day as the week's average, so with weekends 35\%
+    busier it is about 10\% too high on weekdays and 19\% too low at weekends. The weekday average forecasts a
+    Saturday from Saturdays. Smoothing does worst, because it leans on the last two or three days: a Monday is
+    forecast mostly from the weekend, and a Saturday from the weekdays.
+  \item \textbf{What is left is mostly noise.} For a SKU that sells 3 a day, one unit off is already a third of the
+    day's sales, so the slow sellers keep the store near 30\% whatever the model. The 14-day window also starts on a
+    festival day, which every model misses; the weekday average then carries it into the same weekday's forecast for
+    four weeks, as in the milk example of section~\ref{sec:m3-replenishment}.
+\end{itemize}
+
+\subsection{Velocity slotting (task 3.6)}
+
+\texttt{scripts/compare\_slotting.py} draws random orders of 1 to 3 different items, each item as likely as its share
+of the last 14 days' sales, and finds the bin each item would be picked from, as Inventory sends a picker: first expiry
+first, then nearest. A walk costs twice the furthest \texttt{walk\_seq} it visits (Member 2's model, task 2.6). The
+script then applies the plan and measures the same orders again (Table~\ref{tab:m3-slotting}).
+
+\begin{table}[ht]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}llrrrr@{}}
+    \toprule
+    Run & Orders measured & Orders & Before & After & Saving \\
+    \midrule
+    200 orders (seed 7)     & All orders         & 200     & 24.6 & 24.3 & 1\%  \\
+                            & Ambient items only & 49      & 11.2 &  9.6 & 15\% \\
+    \addlinespace[3pt]
+    5{,}000 orders (seed 7) & All orders         & 5{,}000 & 24.1 & 23.9 & 1\%  \\
+                            & Ambient items only & 1{,}317 & 10.6 &  9.9 & 6\%  \\
+    \bottomrule
+  \end{tabular}
+  \caption{Average walk per order in bin steps, store 1, before and after the re-slotting plan was applied (13 batches
+    moved, none skipped). The guide asks for 200 orders; 5,000 are less noisy.}
+  \label{tab:m3-slotting}
+\end{table}
+
+The plan shortens the average walk by only 1\%. Orders of ambient items alone save 6\%; the 15\% of the 200-order run
+is luck, and order seeds 1 to 10 gave between $-1$\% and 2\% for all orders and between $-9$\% and 15\% for ambient
+ones. The plan for store 1 shows why:
+\begin{itemize}
+  \item \textbf{The fridges decide most walks.} Slotting re-sorts bins only within a temperature zone, and the chilled
+    and frozen bins are at the far end of the walk (\texttt{walk\_seq} 13 to 18). Milk, curd and paneer sell 22 to 24
+    a day each, 47\% of all units sold, so about three orders in four (3{,}683 of 5{,}000) include a chilled or frozen
+    item and walk to the fridges whatever the plan.
+  \item \textbf{The fastest ambient items were already at the front.} The demo layout had eggs (24.9 a day) and bread
+    (14.8) in the first two bins; the plan only swaps them.
+  \item \textbf{Equal sellers only trade places.} The three chilled items sell at almost the same rate, so curd and
+    milk only swap the first two chilled bins. The other ambient items sell 3 to 5 a day, so their order is mostly noise.
+\end{itemize}
+In this layout the walk is decided by where the fridges stand, not by which shelf holds which item. A bigger saving
+needs the fridges nearer the packing desk, which is a layout decision. Slotting should matter more in a real store,
+with thousands of SKUs of very different speeds in each zone, than in a demo store with 16.
+
+\section{Trade-off: for sale at putaway, not when the truck is done (HLD 13)}
+\label{sec:m3-tradeoff}
+
+The prototype first received a truck in one call: one transaction, all or nothing, and no record of the receipt. That
+is the simplest correct design, because if anything fails, nothing happened. HLD 6.3 asks for more, each line for sale
+the moment it is in its bin, and task 3.5 built that as five steps with a saved receipt. Building it showed what a
+faster shelf costs.
+
+\textbf{What it gains.} A fast seller that has run out is for sale as soon as its case is on the shelf, not after the
+last case of the truck is scanned. The receipt also records what was ordered, scanned, damaged, refused, put away and
+sent back, which the single call never kept.
+
+\textbf{What it costs.}
+\begin{itemize}
+  \item \textbf{A third place for stock.} Units on the dock are neither on the shelf nor gone, and every rule had to say
+    what happens to them: they still count as in transit, a receipt cannot close while they wait unless they are sent
+    back, and a receipt can be cancelled only before anything from it is put away.
+  \item \textbf{Races and retries the single call never had.} Two receivers could put away the same line, one could
+    close the receipt while another scans, and a handheld could send a scan twice. Each step locks the receipt's row,
+    units leave the dock through one conditional \texttt{UPDATE}, a bin's room is checked again after writing, and
+    every write takes an \texttt{Idempotency-Key}, so a repeated scan counts once.
+  \item \textbf{Edge cases keep appearing.} Review found that a line whose batch number is already in the store with
+    another expiry date can be scanned onto the dock but never put away, so its receipt closes only by sending the line
+    back. The fix, refusing such a scan at the dock, is waiting for review.
+\end{itemize}
+
+We kept the single call as well: \texttt{POST /v1/goods-receipts} runs the five steps in one transaction, so the ops
+screen's \emph{Receive truck} button is still all or nothing, and both paths share one set of rules. We accepted a receipt with more states, and more
+code to keep them consistent, in exchange for a shelf that refills line by line and a record of every truck.
+
+\section{Limits and open items}
+
+Table~\ref{tab:m3-limits} lists what the supply work leaves open, and what would close each item.
+
+\begin{table}[!htb]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}
+                  >{\raggedright\arraybackslash}p{0.31\linewidth}@{}}
+    \toprule
+    Limit & What it means & Next step \\
+    \midrule
+    Daily forecasts, not hourly & The evening peak is not planned for & Spread each daily forecast over the hours by
+      their share of sales \\
+    \addlinespace[3pt]
+    No festivals or weather & A festival day is missed, then repeated in the same weekday's forecast for four weeks
+      & A festival calendar as an input \\
+    \addlinespace[3pt]
+    Reorder point from today's forecast only & Run on a busy Sunday, milk is sized for a Sunday & Size it from the
+      forecasts of the lead-time days \\
+    \addlinespace[3pt]
+    The same cover for fresh and long-life food & Three days of cover above the reorder point, also for milk that keeps
+      three days & Cover days that depend on shelf life \\
+    \addlinespace[3pt]
+    A batch number already in the store with another expiry date & It is scanned onto the dock but cannot be put away;
+      only sending it back closes the receipt & Refuse it at the scan (pull request \#77, pending) \\
+    \addlinespace[3pt]
+    Slotting only within a zone; apply records the moves at once & 1\% shorter walks in this layout, and staff must
+      carry the stock straight away & Fridges nearer the packing desk; items bought together side by side \\
+    \bottomrule
+  \end{tabular}
+  \caption{Limits of the supply work and what would close them.}
+  \label{tab:m3-limits}
+\end{table}
