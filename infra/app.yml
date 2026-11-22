@@ -69,7 +69,7 @@ Resources:
       LogGroupName: !Sub /farm2home/${Env}/api
       RetentionInDays: 30
 
-  # Used by ECS itself to start the container: pull the image, write logs, read the three secrets.
+  # Used by ECS itself to start the container: pull the image, write logs, read the two secrets it hands over.
   ExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -92,10 +92,10 @@ Resources:
                 Resource:
                   - !Ref JwtSecret
                   - !Ref StaffPassword
-                  - Fn::ImportValue: !Sub "farm2home-${Env}-DbSecretArn"
 
-  # What the app's own code may do in AWS. Nothing yet beyond letting an administrator open a shell in the
-  # container (ECS Exec) to look at a problem.
+  # What the app's own code may do in AWS: read the database login, which it does whenever it opens a connection
+  # (RDS changes the password every seven days), and let an administrator open a shell in the container (ECS Exec)
+  # to look at a problem.
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -107,6 +107,13 @@ Resources:
             Principal: {Service: ecs-tasks.amazonaws.com}
             Action: sts:AssumeRole
       Policies:
+        - PolicyName: read-the-database-login
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
         - PolicyName: ecs-exec
           PolicyDocument:
             Version: "2012-10-17"
@@ -145,6 +152,9 @@ Resources:
               Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbPort"}
             - Name: DB_NAME
               Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbName"}
+            # Not the password, only where it is kept: the app reads the login when it opens a connection.
+            - Name: DB_SECRET_ARN
+              Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
             # The load balancer is the only thing that can reach the container, and it appends the caller's real
             # address to X-Forwarded-For. Trusting exactly the VPC makes the server use that address, not one a
             # caller wrote into the header itself (docs/journal/2026-11-23-staging-on-aws.md).
@@ -154,14 +164,6 @@ Resources:
             - {Name: REPLENISHMENT_INTERVAL_MINUTES, Value: "15"}
             - {Name: DEMO_HISTORY_ON_RESET, Value: "on"}
           Secrets:
-            - Name: DB_USER
-              ValueFrom: !Sub
-                - "${Secret}:username::"
-                - Secret: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
-            - Name: DB_PASSWORD
-              ValueFrom: !Sub
-                - "${Secret}:password::"
-                - Secret: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
             - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecret}
             - {Name: DEMO_PASSWORD, ValueFrom: !Ref StaffPassword}
           LogConfiguration:

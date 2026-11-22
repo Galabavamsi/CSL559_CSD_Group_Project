@@ -20,9 +20,17 @@ def _database_url(url: str) -> str:
     return url
 
 
+# On AWS: the Secrets Manager secret (its ARN) that holds the database's username and password as JSON. RDS changes
+# that password every seven days, so the app reads it whenever it opens a connection instead of being handed it
+# once at start (app/db.py); DB_USER and DB_PASSWORD are then left unset. A fetched login is reused for
+# DB_SECRET_CACHE_SECONDS, and fetched again at once if the database refuses it.
+DB_SECRET_ARN = os.getenv("DB_SECRET_ARN", "")
+DB_SECRET_CACHE_SECONDS = float(os.getenv("DB_SECRET_CACHE_SECONDS", "300"))
+
+
 def _database_url_from_parts() -> str | None:
-    """On AWS the database's address and its login arrive as separate settings, the password straight from Secrets
-    Manager, so the URL is put together here. The password may hold any character, and is escaped."""
+    """On AWS the database's address and its login arrive as separate settings, so the URL is put together here.
+    A password given in DB_PASSWORD may hold any character, and is escaped."""
     host = os.getenv("DB_HOST")
     if not host:
         return None
@@ -31,7 +39,8 @@ def _database_url_from_parts() -> str | None:
                       database=os.getenv("DB_NAME") or "darkstore").render_as_string(hide_password=False)
 
 
-# DARKSTORE_DB wins; without it DB_HOST (with DB_PORT, DB_NAME, DB_USER, DB_PASSWORD); without either, the local default.
+# DARKSTORE_DB wins; without it DB_HOST (with DB_PORT, DB_NAME, and DB_USER and DB_PASSWORD or DB_SECRET_ARN);
+# without either, the local default.
 DATABASE_URL = _database_url(os.getenv("DARKSTORE_DB") or _database_url_from_parts() or DEFAULT_DATABASE_URL)
 # Database connections kept open per app process, and how many more may be opened in a burst.
 # Keep the sum at 40 or more: the web server answers up to 40 requests at once, each on its own thread and each
