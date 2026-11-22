@@ -1,0 +1,21 @@
+% Compiles Member 3's report sections on their own:
+%   cd docs/report && pdflatex member3-standalone.tex   (run twice for the figure and table numbers)
+% In the team report, add these packages to its preamble and \input{member3-supply} where the sections go.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, calc}
+\usepackage[hidelinks]{hyperref}
+
+\title{Supply\\\large Report sections, Member 3}
+\author{}
+\date{22 November 2026}
+
+\begin{document}
+\maketitle
+\input{member3-supply}
+\end{document}
