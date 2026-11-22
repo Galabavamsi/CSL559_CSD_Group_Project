@@ -36,8 +36,10 @@ $tag = $sha.Substring(0, 12)
 Write-Host "Deploying $Ref = commit $sha to $Env (image tag $tag)"
 
 # 2. Build it, unless the registry already has it.
-aws ecr describe-images --repository-name farm2home/api --image-ids imageTag=$tag --query "imageDetails[0].imageTags[0]" --output text 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) { Write-Host "Image $tag is already in the registry" }
+# Counted, not looked up by tag: looking up a tag that is not there is an error, and Windows PowerShell 5.1 turns a
+# native command's redirected error output into a terminating one.
+$built = aws ecr list-images --repository-name farm2home/api --filter tagStatus=TAGGED --query "length(imageIds[?imageTag=='$tag'])" --output text
+if ($built -eq "1") { Write-Host "Image $tag is already in the registry" }
 else {
     $build = aws codebuild start-build --project-name farm2home-build --environment-variables-override "name=GIT_REF,value=$sha" --query "build.id" --output text
     Write-Host "Building ($build) ..."
