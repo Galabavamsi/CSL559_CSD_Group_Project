@@ -179,6 +179,7 @@ def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
     if receipt.status != "open":
         return []
     tasks = []
+    homes = None                    # each SKU's home bin, from two weeks of sales: worked out once, not once per line
     for line in receipt.lines:
         on_dock = line.qty_scanned - line.qty_put_away
         if on_dock <= 0:
@@ -192,8 +193,10 @@ def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
                                      f"{other_date.isoformat()}, so these cannot be put away under that number: "
                                      "close with send_back to return them to the hub"})
             continue
+        if homes is None:
+            homes = slotting.home_bins(db, receipt.store_id)
         try:
-            portions = slotting.place(db, receipt.store_id, line.sku_id, on_dock)
+            portions = slotting.place(db, receipt.store_id, line.sku_id, on_dock, homes)
         except DomainError as error:                # no bin of that zone, or not enough room in it
             tasks.append({**task, "qty": on_dock, "bin_code": None, "problem": error.message})
             continue
@@ -334,6 +337,7 @@ def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_
     receipt_id = open_receipt(db, store_id, transfer_order_id, commit=False)["receipt_id"]
     slotting.lock_store_bins(db, store_id)
     received, rejected = [], []
+    homes = None                    # each SKU's home bin, from two weeks of sales: worked out once, not once per line
     for line in lines:
         sku = inventory.get_sku(db, line["sku_id"])
         view = scan(db, receipt_id, sku.barcode, line["qty"], line.get("batch_no"), line.get("expiry_date"),
@@ -351,7 +355,9 @@ def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_
                 raise DomainError(422, "bad_bin", f"Bin {line['bin_id']} is not in store {store_id}")
             portions = [(bin_, line["qty"])]
         else:                       # as many bins as it takes, never over capacity
-            portions = slotting.place(db, store_id, sku.id, line["qty"])
+            if homes is None:
+                homes = slotting.home_bins(db, store_id)
+            portions = slotting.place(db, store_id, sku.id, line["qty"], homes)
         for bin_, qty in portions:
             put_away(db, receipt_id, sku.id, scanned["batch_no"], bin_.code, qty, actor, commit=False)
             received.append({"sku_id": sku.id, "sku": sku.name, "qty": qty, "bin": bin_.code,

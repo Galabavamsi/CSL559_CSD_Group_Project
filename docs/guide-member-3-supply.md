@@ -36,7 +36,7 @@ Each file is short. Read all five `service.py` files (about 25 minutes).
 | --- | --- | --- |
 | `forecasting.daily_sales` | `run` | Units sold per SKU per day, read from `sale` rows in the ledger |
 | `forecasting.run` | `POST /v1/forecasting/run` | Moving average and standard deviation, then sets `reorder_point` and `target_stock` |
-| `replenishment.on_stock_changed` | `stock.changed` event | Publishes `stock.low` when ATP is under the reorder point, unless reordering is stopped |
+| `replenishment.on_stock_changed` | `stock.changed` event | Publishes `stock.low` when ATP drops under the reorder point, once until stock comes in again, unless reordering is stopped |
 | `replenishment.in_transit` | `run` | Units ordered from the hub but not yet received |
 | `replenishment.run` | `POST /v1/replenishment/run` | One transfer order for everything whose stock position is low |
 | `replenishment.update_reorder_settings` | `PUT /v1/stores/{id}/reorder-settings/{sku_id}` | Stops or restarts reordering one SKU, e.g. to let it run down before dropping it, or changes its reorder point. Send `reorder_stopped`, `reorder_point` or both; the reorder point has the limits it has when the SKU is added (at least 1, below its target stock). A forecast run sets it again for a SKU that sells |

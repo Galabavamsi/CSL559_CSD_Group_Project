@@ -139,10 +139,14 @@ def suggest_bin(db: Session, store_id: int, sku_id: int, qty: int = 0) -> Bin:
     return min(with_room, key=lambda b: (load.get(b.id, 0), b.walk_seq))
 
 
-def place(db: Session, store_id: int, sku_id: int, qty: int) -> list[tuple[Bin, int]]:
+def place(db: Session, store_id: int, sku_id: int, qty: int,
+          homes: dict[int, Bin] | None = None) -> list[tuple[Bin, int]]:
     """Where `qty` more units of a SKU go, split over as many bins as it takes: its planned home bin first (task
     3.6: new stock re-slots a fast mover before anyone applies the plan), then the bins already holding it (nearest
     the packing desk first), then the emptiest bins of its zone, each only up to its capacity. Read-only.
+
+    `homes` is home_bins(db, store_id), from a caller placing several lines: it reads two weeks of sales, so such a
+    caller works it out once instead of once per line.
 
     409 no_bin when the store has no bin of that zone, 409 bin_full when the zone cannot take them all.
     """
@@ -157,7 +161,7 @@ def place(db: Session, store_id: int, sku_id: int, qty: int) -> list[tuple[Bin, 
     load = _load(db, store_id)
     own = set(db.scalars(select(StockItem.bin_id).where(
         StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0)))
-    home = home_bins(db, store_id).get(sku_id)
+    home = (home_bins(db, store_id) if homes is None else homes).get(sku_id)
     first = [b for b in bins if home is not None and b.id == home.id]
     then = [b for b in bins if b.id in own and b not in first]
     rest = sorted((b for b in bins if b not in first and b not in then), key=lambda b: (load.get(b.id, 0), b.walk_seq))

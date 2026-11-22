@@ -706,3 +706,32 @@ def test_a_one_call_receipt_with_a_clashing_batch_number_keeps_nothing(client, s
     assert refused.status_code == 409 and refused.json()["error"]["code"] == "batch_expiry_mismatch"
     assert atp(client, 1, bread) == before
     assert_stock_is_consistent()
+
+
+def _count_sales_reads(monkeypatch) -> list:
+    """Record each time slotting works out sales speeds (two weeks of the ledger) to choose home bins."""
+    reads, velocity = [], slotting.velocity
+    monkeypatch.setattr(slotting, "velocity", lambda *args, **kwargs: reads.append(args) or velocity(*args, **kwargs))
+    return reads
+
+
+def test_putaway_tasks_read_the_sales_once_for_the_whole_truck(client, db, sku, monkeypatch):
+    """The home bins come from the last two weeks of sales. They are worked out once per request, not again for
+    every line on the dock (a 15-line truck read the same sales 15 times)."""
+    lines = [sku("White bread"), sku("Toned milk"), sku("Vanilla ice cream")]
+    opened = client.post("/v1/goods-receipts/open", json={"store_id": 1}).json()
+    for sku_id in lines:
+        assert scan(client, db, opened, sku_id, 2).status_code == 200
+    reads = _count_sales_reads(monkeypatch)
+    tasks = client.get(f"/v1/goods-receipts/{opened['receipt_id']}/putaway-tasks").json()
+    assert {task["sku_id"] for task in tasks} == set(lines) and all(task["bin_code"] for task in tasks)
+    assert len(reads) == 1
+
+
+def test_a_one_call_receipt_reads_the_sales_once(client, sku, monkeypatch):
+    reads = _count_sales_reads(monkeypatch)
+    received = client.post("/v1/goods-receipts", json={"store_id": 1, "lines": [
+        {"sku_id": sku(name), "qty": 2} for name in ("White bread", "Toned milk", "Vanilla ice cream")]})
+    assert received.status_code == 201, received.text
+    assert len(received.json()["received"]) >= 3
+    assert len(reads) == 1
