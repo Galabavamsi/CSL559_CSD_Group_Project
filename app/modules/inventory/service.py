@@ -523,7 +523,9 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
     into a tote are never taken, as in expire_stock and write_off_missing: they are off the shelf, and their order
     could not be packed without them (409 in_tote when the shelf alone does not have enough).
     Positive delta adds found units and needs a `bin_id`. The bin must be of the SKU's temperature zone
-    (422 wrong_zone) and have room (409 bin_full), as for a goods receipt. A cycle count is exempt: it records what
+    (422 wrong_zone) and have room (409 bin_full), as for a goods receipt: the bin is locked while its room is
+    checked, and checked again after writing, so two adjustments at the same moment cannot both use the same room.
+    A cycle count is exempt: it records what
     is really on the shelf, even where it should not be. So `shelf_rules` is on by default for every reason but
     `count`; the stock-adjustment endpoint always passes True, whatever reason the request gives.
     `commit=False` leaves the transaction open, so the caller can save an idempotency record with it.
@@ -546,6 +548,7 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
                 raise DomainError(422, "wrong_zone",
                                   f"{sku.name} needs {sku.storage_type} storage but bin {bin_.code} is {bin_.zone}")
             from ..slotting import service as slotting      # imported here: slotting imports this module
+            slotting.lock_bin(db, bin_id)                   # adjustments and putaways into one bin take turns
             slotting.ensure_room(db, store_id, bin_id, delta)
         item = db.scalar(
             select(StockItem).where(StockItem.store_id == store_id, StockItem.sku_id == sku_id,
@@ -556,6 +559,9 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
                              expiry_date=date.today() + timedelta(days=sku.shelf_life_days), qty=0)
             db.add(item)
         _change_item_qty(db, item, delta)
+        if shelf_rules and slotting.room_in(db, bin_) < 0:      # a writer that takes no bin lock got in first
+            raise DomainError(409, "bin_full", f"Bin {bin_.code} was filled by someone else first; nothing of this "
+                                               "adjustment was kept", {"bin": bin_.code})
         _ledger(db, store_id, sku_id, bin_id, delta, reason, reference, actor)
     else:
         to_remove = -delta

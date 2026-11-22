@@ -133,7 +133,7 @@ class StockItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"), index=True)
-    bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id"))
+    bin_id: Mapped[int] = mapped_column(ForeignKey("bins.id"), index=True)   # slotting sums a bin's units often
     batch_no: Mapped[str] = mapped_column(String(30))
     expiry_date: Mapped[date] = mapped_column(Date)
     qty: Mapped[int] = mapped_column(Integer, default=0)
