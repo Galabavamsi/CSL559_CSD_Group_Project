@@ -62,5 +62,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 $url = aws cloudformation describe-stacks --stack-name "farm2home-app-$Env" --query "Stacks[0].Outputs[?OutputKey=='Url'].OutputValue | [0]" --output text
 Write-Host "Running at $url"
+# Windows PowerShell 5.1 offers TLS 1.0 unless told otherwise, and the load balancer accepts 1.2 and 1.3 only.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try { Write-Host ("Health: " + (Invoke-RestMethod "$url/health" -TimeoutSec 20 | ConvertTo-Json -Compress)) }
 catch { Write-Host "Health check from this machine failed: $($_.Exception.Message)" }
