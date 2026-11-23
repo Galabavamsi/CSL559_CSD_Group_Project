@@ -24,6 +24,7 @@ from. They are raw material for the report, the documentation and blog posts, so
 | 2026-11-23 | [Farm supply: from a farmer's listing to units on a shelf](2026-11-23-farm-supply.md) | HLD flow A: hub choice, drop slot, weighing and grading, kg into units; a fault the tests caught |
 | 2026-11-23 | [The phone app, first cut](2026-11-23-the-phone-app.md) | One Expo app for three roles; a mock and the real API behind one interface; what was and was not checked |
 | 2026-11-23 | [Recording the demo, and what the recording found](2026-11-23-recording-the-demo.md) | A script records the real backend end to end; the handbook and video come from it; Bhilai turns out to have no hub |
+| 2026-11-24 | [Orders on the server, and a design written down](2026-11-24-orders-on-the-server.md) | An order written inside the hold's confirmation; why its handler runs first; what the app still has to switch to |
 | 2026-11-23 | [Bhilai gets hubs, the hub gets an intake screen, and the app meets a real phone](2026-11-23-bhilai-hubs-intake-and-a-real-phone.md) | Opening a hub in one transaction; the receiver's screen; a keyboard fault only a phone could show |
 | 2026-11-23 | [The tests move to AWS](2026-11-23-ci-moves-to-aws.md) | GitHub stopped running checks; CodeBuild runs them; a deploy waits for them; a flaw the checking found |
 | 2026-11-23 | [Staging on AWS](2026-11-23-staging-on-aws.md) | First run on AWS; a password that would have expired before the demo; a forced failover; real prices |
