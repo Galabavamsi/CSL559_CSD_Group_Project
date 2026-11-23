@@ -79,7 +79,7 @@ docker compose up -d postgres
 python -m pytest -q          # or DARKSTORE_TEST_DB=postgresql://... for a database somewhere else
 ```
 
-CI runs the suite on both.
+CI runs the suite on AWS (`infra/test.ps1`; see `infra/README.md`).
 
 ## Code style
 
