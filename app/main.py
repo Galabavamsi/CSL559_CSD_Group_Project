@@ -25,6 +25,7 @@ from .modules.fulfilment.router import router as fulfilment_router
 from .modules.inbound.router import router as inbound_router
 from .modules.inventory.router import router as inventory_router
 from .modules.network_planning.router import router as network_planning_router
+from .modules.orders.router import router as orders_router
 from .modules.pickpack.router import router as pickpack_router
 from .modules.replenishment.router import router as replenishment_router
 from .modules.serviceability.router import router as serviceability_router
@@ -72,7 +73,7 @@ async def domain_error_handler(_request: Request, exc: DomainError):
 for router in (
     auth.router, accounts_router, monitoring.router, serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
     replenishment_router, forecasting_router, slotting_router, assortment_router,
-    network_planning_router, dashboard_router, farms_router,
+    network_planning_router, dashboard_router, farms_router, orders_router,
 ):
     app.include_router(router)
 
