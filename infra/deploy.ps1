@@ -4,8 +4,10 @@
 
 .DESCRIPTION
   1. Finds the commit a branch, tag or commit id names in the public repository.
-  2. Has CodeBuild build that commit's image and push it to the registry (skipped if it is already there).
-  3. Updates the environment's app stack to run that image. ECS starts the new version, waits until the load
+  2. Makes sure that commit's tests have passed on AWS (infra\test.ps1), running them if they have not been run.
+     A commit whose tests fail is not deployed. -SkipTests is for an emergency, and says so loudly.
+  3. Has CodeBuild build that commit's image and push it to the registry (skipped if it is already there).
+  4. Updates the environment's app stack to run that image. ECS starts the new version, waits until the load
      balancer finds it healthy, then stops the old one; a version that never gets healthy is rolled back.
 
   Needs the AWS CLI signed in with rights to CodeBuild, ECR and CloudFormation in the account, and the network,
@@ -19,7 +21,8 @@
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet("staging", "prod")][string]$Env,
-    [string]$Ref = "main"
+    [string]$Ref = "main",
+    [switch]$SkipTests
 )
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -35,7 +38,14 @@ else {
 $tag = $sha.Substring(0, 12)
 Write-Host "Deploying $Ref = commit $sha to $Env (image tag $tag)"
 
-# 2. Build it, unless the registry already has it.
+# 2. Its tests must have passed. test.ps1 reuses a passing run of this exact commit, or runs one, and exits 1 on failure.
+if ($SkipTests) { Write-Warning "Deploying $tag WITHOUT its tests having passed (-SkipTests)" }
+else {
+    & "$here\test.ps1" -Ref $sha
+    if ($LASTEXITCODE -ne 0) { throw "Commit $tag did not pass its tests: not deployed" }
+}
+
+# 3. Build it, unless the registry already has it.
 # Counted, not looked up by tag: looking up a tag that is not there is an error, and Windows PowerShell 5.1 turns a
 # native command's redirected error output into a terminating one.
 $built = aws ecr list-images --repository-name farm2home/api --filter tagStatus=TAGGED --query "length(imageIds[?imageTag=='$tag'])" --output text
@@ -53,7 +63,7 @@ else {
     }
 }
 
-# 3. Run it.
+# 4. Run it.
 aws cloudformation deploy --stack-name "farm2home-app-$Env" --template-file "$here\app.yml" `
     --parameter-overrides "Env=$Env" "ImageTag=$tag" --capabilities CAPABILITY_NAMED_IAM `
     --tags Project=farm2home "Env=$Env" --no-fail-on-empty-changeset

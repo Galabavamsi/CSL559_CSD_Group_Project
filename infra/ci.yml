@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  farm2home tests on AWS. A CodeBuild project that runs the migration check and the whole test suite for one commit,
+  against PostgreSQL with PostGIS in a container. Started by hand (infra/test.ps1) or, once a GitHub connection is
+  given, by every push, with the result shown on the commit in GitHub.
+
+# What a test run is trusted with: nothing but its own logs and one image repository, the copy of the PostGIS
+# image the tests use. It runs code from the commit it is testing, so it is given no way to reach the app, the
+# database, the registry the app is deployed from, or any secret.
+
+Parameters:
+  RepositoryUrl:
+    Type: String
+    Default: https://github.com/Galabavamsi/CSL559_CSD_Group_Project.git
+  ConnectionArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ARN of an authorised AWS CodeConnections connection to GitHub. Empty: runs are started by hand. Set: every
+      push to the repository starts a run, and CodeBuild reports the result on the commit.
+
+Conditions:
+  HasConnection: !Not [!Equals [!Ref ConnectionArn, ""]]
+
+Resources:
+  # The tests need the PostGIS image, which lives on Docker Hub. Builds on AWS leave from addresses shared with
+  # other customers, and Docker Hub limits anonymous downloads per address, so a run could fail because of
+  # someone else's downloads. The first run copies the image here; every later run takes it from here.
+  PostgisCopy:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: farm2home/ci-postgis
+      EncryptionConfiguration: {EncryptionType: AES256}
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules": [{"rulePriority": 1, "description": "Keep the newest 3 images",
+                      "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 3},
+                      "action": {"type": "expire"}}]}
+
+  TestLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /farm2home/test
+      RetentionInDays: 30
+
+  TestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: farm2home-test
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codebuild.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: test
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteItsOwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${TestLogs.Arn}:*"
+              - Sid: LogInToTheRegistry
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"                # this action cannot be limited to one repository
+              - Sid: UseTheCopyOfThePostgisImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt PostgisCopy.Arn
+              - !If
+                - HasConnection
+                - Sid: ReadTheRepositoryThroughTheConnection
+                  Effect: Allow
+                  Action: [codeconnections:UseConnection, codeconnections:GetConnection, codeconnections:GetConnectionToken,
+                           codestar-connections:UseConnection]
+                  Resource: !Ref ConnectionArn
+                - !Ref AWS::NoValue
+
+  TestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: farm2home-test
+      Description: Run the migration check and the test suite for one commit, against PostGIS in a container
+      ServiceRole: !GetAtt TestRole.Arn
+      TimeoutInMinutes: 30
+      ConcurrentBuildLimit: 2
+      Artifacts: {Type: NO_ARTIFACTS}
+      LogsConfig:
+        CloudWatchLogs: {Status: ENABLED, GroupName: !Ref TestLogs}
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        PrivilegedMode: true                 # needed to run the PostGIS container inside the build
+        EnvironmentVariables:
+          - {Name: REPO_URL, Value: !Ref RepositoryUrl}
+          - {Name: GIT_REF, Value: main}      # a run started by hand overrides this with the commit to test
+          - {Name: PG_SOURCE_IMAGE, Value: "postgis/postgis:16-3.4"}
+          - {Name: PG_COPY, Value: !GetAtt PostgisCopy.RepositoryUri}
+      Source:
+        Type: !If [HasConnection, GITHUB, NO_SOURCE]
+        Location: !If [HasConnection, !Ref RepositoryUrl, !Ref "AWS::NoValue"]
+        Auth: !If
+          - HasConnection
+          - {Type: CODECONNECTIONS, Resource: !Ref ConnectionArn}
+          - !Ref AWS::NoValue
+        ReportBuildStatus: !If [HasConnection, true, !Ref "AWS::NoValue"]
+        # The same few lines serve both ways of starting. Started by a push, CodeBuild has already checked the
+        # commit out; started by hand, there is no source, so the commit is fetched here. The checks themselves
+        # are in the repository (infra/ci-test.sh), so they are versioned with the code they check.
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.12
+            build:
+              commands:
+                - |
+                  if [ -z "${CODEBUILD_SOURCE_REPO_URL:-}" ]; then
+                    git clone --quiet "$REPO_URL" src
+                    cd src
+                    git checkout --quiet "$GIT_REF"
+                  fi
+                  echo "Testing $(git rev-parse HEAD)"
+                  bash infra/ci-test.sh
+      Triggers: !If
+        - HasConnection
+        - Webhook: true
+          BuildType: BUILD
+          # Pushes only. A pull request from a fork is somebody else's code, and is not run here.
+          FilterGroups:
+            - - {Type: EVENT, Pattern: PUSH}
+        - !Ref AWS::NoValue
+
+Outputs:
+  TestProject:
+    Value: !Ref TestProject
+  StartedBy:
+    Value: !If [HasConnection, "every push, and by hand", "by hand (infra/test.ps1)"]

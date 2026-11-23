@@ -1,16 +1,42 @@
 # Running on AWS
 
-Four CloudFormation templates, deployed with the AWS CLI. Nothing here needs Node, CDK or Terraform.
+Five CloudFormation templates, deployed with the AWS CLI. Nothing here needs Node, CDK or Terraform.
 
 | Stack | Template | What it holds | How many |
 | --- | --- | --- | --- |
 | `farm2home-network` | `network.yml` | VPC over two availability zones: public subnets (load balancer, NAT gateway), private subnets (containers), isolated subnets (database) | one |
 | `farm2home-build` | `build.yml` | Container registry (ECR) and a CodeBuild project that builds one chosen commit | one |
+| `farm2home-ci` | `ci.yml` | A CodeBuild project that tests one commit against PostGIS in a container, and its own copy of the PostGIS image | one |
 | `farm2home-data-<env>` | `data.yml` | PostgreSQL 16 on RDS with a standby in a second zone; its security groups | one per environment |
 | `farm2home-app-<env>` | `app.yml` | The API on ECS Fargate, HTTPS load balancer, web application firewall, DNS name, generated secrets | one per environment |
 
 Environments are `staging` (at `staging.<domain>`) and `prod` (at `<domain>`). Every resource is tagged
 `Project=farm2home`.
+
+## Testing a commit
+
+```powershell
+infra\test.ps1 -Ref f2h/some-branch
+```
+
+Runs `infra/ci-test.sh` for that commit in CodeBuild: PostgreSQL with PostGIS in a container, the migration check,
+a syntax check of the demo pages' scripts, and the whole test suite. It takes about four minutes, prints the result,
+and sets a commit status in GitHub (through the `gh` CLI you are signed in to), so the commit's pull request shows
+a check named "tests (AWS CodeBuild)". A commit that already passed is not run again unless you add `-Rerun`.
+
+A test run is trusted with nothing but its own logs and its copy of the PostGIS image. It runs the code it is
+testing, so it has no way to reach the app, its database, its registry or any secret.
+
+**Runs started by a push.** Give the stack an authorised connection to GitHub and every push starts a run, with
+the result reported on the commit by CodeBuild itself:
+
+```powershell
+aws codeconnections create-connection --provider-type GitHub --connection-name farm2home-github
+# then, once: AWS console > Developer Tools > Settings > Connections > farm2home-github > Update pending connection,
+# and install the AWS connector on this repository only
+aws cloudformation deploy --stack-name farm2home-ci --template-file infra/ci.yml --capabilities CAPABILITY_NAMED_IAM `
+    --tags Project=farm2home --parameter-overrides ConnectionArn=<the connection's ARN>
+```
 
 ## Deploying a version
 
@@ -18,15 +44,16 @@ Environments are `staging` (at `staging.<domain>`) and `prod` (at `<domain>`). E
 infra\deploy.ps1 -Env staging -Ref main
 ```
 
-`-Ref` is a branch, a tag or a full commit id. The script finds the commit, has CodeBuild build its image (unless the
-registry already has it), and updates the app stack to run it. ECS starts the new version, waits for the load
+`-Ref` is a branch, a tag or a full commit id. The script finds the commit, makes sure its tests have passed on AWS
+(running them if not, and stopping if they fail), has CodeBuild build its image (unless the registry already has
+it), and updates the app stack to run it. ECS starts the new version, waits for the load
 balancer to find it healthy, then stops the old one. A version that never gets healthy is rolled back.
 
 To go back to an earlier version, deploy its commit again: its image is still in the registry.
 
-**Why deploys start from AWS, not from a push to GitHub.** The repository is public. Nothing that happens in GitHub
-can start a build or a deployment in the AWS account; someone signed in to AWS chooses a commit and starts it. The
-build can do one thing in the account: push an image to the registry.
+**Why deploys start from AWS, not from a push to GitHub.** The repository is public. A push can start a test run,
+which is trusted with nothing; it cannot start a build of the image or a deployment. Someone signed in to AWS
+chooses a commit and deploys it. The image build can do one thing in the account: push an image to the registry.
 
 ## First-time set-up
 
@@ -41,6 +68,7 @@ aws ssm put-parameter --type String --name /farm2home/certificate-arn --value <c
 
 aws cloudformation deploy --stack-name farm2home-network --template-file infra/network.yml --tags Project=farm2home
 aws cloudformation deploy --stack-name farm2home-build   --template-file infra/build.yml   --tags Project=farm2home --capabilities CAPABILITY_NAMED_IAM
+aws cloudformation deploy --stack-name farm2home-ci      --template-file infra/ci.yml      --tags Project=farm2home --capabilities CAPABILITY_NAMED_IAM
 aws cloudformation deploy --stack-name farm2home-data-staging --template-file infra/data.yml --tags Project=farm2home Env=staging --parameter-overrides Env=staging
 infra\deploy.ps1 -Env staging -Ref main
 ```
@@ -70,6 +98,7 @@ unless `--parameter-overrides` gives new ones, even when a default in the templa
 aws cloudformation delete-stack --stack-name farm2home-app-staging
 aws cloudformation delete-stack --stack-name farm2home-data-staging    # takes a final snapshot of the database
 aws cloudformation delete-stack --stack-name farm2home-build           # empty the registry first
+aws cloudformation delete-stack --stack-name farm2home-ci              # empty its copy of the PostGIS image first
 aws cloudformation delete-stack --stack-name farm2home-network
 ```
 
