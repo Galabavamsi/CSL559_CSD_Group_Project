@@ -4,20 +4,11 @@ on:
     branches: [main]
   pull_request:
 jobs:
-  pytest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - run: python -m pytest -q
-  pytest-postgres:               # the same suite on the HLD's database (task 1.7), including the overselling races
+  pytest:                        # PostgreSQL with PostGIS is the only database the app runs on
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: darkstore
           POSTGRES_PASSWORD: darkstore       # a throwaway database inside the CI job

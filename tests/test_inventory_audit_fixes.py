@@ -196,7 +196,6 @@ def test_the_ledger_names_the_logged_in_user_not_a_name_in_the_request(client, c
 # --------------------------------------------------------------------------- #59 reset keeps the tables
 
 
-@pytest.mark.skipif(app_db.engine.dialect.name != "sqlite", reason="PostgreSQL makes other requests wait instead")
 def test_reset_never_leaves_another_connection_without_its_tables(monkeypatch, db):
     def dropped(*args, **kwargs):
         raise AssertionError("reset dropped the tables: other requests would find none")

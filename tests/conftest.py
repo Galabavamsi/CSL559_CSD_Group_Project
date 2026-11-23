@@ -1,14 +1,14 @@
 """Shared test setup: every test runs against a fresh copy of the demo data.
 
-The database is a temporary SQLite file, unless DARKSTORE_TEST_DB names another one (task 1.7), for example
-    DARKSTORE_TEST_DB=postgresql://darkstore:darkstore@localhost:5432/darkstore python -m pytest -q
-Every table in that database is dropped and rebuilt before each test: never point it at data you want to keep."""
+The database is PostgreSQL with PostGIS: the one DARKSTORE_TEST_DB names, or by default
+    postgresql://darkstore:darkstore@localhost:5432/darkstore
+Every table in that database is emptied before each test: never point it at data you want to keep."""
 import os
-import tempfile
 from datetime import date, datetime, time, timedelta
 
 # Must be set before anything from `app` is imported, because the engine is created at import time.
-os.environ["DARKSTORE_DB"] = os.environ.get("DARKSTORE_TEST_DB") or f"sqlite:///{tempfile.mkdtemp()}/test.db"
+os.environ["DARKSTORE_DB"] = (os.environ.get("DARKSTORE_TEST_DB")
+                              or "postgresql://darkstore:darkstore@localhost:5432/darkstore")
 os.environ["BACKGROUND_JOBS"] = "off"                     # no timed jobs: tests release holds themselves
 os.environ["RATE_LIMIT_PER_SECOND"] = "0"                 # tests make many calls at once; test_rate_limit turns it on
 

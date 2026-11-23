@@ -22,5 +22,11 @@ def rebuild_zones(db: Session = Depends(get_db)):
 
 
 @router.get("/v1/stores")
-def stores(db: Session = Depends(get_db)):
-    return service.list_stores(db)
+def stores(city: str | None = Query(default=None, description="A city's slug, e.g. bhilai, to list only its hubs"),
+           db: Session = Depends(get_db)):
+    return service.list_stores(db, city)
+
+
+@router.get("/v1/cities", summary="The cities the service runs in, with how many hubs each has")
+def cities(db: Session = Depends(get_db)):
+    return service.list_cities(db)

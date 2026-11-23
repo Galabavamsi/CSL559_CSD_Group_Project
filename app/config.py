@@ -1,8 +1,9 @@
 """All tunable settings in one place. Override any of them with environment variables."""
 import os
 
-# Database. SQLite keeps local runs zero-setup; set DARKSTORE_DB to a PostgreSQL URL for the HLD's database
-# (task 1.7), e.g. postgresql://darkstore:darkstore@localhost:5432/darkstore. Sharding by store_id is design only.
+# Database: PostgreSQL with the PostGIS extension, and nothing else (the HLD's geo queries have no SQLite form).
+# Sharding by store_id is design only.
+DEFAULT_DATABASE_URL = "postgresql://darkstore:darkstore@localhost:5432/darkstore"    # local development only
 
 
 def _database_url(url: str) -> str:
@@ -11,10 +12,13 @@ def _database_url(url: str) -> str:
     for prefix in ("postgres://", "postgresql://"):
         if url.startswith(prefix):
             return "postgresql+psycopg://" + url[len(prefix):]
+    if not url.startswith("postgresql+psycopg://"):
+        raise ValueError("DARKSTORE_DB must be a PostgreSQL URL (postgresql://user:password@host:5432/database); "
+                         "SQLite is no longer supported")
     return url
 
 
-DATABASE_URL = _database_url(os.getenv("DARKSTORE_DB", "sqlite:///./darkstore.db"))
+DATABASE_URL = _database_url(os.getenv("DARKSTORE_DB") or DEFAULT_DATABASE_URL)
 # Database connections kept open per app process, and how many more may be opened in a burst.
 # Keep the sum at 40 or more: the web server answers up to 40 requests at once, each on its own thread and each
 # with one connection. With fewer connections than threads, threads wait for a connection while the finished

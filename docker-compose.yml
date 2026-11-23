@@ -6,12 +6,27 @@ services:
       - path: deploy.env         # and start with `docker compose --env-file deploy.env up -d --build` (docs/DEPLOY_AWS.md)
         required: false
     environment:
-      # SQLite in a volume by default. For PostgreSQL (task 1.7), start with `--profile postgres` and
-      #   DARKSTORE_DB=postgresql://darkstore:darkstore@postgres:5432/darkstore
-      # or give the URL of a hosted database (for example Amazon RDS); nothing else changes.
-      DARKSTORE_DB: ${DARKSTORE_DB:-sqlite:////data/darkstore.db}
+      # PostgreSQL with PostGIS: the bundled `postgres` service by default, or the URL of a hosted database
+      # (for example Amazon RDS, which has PostGIS); nothing else changes.
+      DARKSTORE_DB: ${DARKSTORE_DB:-postgresql://darkstore:${POSTGRES_PASSWORD:-darkstore}@postgres:5432/darkstore}
       RATE_LIMIT_PER_SECOND: ${RATE_LIMIT_PER_SECOND:-20}   # 0 for a load test (it is one client)
-    volumes: ["appdata:/data"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:                      # the database: PostgreSQL 16 with PostGIS
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: darkstore
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-darkstore}   # the default is for local development only
+      POSTGRES_DB: darkstore
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    # This machine only; the app reaches it as postgres:5432. POSTGRES_PORT moves it if 5432 is already taken here.
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U darkstore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   prometheus:                    # task 4.7: `docker compose --profile monitoring up --build`
     image: prom/prometheus:v2.53.0
     profiles: ["monitoring"]
@@ -35,15 +50,5 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["127.0.0.1:3000:3000"]          # this machine only
     depends_on: [prometheus]
-  postgres:                      # task 1.7: the HLD's database
-    image: postgres:16
-    profiles: ["postgres"]
-    environment:
-      POSTGRES_USER: darkstore
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-darkstore}   # the default is for local development only
-      POSTGRES_DB: darkstore
-    volumes: ["pgdata:/var/lib/postgresql/data"]
-    ports: ["127.0.0.1:5432:5432"]          # this machine only; the app reaches it as postgres:5432
 volumes:
-  appdata: {}
   pgdata: {}

@@ -1,7 +1,7 @@
 """Migrations (Member 1 guide, task 1.7): the steps in migrations/versions must build the tables models.py describes.
 
-Each test works on its own empty SQLite file, whichever database the rest of the suite runs on. On PostgreSQL the
-same check is `python -m alembic upgrade head && python -m alembic check` against an empty database (CI runs it)."""
+Each test works on its own empty database, created beside the suite's and dropped afterwards (scripts/scratch.py).
+CI also runs `python -m alembic upgrade head && python -m alembic check` against an empty database."""
 import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -11,16 +11,20 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 
 from app import config, db
-from app.db import ALEMBIC_INI, Base, make_engine
+from app.db import ALEMBIC_INI, Base, include_object, make_engine
+from scripts import scratch
 
 
 @pytest.fixture()
-def empty_engine(tmp_path, monkeypatch):
-    """`app.db` pointed at a new, empty database file for one test."""
-    engine = make_engine(f"sqlite:///{tmp_path.as_posix()}/migrations.db")
+def empty_engine(monkeypatch):
+    """`app.db` pointed at a new, empty database for one test."""
+    base = db.engine.url.render_as_string(hide_password=False)
+    url, name = scratch.create(base)
+    engine = make_engine(url)
     monkeypatch.setattr(db, "engine", engine)
     yield engine
     engine.dispose()
+    scratch.drop(base, name)
 
 
 def _version(engine) -> str | None:
@@ -34,7 +38,7 @@ def _head() -> str:
 
 def _differences(engine) -> list:
     with engine.connect() as connection:
-        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        context = MigrationContext.configure(connection, opts={"compare_type": True, "include_object": include_object})
         return compare_metadata(context, Base.metadata)
 
 
@@ -83,4 +87,5 @@ def test_hosted_database_urls_are_opened_with_the_installed_driver():
     assert config._database_url("postgres://u:p@host:5432/db") == "postgresql+psycopg://u:p@host:5432/db"
     assert config._database_url("postgresql://u:p@host/db") == "postgresql+psycopg://u:p@host/db"
     assert config._database_url("postgresql+psycopg://u:p@host/db") == "postgresql+psycopg://u:p@host/db"
-    assert config._database_url("sqlite:///./darkstore.db") == "sqlite:///./darkstore.db"
+    with pytest.raises(ValueError, match="PostgreSQL"):
+        config._database_url("sqlite:///./darkstore.db")

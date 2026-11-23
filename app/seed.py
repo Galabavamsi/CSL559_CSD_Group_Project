@@ -17,12 +17,21 @@ from sqlalchemy.orm import Session
 from . import config
 from .auth import hash_password
 from .db import SessionLocal, recreate_tables
-from .models import SKU, Bin, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
+from .models import SKU, Bin, City, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
 from .modules.serviceability import service as serviceability
 
+# slug, name, tier, centre lat, centre lng, built-up radius (km), service radius of a new hub (km).
+# A tier-1 and a tier-2 city, to show how the same design is sized for each (HLD 12). Bangalore's hubs sit closer
+# together, so each serves a smaller radius; Bhilai uses the 3 km of the Blinkit tier-2 store in HLD 3.
+CITIES = [
+    ("bangalore", "Bangalore", 1, 12.9716, 77.5946, 18.0, 2.0),
+    ("bhilai", "Bhilai", 2, 21.1938, 81.3509, 8.0, 3.0),
+]
+
+# name, lat, lng, city slug. Bhilai's hubs come from hub placement, not from this list.
 STORES = [
-    ("DS-01 Central", 12.9716, 77.5946),
-    ("DS-02 North", 13.0350, 77.5970),
+    ("DS-01 Central", 12.9716, 77.5946, "bangalore"),
+    ("DS-02 North", 13.0350, 77.5970, "bangalore"),
 ]
 
 # name, category, storage type, shelf life (days), price (INR). A category is a kind of item a customer would take
@@ -97,8 +106,15 @@ def seed(db: Session) -> None:
         skus.append(sku)
     db.flush()
 
-    for index, (name, lat, lng) in enumerate(STORES, start=1):
-        store = Store(name=name, lat=lat, lng=lng, radius_km=3.0)
+    cities = {}
+    for slug, name, tier, lat, lng, radius_km, hub_radius_km in CITIES:
+        cities[slug] = City(slug=slug, name=name, tier=tier, lat=lat, lng=lng, radius_km=radius_km,
+                            hub_radius_km=hub_radius_km)
+        db.add(cities[slug])
+    db.flush()
+
+    for index, (name, lat, lng, city) in enumerate(STORES, start=1):
+        store = Store(name=name, lat=lat, lng=lng, radius_km=3.0, city_id=cities[city].id)
         db.add(store)
         db.flush()
         bins = _make_bins(db, store.id)

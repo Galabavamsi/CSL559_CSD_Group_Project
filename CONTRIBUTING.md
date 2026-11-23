@@ -69,14 +69,14 @@ python -m alembic upgrade head                                           # appli
    starts, so pulling `main` and restarting is enough. A new, empty database gets its tables
    straight from `models.py`.
 
-Both commands use the database in `DARKSTORE_DB` (default: `./darkstore.db`). The tests rebuild
-their tables from `models.py` before every test, so they never need a migration to be run.
+Both commands use the database in `DARKSTORE_DB` (default: `postgresql://darkstore:darkstore@localhost:5432/darkstore`).
+The tests build their tables from `models.py`, so they never need a migration to be run.
 
-To run the tests on PostgreSQL instead of SQLite (every table in that database is dropped first):
+The tests need PostgreSQL with PostGIS, and empty every table in that database before each test:
 
 ```bash
-docker compose --profile postgres up -d postgres
-DARKSTORE_TEST_DB=postgresql://darkstore:darkstore@localhost:5432/darkstore python -m pytest -q
+docker compose up -d postgres
+python -m pytest -q          # or DARKSTORE_TEST_DB=postgresql://... for a database somewhere else
 ```
 
 CI runs the suite on both.

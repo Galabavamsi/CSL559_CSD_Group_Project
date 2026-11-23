@@ -9,7 +9,7 @@ stock movement. Each SKU gets one `sale` row per day it sold, plus one `receipt`
 dated a day before its first sale, all tagged reference="history". Those rows sum to zero, so stock on hand
 and the ledger keep agreeing, and a re-run can delete them and draw again.
 
-Run it from the repository root (it uses the app's database, DARKSTORE_DB, by default ./darkstore.db):
+Run it from the repository root (it uses the app's database, DARKSTORE_DB):
 
     python scripts/generate_sales.py [--store N] [--days 60] [--seed 42]
 """

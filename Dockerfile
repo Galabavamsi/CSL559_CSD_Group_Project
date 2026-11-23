@@ -8,8 +8,8 @@ COPY app app
 COPY web web
 # Reset demo data imports the sales-history generator from here when DEMO_HISTORY_ON_RESET=on.
 COPY scripts scripts
-# Run as a non-root user; /data holds the SQLite file when started through docker compose.
-RUN useradd --create-home app && mkdir /data && chown app /data
+# Run as a non-root user.
+RUN useradd --create-home app
 USER app
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
