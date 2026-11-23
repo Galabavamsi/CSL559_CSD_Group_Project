@@ -16,8 +16,10 @@ from fastapi.staticfiles import StaticFiles
 from . import auth, background, config, events, monitoring, rate_limit, seed
 from .db import SessionLocal, init_db
 from .errors import DomainError
+from .modules.accounts.router import router as accounts_router
 from .modules.assortment.router import router as assortment_router
 from .modules.dashboard.router import router as dashboard_router
+from .modules.farms.router import router as farms_router
 from .modules.forecasting.router import router as forecasting_router
 from .modules.fulfilment.router import router as fulfilment_router
 from .modules.inbound.router import router as inbound_router
@@ -68,9 +70,9 @@ async def domain_error_handler(_request: Request, exc: DomainError):
 
 
 for router in (
-    auth.router, monitoring.router, serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
+    auth.router, accounts_router, monitoring.router, serviceability_router, inventory_router, fulfilment_router, pickpack_router, inbound_router,
     replenishment_router, forecasting_router, slotting_router, assortment_router,
-    network_planning_router, dashboard_router,
+    network_planning_router, dashboard_router, farms_router,
 ):
     app.include_router(router)
 

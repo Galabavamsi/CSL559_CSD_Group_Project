@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .auth import hash_password
 from .db import SessionLocal, recreate_tables
-from .models import SKU, Bin, City, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
+from .models import SKU, Bin, City, ProduceItem, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
 from .modules.serviceability import service as serviceability
 
 # slug, name, tier, centre lat, centre lng, built-up radius (km), service radius of a new hub (km).
@@ -71,6 +71,25 @@ CASE_SIZES = {
     "Sunflower oil 1 L": 12, "Vanilla ice cream 500 ml": 6, "Frozen green peas 500 g": 10,
     "Bath soap (pack of 3)": 12,
 }
+
+# Produce: item, family, storage, shelf life in days from harvest, then its units as (unit label, grams of the item
+# one unit takes, price in INR). Shelf lives follow HLD 15 (spinach about 2 days, tomato about 5, onion about 30);
+# the prices are made up for the demo. HLD 6 keeps tomato and fruit cool and leafy greens cold; the bins here know
+# one such zone, chilled, so both go there.
+PRODUCE = [
+    ("Tomato", "vegetables", "chilled", 5, [("500 g", 500, 24), ("1 kg", 1000, 45)]),
+    ("Onion", "vegetables", "ambient", 30, [("1 kg", 1000, 38)]),
+    ("Potato", "vegetables", "ambient", 30, [("1 kg", 1000, 32)]),
+    ("Carrot", "vegetables", "chilled", 10, [("500 g", 500, 30)]),
+    ("Cauliflower", "vegetables", "chilled", 5, [("1 piece (400-600 g)", 500, 35)]),
+    ("Okra", "vegetables", "chilled", 4, [("250 g", 250, 20)]),
+    ("Brinjal", "vegetables", "chilled", 6, [("500 g", 500, 28)]),
+    ("Green chilli", "vegetables", "chilled", 7, [("100 g", 100, 12)]),
+    ("Spinach", "leafy", "chilled", 2, [("250 g", 250, 22)]),
+    ("Coriander", "herbs", "chilled", 3, [("1 bunch (about 100 g)", 100, 15)]),
+    ("Banana", "fruits", "ambient", 5, [("6 pieces (about 600 g)", 600, 42)]),
+    ("Guava", "fruits", "chilled", 5, [("500 g", 500, 48)]),
+]
 
 DEFAULT_QTY = 30
 
@@ -161,6 +180,8 @@ def seed(db: Session) -> None:
                                    reason="sale", reference="history", actor="seed",
                                    ts=utcnow() - timedelta(days=days_ago)))
     seed_staff(db)
+    if config.DEMO_PRODUCE:
+        add_produce(db)
     db.commit()
     serviceability.rebuild_zones(db)
 
@@ -169,6 +190,27 @@ def seed(db: Session) -> None:
 def _demo_password_hash() -> str:
     """Hashed once per process: scrypt is slow on purpose, and the tests reseed before every test."""
     return hash_password(config.DEMO_PASSWORD)
+
+
+def add_produce(db: Session) -> int:
+    """Add the produce items and the units customers buy them in, unless they are there already. The units start
+    with no stock anywhere: stock arrives from farms (app/modules/farms). Returns how many items were added. Does
+    not commit."""
+    if db.scalar(select(func.count()).select_from(ProduceItem)):
+        return 0
+    number = 0
+    for name, family, storage, shelf_life, units in PRODUCE:
+        item = ProduceItem(name=name, family=family, storage_type=storage, shelf_life_days=shelf_life)
+        db.add(item)
+        db.flush()
+        for label, unit_grams, price in units:
+            number += 1
+            # The item's name is the category: a customer whose 500 g pack is missing is offered its 1 kg pack.
+            db.add(SKU(name=f"{name}, {label}", category=name, barcode=f"891{number:010d}", storage_type=storage,
+                       shelf_life_days=shelf_life, price=price, case_size=1, item_id=item.id, unit_grams=unit_grams,
+                       unit_label=label))
+    db.flush()
+    return len(PRODUCE)
 
 
 def seed_staff(db: Session) -> None:
@@ -186,6 +228,8 @@ def seed_if_empty(db: Session) -> bool:
     if db.scalar(select(func.count()).select_from(Store)) == 0:
         seed(db)
         return True
+    if config.DEMO_PRODUCE and add_produce(db):
+        db.commit()            # a hosted copy seeded before produce existed
     if db.scalar(select(func.count()).select_from(Staff)) == 0:
         # A database from before logins existed: add the demo staff without touching its stock.
         seed_staff(db)

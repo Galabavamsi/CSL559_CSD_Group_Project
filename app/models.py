@@ -67,6 +67,8 @@ class Store(Base):
     radius_km: Mapped[float] = mapped_column(Float, default=3.0)
     status: Mapped[str] = mapped_column(String(10), default="open")   # open | busy | closed
     hub_name: Mapped[str] = mapped_column(String(80), default="City Mother Hub")
+    # Produce the hub can hold, in kg: what is on its shelves plus lots farmers are bringing (farms.service).
+    capacity_kg: Mapped[int] = mapped_column(Integer, default=5000, server_default="5000")
     location = _location()
     __table_args__ = (Index("ix_stores_location", "location", postgresql_using="gist"),)
 
@@ -84,6 +86,17 @@ class Bin(Base):
     __table_args__ = (UniqueConstraint("store_id", "code"),)
 
 
+class ProduceItem(Base):
+    """A kind of produce a farmer can list and a hub can stock, for example Tomato. Farmers deal in kilograms of an
+    item; customers buy its SKUs, each a fixed unit of it: a pack, a piece or a bunch."""
+    __tablename__ = "produce_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    family: Mapped[str] = mapped_column(String(20))                   # vegetables | leafy | fruits | herbs
+    storage_type: Mapped[str] = mapped_column(String(10))             # ambient | chilled | frozen, as bins are
+    shelf_life_days: Mapped[int] = mapped_column(Integer)             # counted from the harvest date
+
+
 class SKU(Base):
     __tablename__ = "skus"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -94,6 +107,11 @@ class SKU(Base):
     shelf_life_days: Mapped[int] = mapped_column(Integer)
     price: Mapped[float] = mapped_column(Float)
     case_size: Mapped[int] = mapped_column(Integer, default=1)        # units per case; the hub ships whole cases
+    # Produce only, empty for anything else: the item this is a unit of, the grams of it one unit takes (how
+    # accepted kilograms become units at intake), and what the customer is told one unit is.
+    item_id: Mapped[int | None] = mapped_column(ForeignKey("produce_items.id"), nullable=True, index=True)
+    unit_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unit_label: Mapped[str | None] = mapped_column(String(40), nullable=True)   # "500 g", "1 piece (400-600 g)"
 
 
 class StoreZone(Base):
@@ -137,6 +155,103 @@ class Staff(Base):
     password_hash: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(10))                     # picker | packer | receiver | manager | ops | admin
     store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
+
+
+# --------------------------------------------------------------------------- people who use the phone app
+
+class User(Base):
+    """Someone who signs in to the phone app with a code sent to their email: a customer, a farmer or a delivery
+    agent. Hub staff are in `staff`, log in with a password, and are a separate kind of login."""
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role: Mapped[str] = mapped_column(String(10))                     # customer | farmer | agent
+    email: Mapped[str] = mapped_column(String(254), unique=True)      # lower case; it is the login
+    name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    city_id: Mapped[int | None] = mapped_column(ForeignKey("cities.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LoginCode(Base):
+    """A one-time sign-in code emailed to an address. Only a keyed hash of the code is kept (accounts.service).
+    `role` is the role the address will have: its account's, or the one asked for at a first sign-in."""
+    __tablename__ = "login_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    role: Mapped[str] = mapped_column(String(10))
+    code_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)         # tries made against this code, right or wrong
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)   # set when used, replaced or void
+
+
+class RefreshToken(Base):
+    """One session of an app user. The token itself is never stored, only its hash; `revoked_at` is set when it is
+    exchanged for a new one or signed out."""
+    __tablename__ = "refresh_tokens"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# --------------------------------------------------------------------------- farm supply
+
+class Farm(Base):
+    """Where a farmer's produce comes from. The location decides which hub a listing goes to."""
+    __tablename__ = "farms"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farmer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    area_acres: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    location = _location()
+    __table_args__ = (Index("ix_farms_location", "location", postgresql_using="gist"),)
+
+
+class Listing(Base):
+    """A lot of one item that a farmer will bring to a hub in a drop slot. listed -> received (weighed and graded at
+    the hub) or cancelled. Weights are whole grams."""
+    __tablename__ = "listings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id"), index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("produce_items.id"))
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)        # the hub it was assigned to
+    qty_g: Mapped[int] = mapped_column(Integer)
+    price_per_kg: Mapped[float] = mapped_column(Float)                                # what the farmer asks
+    harvest_date: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10), default="listed", index=True)
+    drop_from: Mapped[datetime] = mapped_column(DateTime)                             # the drop slot, UTC
+    drop_until: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    farm: Mapped[Farm] = relationship()
+    item: Mapped[ProduceItem] = relationship()
+
+
+class QualityCheck(Base):
+    """What the hub found when a lot arrived: its weight, its grade, and how much was accepted. accepted = received
+    - rejected; trim is accepted weight that did not fill a last unit. `batch_no` is the batch the packed units
+    carry in stock, which is how a pack on a shelf is traced back to its farm and its grade."""
+    __tablename__ = "quality_checks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), unique=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    batch_no: Mapped[str] = mapped_column(String(30), unique=True)
+    grade: Mapped[str] = mapped_column(String(6))                     # A | B | C | reject
+    received_g: Mapped[int] = mapped_column(Integer)
+    accepted_g: Mapped[int] = mapped_column(Integer)
+    rejected_g: Mapped[int] = mapped_column(Integer)
+    trim_g: Mapped[int] = mapped_column(Integer, default=0)
+    remarks: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    checked_by: Mapped[str] = mapped_column(String(40))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    receipt_id: Mapped[int | None] = mapped_column(ForeignKey("goods_receipts.id"), nullable=True)
 
 
 # --------------------------------------------------------------------------- stock

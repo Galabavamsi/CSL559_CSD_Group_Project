@@ -2,7 +2,8 @@
 # Smoke test of a deployed environment from outside it. Run it from any machine with curl and openssl, after a deploy:
 #     bash infra/smoke.sh https://staging.<domain>
 # It needs no login. It makes one checkout hold and releases it, and sends two requests the firewall should block.
-# Expected: every line as its note says; "burst" all 200.
+# Expected: every line as its note says; "burst" all 200. The burst stays under the app's own limit of 40 calls at
+# once from one address on its open endpoints.
 set -u
 BASE=${1:?usage: smoke.sh https://<host>}
 HOST=${BASE#https://}
@@ -27,4 +28,4 @@ HOLD=$(curl -s --max-time 20 -X POST "$BASE/v1/reservations" -H 'Content-Type: a
 RID=$(echo "$HOLD" | sed -n 's/.*"reservation_id":"\([^"]*\)".*/\1/p')
 echo "10. checkout hold:         made=$([ -n "$RID" ] && echo yes || echo "NO: $(echo "$HOLD" | cut -c1-120)"), released $([ -n "$RID" ] && code -X DELETE "$BASE/v1/reservations/$RID")"
 echo "11. WebSocket upgrade:     $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$BASE/v1/ws/events?store_id=1") (101 = the load balancer passes WebSockets)"
-echo "12. burst of 40 at once:   $(burst 40)"
+echo "12. burst of 20 at once:   $(burst 20)"
