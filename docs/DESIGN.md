@@ -69,15 +69,40 @@ the map lives in a web view (an Expo "DOM component"), so the same map code serv
   routing servers ourselves is a week we do not have.
 - **An Indian provider (Mappls).** Not evaluated: no time to compare a fourth option.
 
+**Tested on 24 November, with real places in and around Bhilai.** The owner agreed to Amazon Location that day,
+and the open question was whether its data for a tier-2 Indian city is good enough. Calls were made from the AWS
+CLI with the project's own login; no key was created for the test.
+
+| Asked | Answer | Verdict |
+| --- | --- | --- |
+| Find "Supela, Bhilai" and "Risali, Bhilai" | Both found as districts of Bhilai, each within about 1 km of the point we had chosen by hand | Good |
+| Find a village: "Patan, Durg" | Found as a locality | Good |
+| Find a street: "Street 12, Sector 6, Bhilai" | An intersection in Sector 4 | Not to be trusted to the street |
+| What is at the Civic Centre hub's point? | A named building 8 m away | Good |
+| Complete "Nehru Nag" near Bhilai | Four suggestions; Bhilai's Nehru Nagar was the fourth, after Raipur's | Usable once limited to the city |
+| Drive from the hub to Supela | 2.6 km, 6.6 minutes | Plausible |
+| Ride a scooter from a farm 14.6 km away to the hub | 19.5 km, 32 minutes | Plausible |
+| Travel times between the hub and four areas (5 by 5) | All 25 answered, none failed | Good |
+| Best order for four stops from the hub and back | Risali, Smriti Nagar, Nehru Nagar, Supela: 21.9 km, 47 minutes | Plausible |
+
+Two things follow for the design.
+
+- **An address search finds the area, not the door.** The customer searches or picks an area, the map opens there,
+  and the customer moves the pin to the door. The typed house and street stay as text for the agent.
+- **Roads in Bhilai are far longer than straight lines.** From the hub to Nehru Nagar is 3.1 km as the crow flies
+  and 5.8 km by road; across the five points the road was 1.6 to 1.9 times the straight line. A railway line and
+  the steel plant's layout sit between the areas. The straight-line fallback in section 1.3 therefore multiplies by
+  1.7 before applying a town speed, and the grouping of orders by direction (section 4.2) is to be checked against
+  the road matrix, because two areas in the same direction can be on opposite sides of the line.
+
 **Costs and risks.**
 
-- **The quality of Amazon Location's data for Bhilai is unknown.** We could not find a page that states its
-  coverage of India. The first hour of the work is a test with real addresses (Supela, Nehru Nagar, Risali, a
-  village farm): place search, a route, a matrix. If the answers are poor, we stop and take Google with a
-  development build, or stay with section 1.3 alone.
-- **Price.** Charged per request, with no minimum. We have not found the current rates per thousand; at demo
-  volume (hundreds of requests) it is cents either way, and the cost guard on the account already watches the
-  total.
+- **The map tiles themselves are not tested yet.** Drawing them needs an API key, which is created when the map is
+  built: one key, limited to reading map tiles and searching places, for this project only.
+- **Price.** Charged per request, with no minimum. Driving by car and the matrix are in the lowest price group;
+  scooter routes and the stop-ordering call are in the next one up. We have not found the current rates per
+  thousand; at demo volume (hundreds of requests) it is cents either way, and the cost guard on the account
+  already watches the total.
 - **A web view map is less smooth than a native one.** Acceptable for a pin on a map and a route line.
 - **The network map keeps OpenStreetMap's tiles until this is done**, with their attribution, at a handful of
   views a day.
@@ -93,7 +118,7 @@ which "the map did not load" means "the order cannot be placed" would put the wh
 call. And it lets delivery be built and tested before any maps work is done.
 
 **Costs.** Two code paths for distance. They are kept honest by one function that returns travel minutes between
-two points and says which method it used.
+two points and says which method it used. The straight-line path multiplies by 1.7, from the test in section 1.2.
 
 ### 1.4 Decision: what location we keep
 
@@ -424,7 +449,8 @@ the results.
   party; attribution; no bulk downloading): https://operations.osmfoundation.org/policies/tiles/
 - B. E. Gillett and L. R. Miller, "A Heuristic Algorithm for the Vehicle-Dispatch Problem", *Operations Research*
   22(2), 1974 (the sweep method): https://pubsonline.informs.org/doi/fpi/10.1287/opre.22.2.340
-- Not found: a page stating Amazon Location's map and address coverage for India, and its current price per
-  thousand requests. Both are to be checked before section 1.2 is built.
+- Not found: a page stating Amazon Location's map and address coverage for India (tested by us instead, in
+  section 1.2), and its current price per thousand requests.
+- Measured by us on 24 November 2026: every row of the table in section 1.2, from the service's own answers.
 - Our own, not from a source: every number given as a setting (4 orders, 10 minutes, 6 per trip, 30% off, 15
   seconds). They are starting values to be changed by what the simulated day shows.

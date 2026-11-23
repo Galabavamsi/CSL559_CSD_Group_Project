@@ -481,6 +481,57 @@ class CycleCountLine(Base):
     sku: Mapped[SKU] = relationship()
 
 
+# --------------------------------------------------------------------------- customers' orders
+
+class Order(Base):
+    """A signed-in customer's paid order: who it is for, where it goes, what each unit cost and how far along it is
+    (docs/DESIGN.md, section 2). Made when the customer's hold is confirmed; the hold and the pick job go on doing
+    the stock work. `order_id` is the hold's, chosen by the app, and is what the customer sees."""
+    __tablename__ = "orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[str] = mapped_column(String(60), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    reservation_id: Mapped[str] = mapped_column(ForeignKey("reservations.id"), unique=True)
+    # confirmed -> packed -> (pooled -> out_for_delivery -> delivered | delivery_failed), or cancelled
+    status: Mapped[str] = mapped_column(String(20), default="confirmed", index=True)
+    address_label: Mapped[str] = mapped_column(String(120))           # the area, e.g. "Supela, Bhilai"
+    address_line: Mapped[str] = mapped_column(String(120))            # house or flat and street
+    landmark: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    item_total: Mapped[float] = mapped_column(Float)
+    savings: Mapped[float] = mapped_column(Float, default=0)
+    delivery_fee: Mapped[float] = mapped_column(Float, default=0)
+    total: Mapped[float] = mapped_column(Float)
+    payment: Mapped[str] = mapped_column(String(20), default="stand_in")   # no gateway yet: no money moves
+    placed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    lines: Mapped[list["OrderLine"]] = relationship(order_by="OrderLine.id", cascade="all, delete-orphan")
+    events: Mapped[list["OrderEvent"]] = relationship(order_by="OrderEvent.id", cascade="all, delete-orphan")
+
+
+class OrderLine(Base):
+    """What the customer is charged for: units of one item at the price paid for each."""
+    __tablename__ = "order_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    sku_id: Mapped[int] = mapped_column(ForeignKey("skus.id"))
+    name: Mapped[str] = mapped_column(String(120))                    # as shown when it was bought
+    unit_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    qty: Mapped[int] = mapped_column(Integer)
+    unit_price: Mapped[float] = mapped_column(Float)                  # what was charged for one unit
+    list_price: Mapped[float] = mapped_column(Float)                  # the item's full price then; more if rescued
+
+
+class OrderEvent(Base):
+    """Each status an order has reached, and when: the customer's timeline."""
+    __tablename__ = "order_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20))
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class IdempotencyRecord(Base):
     """The first answer to a write request that carried an Idempotency-Key header (HLD 8). A retry with the same
     key gets this answer back instead of doing the write again. Saved in the same transaction as the write."""

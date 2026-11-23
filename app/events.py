@@ -32,11 +32,13 @@ Sink = Callable[[dict], None]
 sinks: list[Sink] = []      # modules add themselves with add_sink
 
 
-def subscribe(event_type: str):
-    """Decorator: register a function to run whenever `event_type` is published."""
+def subscribe(event_type: str, first: bool = False):
+    """Decorator: register a function to run whenever `event_type` is published. Handlers run in the order they were
+    registered, which is the order modules happen to be imported in; `first=True` puts a handler ahead of the
+    others, for the rare one whose record the rest then build on."""
     def register(fn: Handler) -> Handler:
         if fn not in _handlers[event_type]:
-            _handlers[event_type].append(fn)
+            _handlers[event_type].insert(0, fn) if first else _handlers[event_type].append(fn)
         return fn
     return register
 

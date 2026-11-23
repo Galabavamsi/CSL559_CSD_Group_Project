@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import type { AuthSession, User } from '@/api/types';
+import { storageName } from '@/config';
 import { secureStorage } from '@/lib/secureStorage';
 
 interface SessionState {
@@ -49,7 +50,7 @@ export const useSession = create<SessionState>()(
       signOut: () => set({ accessToken: null, accessTokenExpiresAt: null, refreshToken: null, user: null }),
     }),
     {
-      name: 'f2h.session',
+      name: storageName('f2h.session'),
       storage: createJSONStorage(() => secureStorage),
       partialize: ({ accessToken, accessTokenExpiresAt, refreshToken, user }) => ({
         accessToken,

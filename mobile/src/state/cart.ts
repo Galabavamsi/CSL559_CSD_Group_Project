@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import type { CartLine, Hold } from '@/api/types';
+import { storageName } from '@/config';
 
 /** The hold the customer is paying for, remembered so checkout survives leaving the screen or a restart. */
 export interface ActiveHold {
@@ -51,7 +52,7 @@ export const useCart = create<CartState>()(
       clear: () => set({ hubId: null, quantities: {}, hold: null }),
     }),
     {
-      name: 'f2h.cart',
+      name: storageName('f2h.cart'),
       storage: createJSONStorage(() => AsyncStorage),
       partialize: ({ hubId, quantities, hold }) => ({ hubId, quantities, hold }),
     },
