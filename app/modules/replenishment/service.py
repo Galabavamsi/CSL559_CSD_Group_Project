@@ -98,6 +98,8 @@ def _run(db: Session, store_id: int) -> dict:
     for level in levels:
         if level.reorder_stopped:                   # a manager is letting it run down
             continue
+        if level.sku.item_id is not None:           # farm produce comes from farms, never on a truck from the warehouse
+            continue
         position = level.qty_on_hand - level.qty_reserved + transit.get(level.sku_id, 0)
         if position < level.reorder_point:
             qty = _whole_cases(level.target_stock - position, level.sku.case_size)

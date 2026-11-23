@@ -10,13 +10,20 @@ export function pickedLabel(harvestDate: string | null): string | null {
   return `Picked ${daysAgo} days ago`;
 }
 
-/** "Use by today", "Use by tomorrow", "Use by Fri", "Use by 4 Dec"; null when the date is unknown. */
+/** A date this far off gets its year: sugar that keeps a year would otherwise read "Use by 24 Nov" on 24 November. */
+const SAY_THE_YEAR_AFTER_DAYS = 300;
+
+/**
+ * "Use by today", "Use by tomorrow", "Use by Fri", "Use by 4 Dec", "Use by 24 Nov 2027"; null when the date is
+ * unknown.
+ */
 export function useByLabel(useByDate: string | null): string | null {
   if (!useByDate) return null;
   const days = daysFromToday(useByDate);
   if (days <= 0) return 'Use by today';
   if (days === 1) return 'Use by tomorrow';
-  return `Use by ${shortDay(useByDate)}`;
+  const year = days > SAY_THE_YEAR_AFTER_DAYS ? ` ${useByDate.slice(0, 4)}` : '';
+  return `Use by ${shortDay(useByDate)}${year}`;
 }
 
 export const GRADE_EXPLANATION: Record<Grade, { title: string; body: string }> = {

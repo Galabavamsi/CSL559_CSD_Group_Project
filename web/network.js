@@ -45,7 +45,7 @@ function drawCells(cells, field, fill) {
   const most = Math.max(1, ...cells.map((c) => c[field]));
   for (const cell of cells.filter((c) => c[field] > 0)) {
     L.polygon(cell.boundary, { color: fill, weight: 1, fillColor: fill, fillOpacity: 0.3 + 0.6 * (cell[field] / most) })
-      .bindTooltip(`${cell.orders} paid orders, ${cell.misses} turned away`)
+      .bindTooltip(`${cell.orders} paid orders, ${cell.misses} turned away, ${cell.requests || 0} asked for delivery`)
       .addTo(layers);
   }
 }
@@ -88,7 +88,8 @@ async function load() {
 
   const sum = (field) => cells.reduce((total, c) => total + c[field], 0);
   $("totals").replaceChildren(
-    ...[["Paid orders", sum("orders")], ["Turned away", sum("misses")], ["Cells with demand", cells.length]]
+    ...[["Paid orders", sum("orders")], ["Turned away", sum("misses")], ["Asked for delivery", sum("requests")],
+        ["Cells with demand", cells.length]]
       .map(([label, value]) => el("div", {}, el("dt", {}, label), el("dd", {}, String(value)))));
 
   const chosen = cities.find((c) => c.city === $("city").value);

@@ -51,6 +51,29 @@ before a public release.
 | `assets/produce/sweet-corn.jpg` | Sweet corn | Nutrition, Food Safety & Health | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) | [Commons](https://commons.wikimedia.org/wiki/File:Corn_on_the_cob_(sweet_corn).jpg) |
 | `assets/produce/watermelon.jpg` | Watermelon | liz west from Boxborough, MA, USA | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) | [Commons](https://commons.wikimedia.org/wiki/File:Cut_watermelon_squared_circle_-_Flickr_-_Muffet.jpg) |
 
+## Photographs of packaged goods
+
+One photograph for each of the packaged items some hubs stock, from Wikimedia Commons in the same way as the
+produce photographs above: openly licensed, resized by Commons to 500 px wide and chosen by eye.
+
+| Photo | Shows | Author | Licence | Source |
+| --- | --- | --- | --- | --- |
+| `assets/produce/milk.jpg` | Milk | Daria-Yakovleva | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) | [Commons](https://commons.wikimedia.org/wiki/File:Milk_2.jpg) |
+| `assets/produce/curd.jpg` | Curd | Julikalucky | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) | [Commons](https://commons.wikimedia.org/wiki/File:Yoghurt_and_spoon.jpg) |
+| `assets/produce/paneer.jpg` | Paneer | Ian Brown | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) | [Commons](https://commons.wikimedia.org/wiki/File:Homemade_Paneer_cut_into_pieces_for_cooking_Cheese_Fromage_India.jpg) |
+| `assets/produce/bread.jpg` | Bread | Evan Swigart from Chicago, USA | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) | [Commons](https://commons.wikimedia.org/wiki/File:Homemade_White_Bread_with_Strawberry_Jam.jpg) |
+| `assets/produce/eggs.jpg` | Eggs | safaritravelplus | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) | [Commons](https://commons.wikimedia.org/wiki/File:A_Tray_Of_Eggs.jpg) |
+| `assets/produce/rice.jpg` | Rice | cookbookman17 | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) | [Commons](https://commons.wikimedia.org/wiki/File:Basmati_Rice_India,_raw.jpg) |
+| `assets/produce/atta.jpg` | Atta (wheat flour) | Margaret Hoogstrate | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0) | [Commons](https://commons.wikimedia.org/wiki/File:Whole_wheat_grain_flour_being_scooped.jpg) |
+| `assets/produce/sugar.jpg` | Sugar | Douglas P Perkins | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0) | [Commons](https://commons.wikimedia.org/wiki/File:Bowl_of_white_sugar_without_background.jpg) |
+| `assets/produce/tea.jpg` | Tea | HeroidShehu | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0) | [Commons](https://commons.wikimedia.org/wiki/File:Ceylon_tea_Leafs.JPG) |
+| `assets/produce/noodles.jpg` | Instant noodles | Ninosan | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) | [Commons](https://commons.wikimedia.org/wiki/File:Typical_instant_noodles.jpg) |
+| `assets/produce/chips.jpg` | Potato chips | Evan-Amos | Public domain | [Commons](https://commons.wikimedia.org/wiki/File:Potato-Chips.jpg) |
+| `assets/produce/oil.jpg` | Cooking oil | margenauer from Pixabay | [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) | [Commons](https://commons.wikimedia.org/wiki/File:Bottle_of_olive_oil.jpg) |
+| `assets/produce/ice-cream.jpg` | Ice cream | Benreis | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0) | [Commons](https://commons.wikimedia.org/wiki/File:Vanilleeis_Rote_Gr%C3%BCtze_Flensburg.JPG) |
+| `assets/produce/green-peas.jpg` | Green peas | Paul Wilkinson from London, United Kingdom | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) | [Commons](https://commons.wikimedia.org/wiki/File:Frozen_Peas_(8042519481).jpg) |
+| `assets/produce/soap.jpg` | Soap | TheLewisRepublic | Public domain | [Commons](https://commons.wikimedia.org/wiki/File:Soap_in_blue_dish.JPG) |
+
 ## Third-party
 
 | Asset or library | Used for | Licence | Source |

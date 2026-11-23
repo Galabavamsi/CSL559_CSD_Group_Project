@@ -5,8 +5,8 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Dialog, Portal, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Serviceability } from '@/api';
-import { useCities, useServiceability } from '@/api/queries';
+import { errorMessage, isApiError, type Serviceability, type ServiceRequestResult } from '@/api';
+import { useCities, useRequestService, useServiceability } from '@/api/queries';
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { Skeleton } from '@/components/Skeleton';
@@ -38,6 +38,27 @@ export default function DeliveryLocationScreen() {
   const cities = useCities();
   const check = useServiceability(point);
   const result = point ? check.data : undefined;
+
+  // Where nobody delivers yet, the customer can ask. The answer is remembered for the point it was asked at.
+  const requestService = useRequestService();
+  const [asked, setAsked] = useState<{ at: string; answer: ServiceRequestResult } | null>(null);
+  const pointKey = point ? `${point.lat},${point.lng}` : null;
+  const askedHere = asked !== null && asked.at === pointKey ? asked.answer : null;
+  const unserved = result !== undefined && !result.serviceable;
+
+  const ask = () => {
+    if (!point || pointKey === null) return;
+    requestService.mutate(
+      { point: { lat: point.lat, lng: point.lng }, label: point.label },
+      {
+        onSuccess: (answer) => setAsked({ at: pointKey, answer }),
+        // A hub opened here since the check: look again, and the screen offers delivery instead.
+        onError: (error) => {
+          if (isApiError(error, 'already_served')) void check.refetch();
+        },
+      },
+    );
+  };
 
   const save = (served: Extract<Serviceability, { serviceable: true }>) => {
     if (!point) return;
@@ -83,7 +104,10 @@ export default function DeliveryLocationScreen() {
               cities={cities.data}
               initialCitySlug={profileCity}
               value={point}
-              onChange={setPoint}
+              onChange={(next) => {
+                setPoint(next);
+                requestService.reset();
+              }}
             />
           </ScrollView>
 
@@ -102,10 +126,29 @@ export default function DeliveryLocationScreen() {
               loading={point !== null && check.isPending}
               failed={point !== null && check.isError}
               onRetry={() => check.refetch()}
+              asked={askedHere}
             />
-            <Button mode="contained" onPress={confirm} disabled={!result?.serviceable}>
-              Deliver here
-            </Button>
+            {unserved ? (
+              <>
+                {requestService.isError && askedHere === null ? (
+                  <Text variant="bodySmall" accessibilityRole="alert" style={{ color: colors.error }}>
+                    {errorMessage(requestService.error)}
+                  </Text>
+                ) : null}
+                <Button
+                  mode="contained"
+                  icon={askedHere ? 'check' : 'map-marker-plus-outline'}
+                  onPress={ask}
+                  loading={requestService.isPending}
+                  disabled={requestService.isPending || askedHere !== null}>
+                  {askedHere ? 'Request sent' : 'Request delivery here'}
+                </Button>
+              </>
+            ) : (
+              <Button mode="contained" onPress={confirm} disabled={!result?.serviceable}>
+                Deliver here
+              </Button>
+            )}
           </View>
         </>
       )}
@@ -141,14 +184,20 @@ interface ServiceabilityResultProps {
   loading: boolean;
   failed: boolean;
   onRetry: () => void;
+  /** The answer to this customer's request for delivery at this point, once they have asked. */
+  asked: ServiceRequestResult | null;
 }
 
 /** One fixed-height line of verdict above the confirm button: served by which hub and how soon, or not served. */
-function ServiceabilityResult({ point, result, loading, failed, onRetry }: ServiceabilityResultProps) {
+function ServiceabilityResult({ point, result, loading, failed, onRetry, asked }: ServiceabilityResultProps) {
   const { colors } = useAppTheme();
 
-  let icon: 'map-marker-outline' | 'map-marker-check-outline' | 'map-marker-off-outline' | 'alert-circle-outline' =
-    'map-marker-outline';
+  let icon:
+    | 'map-marker-outline'
+    | 'map-marker-check-outline'
+    | 'map-marker-off-outline'
+    | 'map-marker-plus-outline'
+    | 'alert-circle-outline' = 'map-marker-outline';
   let iconColor = colors.onSurfaceVariant;
   let title = 'No address chosen yet';
   let detail = 'Use your current location or pick an area above.';
@@ -171,6 +220,17 @@ function ServiceabilityResult({ point, result, loading, failed, onRetry }: Servi
       result.nearestHubName && result.nearestDistanceKm !== null
         ? `The nearest hub, ${result.nearestHubName}, is ${result.nearestDistanceKm.toFixed(1)} km away.`
         : 'No hub is close to this address.';
+    if (asked) {
+      icon = 'map-marker-plus-outline';
+      iconColor = colors.primary;
+      title = 'We have noted your request';
+      detail =
+        asked.othersNearby === 0
+          ? 'You are the first to ask from here. Hubs open where the most people ask.'
+          : `${asked.othersNearby} ${asked.othersNearby === 1 ? 'neighbour has' : 'neighbours have'} asked too. Hubs open where the most people ask.`;
+    } else {
+      detail += ' Ask for delivery here and we count it when choosing the next hub.';
+    }
   }
 
   return (

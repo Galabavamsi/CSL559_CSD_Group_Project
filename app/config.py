@@ -135,6 +135,11 @@ if not 0 <= RESCUE_DISCOUNT < 1:
 # site entered twice. DEMO_HUBS opens Bhilai's first hubs in the demo data; it is off for the tests, which count
 # the two Bangalore hubs.
 HUB_MIN_GAP_KM = float(os.getenv("HUB_MIN_GAP_KM", "0.5"))
+# A customer who asks for delivery where nobody serves (POST /v1/service-requests) counts for this many lookups
+# that were turned away when planning suggests new hubs, and is told how many others asked within this many H3
+# cells of them (3 rings at resolution 9 is about a kilometre).
+SERVICE_REQUEST_WEIGHT = int(os.getenv("SERVICE_REQUEST_WEIGHT", "5"))
+SERVICE_REQUEST_NEARBY_RINGS = int(os.getenv("SERVICE_REQUEST_NEARBY_RINGS", "3"))
 DEMO_HUBS = os.getenv("DEMO_HUBS", "off") == "on"
 LISTING_MAX_KG = float(os.getenv("LISTING_MAX_KG", "2000"))            # one lot
 LISTING_MAX_DAYS_AHEAD = int(os.getenv("LISTING_MAX_DAYS_AHEAD", "7")) # how long before its harvest a lot may be listed
@@ -146,6 +151,12 @@ INTAKE_OVER_TOLERANCE = float(os.getenv("INTAKE_OVER_TOLERANCE", "0.1"))   # a l
 # Add the produce items and their units (tomato, onion, spinach...) to the demo data. Off for the tests, which
 # count the original catalogue; on for a hosted copy.
 DEMO_PRODUCE = os.getenv("DEMO_PRODUCE", "off") == "on"
+# Demo farms (app/demo_supply.py): lots that arrive without a farmer, through the hub's ordinary intake, whenever a
+# hub has fewer than DEMO_SUPPLY_MIN_UNITS of an item on sale. A hosted demo's shops are then never empty. Off for
+# the tests and for the recorded demo, which shows a hub's first lot arriving at empty shelves.
+DEMO_SUPPLY = os.getenv("DEMO_SUPPLY", "off") == "on"
+DEMO_SUPPLY_INTERVAL_MINUTES = float(os.getenv("DEMO_SUPPLY_INTERVAL_MINUTES", "30"))
+DEMO_SUPPLY_MIN_UNITS = int(os.getenv("DEMO_SUPPLY_MIN_UNITS", "6"))
 
 # App users (customers, farmers, delivery agents) sign in with a six-digit code sent by email.
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "10"))           # a code is dead after this long

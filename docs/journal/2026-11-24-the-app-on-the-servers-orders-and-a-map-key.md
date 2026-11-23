@@ -81,7 +81,9 @@ too.
 - The handbook PDF and the video still describe orders as kept on the phone. They are not being rebuilt.
 - The key's value is not stored anywhere but AWS. When the map is built, the server will hand out the style
   address from its settings.
-- India's clock for "today" (above).
+- India's clock for "today" (above). Taken up straight after, as its own change: one place answers "what is the
+  date" with India's date, and tests set the clock to both sides of India's midnight (`docs/DESIGN.md`, section
+  3.4).
 
 ## Sources
 

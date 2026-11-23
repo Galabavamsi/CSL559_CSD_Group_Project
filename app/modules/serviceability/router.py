@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ... import seed
-from ...auth import require_role
+from ...auth import require_role, require_user_role
 from ...db import get_db
 from ...idempotency import run_once
 from . import service
@@ -17,6 +17,20 @@ router = APIRouter(tags=["serviceability"])
 def serviceability(lat: float = Query(ge=-90, le=90), lng: float = Query(ge=-180, le=180),
                    db: Session = Depends(get_db)):
     return service.check(db, lat, lng)
+
+
+class ServiceRequestIn(BaseModel):
+    lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    lng: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    label: str | None = Field(default=None, max_length=120, description="The area's name, e.g. Risali, Bhilai")
+
+
+@router.post("/v1/service-requests", status_code=201, summary="Ask for delivery where no hub serves yet")
+def request_service(body: ServiceRequestIn, user: dict = Depends(require_user_role("customer")),
+                    db: Session = Depends(get_db)):
+    """For a signed-in customer whose address got `serviceable: false`. The request is kept as the H3 cell and
+    counts towards where the next hub opens. Safe to repeat. `409 already_served` when a hub delivers there now."""
+    return service.request_service(db, user["user_id"], body.lat, body.lng, body.label)
 
 
 @router.post("/v1/admin/rebuild-zones", summary="Recalculate which store serves each H3 cell",

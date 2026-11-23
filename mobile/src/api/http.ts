@@ -7,6 +7,8 @@
  */
 import { useSession } from '@/state/session';
 
+import { aisleOf } from '@/features/catalogue/categories';
+
 import type { ApiClient } from './client';
 import { ApiError } from './errors';
 import type {
@@ -274,7 +276,7 @@ function toProduct(raw: RawShopRow): Product {
     id: raw.sku_id,
     name: raw.name,
     // Farm produce is grouped by its family; anything else by the category it is stocked under.
-    category: raw.family ? (CATEGORY_OF_FAMILY[raw.family] ?? slug(raw.family)) : slug(raw.category),
+    category: raw.family ? (CATEGORY_OF_FAMILY[raw.family] ?? slug(raw.family)) : aisleOf(slug(raw.category)),
     unitLabel: raw.unit_label,
     price: raw.price,
     markdownPrice: raw.rescue?.price ?? null,
@@ -560,6 +562,13 @@ export function createHttpClient(baseUrl: string): ApiClient {
 
     checkServiceability: async ({ lat, lng }) =>
       toServiceability(await request<RawServiceability>('GET', `/v1/serviceability?lat=${lat}&lng=${lng}`)),
+
+    requestService: async ({ lat, lng }, label) => {
+      const raw = await request<{ new: boolean; others_nearby: number }>('POST', '/v1/service-requests', {
+        body: { lat, lng, ...(label && { label }) },
+      });
+      return { isNew: raw.new, othersNearby: raw.others_nearby };
+    },
 
     listProducts: async (hubId) =>
       (await request<RawShopRow[]>('GET', `/v1/stores/${hubId}/shop`)).map(toProduct),

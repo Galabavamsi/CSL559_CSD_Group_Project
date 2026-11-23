@@ -79,6 +79,14 @@ export type Serviceability =
       nearestDistanceKm: number | null;
     };
 
+/** The answer to asking for delivery at a place no hub serves. */
+export interface ServiceRequestResult {
+  /** False when this customer had already asked from this spot. */
+  isNew: boolean;
+  /** Other customers who have asked from about a kilometre around. */
+  othersNearby: number;
+}
+
 export type Grade = 'A' | 'B';
 
 /**

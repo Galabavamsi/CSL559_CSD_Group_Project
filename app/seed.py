@@ -7,18 +7,22 @@ A few situations are planted on purpose so the demo has something to show:
   * Store 1, ice cream - exactly 1 left (shows two customers racing for the last unit)
   * Store 2, bananas   - out of stock (shows an item hidden from the customer)
 """
-from datetime import date, timedelta
+import logging
+from datetime import timedelta
 from functools import cache
 
 import h3
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import config
+from . import clock, config
 from .auth import hash_password
 from .db import SessionLocal, recreate_tables
+from .errors import DomainError
 from .models import SKU, City, ProduceItem, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
 from .modules.serviceability import service as serviceability
+
+log = logging.getLogger("darkstore.seed")
 
 # slug, name, tier, centre lat, centre lng, built-up radius (km), service radius of a new hub (km).
 # A tier-1 and a tier-2 city, to show how the same design is sized for each (HLD 12). Bangalore's hubs sit closer
@@ -104,11 +108,13 @@ BHILAI_HUBS = [
     ("BH-01 Civic Centre", 21.1938, 81.3509),
     ("BH-02 Nehru Nagar", 21.2090, 81.3260),
     ("BH-03 Durg", 21.1904, 81.2849),
+    ("BH-04 IIT Bhilai", 21.2400, 81.3170),         # by the road to the campus at Kutelabhata, 0.5 km from it
 ]
+HUBS_LOCK = 0x46324848      # "F2HH": two app instances starting together open the demo hubs once
 
 
 def seed(db: Session) -> None:
-    today = date.today()
+    today = clock.today()
     skus = []
     for n, (name, category, storage, shelf_life, price) in enumerate(SKUS, start=1):
         sku = SKU(name=name, category=category, barcode=f"890{n:010d}", storage_type=storage,
@@ -208,15 +214,27 @@ def add_produce(db: Session) -> int:
 
 
 def add_demo_hubs(db: Session) -> int:
-    """Open Bhilai's first hubs, with their demo logins, unless the city already has a hub. Returns how many were
-    opened. Does not commit."""
+    """Open each of Bhilai's demo hubs that is not there yet, with its demo logins. Returns how many were opened.
+    Does not commit. A hub added to BHILAI_HUBS later is opened at the next start; one that can no longer be opened
+    where it is listed (someone opened another hub on that spot) is skipped."""
     bhilai = db.scalar(select(City).where(City.slug == "bhilai"))
-    if bhilai is None or db.scalar(select(func.count()).select_from(Store).where(Store.city_id == bhilai.id)):
+    if bhilai is None:
         return 0
+    db.execute(select(func.pg_advisory_xact_lock(HUBS_LOCK)))      # held until the caller commits
+    have = set(db.scalars(select(Store.name).where(Store.city_id == bhilai.id)).all())
+    opened = 0
     for name, lat, lng in BHILAI_HUBS:
-        hub = serviceability.open_store(db, name, lat, lng, city="bhilai", actor="seed")
-        add_store_staff(db, hub["store_id"])
-    return len(BHILAI_HUBS)
+        if name in have:
+            continue
+        try:
+            with db.begin_nested():
+                hub = serviceability.open_store(db, name, lat, lng, city="bhilai", actor="seed")
+                add_store_staff(db, hub["store_id"])
+        except DomainError as error:
+            log.warning("demo hub %s was not opened: %s", name, error.message)
+            continue
+        opened += 1
+    return opened
 
 
 def add_store_staff(db: Session, store_id: int) -> list[str]:

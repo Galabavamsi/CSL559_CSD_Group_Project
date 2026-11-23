@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from ... import config, events
+from ... import clock, config, events
 from ...errors import DomainError, not_found
 from ...models import (SKU, Bin, Farm, GoodsReceipt, Listing, ProduceItem, QualityCheck, StockItem, Store, User,
                        utcnow)
@@ -22,7 +22,7 @@ from ..inbound import service as inbound
 from ..serviceability import service as serviceability
 
 GRADES = ("A", "B", "C", "reject")
-LOCAL = timedelta(minutes=config.LOCAL_UTC_OFFSET_MINUTES)       # the cities' clock, ahead of UTC
+LOCAL = clock.LOCAL
 
 
 def kg(grams: int) -> float:

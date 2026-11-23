@@ -206,15 +206,16 @@ def test_the_demo_setting_opens_bhilais_hubs_once(client, db, monkeypatch):
     db.commit()
     again = seed.add_demo_hubs(db)
 
-    assert (opened, again) == (3, 0)
+    assert (opened, again) == (4, 0)
     names = [s["name"] for s in client.get("/v1/stores", params={"city": "bhilai"}).json()]
-    assert names == ["BH-01 Civic Centre", "BH-02 Nehru Nagar", "BH-03 Durg"]
+    assert names == ["BH-01 Civic Centre", "BH-02 Nehru Nagar", "BH-03 Durg", "BH-04 IIT Bhilai"]
     served = {area: client.get("/v1/serviceability", params={"lat": lat, "lng": lng}).json()["serviceable"]
               for area, (lat, lng) in {"Civic Centre": CIVIC_CENTRE, "Supela": SUPELA, "Nehru Nagar": (21.209, 81.326),
                                        "Smriti Nagar": (21.219, 81.318), "Durg Station Road": (21.1904, 81.2849),
+                                       "IIT Bhilai": (21.2444, 81.3176),
                                        "Risali": RISALI, "Kumhari": (21.266, 81.519)}.items()}
     assert served == {"Civic Centre": True, "Supela": True, "Nehru Nagar": True, "Smriti Nagar": True,
-                      "Durg Station Road": True, "Risali": False, "Kumhari": False}
+                      "Durg Station Road": True, "IIT Bhilai": True, "Risali": False, "Kumhari": False}
     assert db.scalar(select(func.count()).select_from(Staff).where(Staff.username == "receiver3")) == 1
 
 
@@ -224,5 +225,39 @@ def test_a_database_seeded_before_bhilai_had_hubs_gets_them_at_the_next_start(db
     seeded = seed.seed_if_empty(db)
 
     assert seeded is False
-    assert db.scalar(select(func.count()).select_from(Store)) == 5
+    assert db.scalar(select(func.count()).select_from(Store)) == 6
     assert isinstance(db.scalar(select(EventLog.ts).where(EventLog.type == "store.opened").limit(1)), datetime)
+
+
+def test_a_hub_added_to_the_demo_later_is_opened_beside_the_ones_already_there(client, db, monkeypatch):
+    """Staging had three Bhilai hubs when the fourth was added to the list."""
+    monkeypatch.setattr(config, "DEMO_HUBS", True)
+    every = seed.BHILAI_HUBS
+    monkeypatch.setattr(seed, "BHILAI_HUBS", every[:3])
+    assert seed.add_demo_hubs(db) == 3
+    db.commit()
+    smriti_nagar = client.get("/v1/serviceability", params={"lat": 21.219, "lng": 81.318}).json()["store"]
+    monkeypatch.setattr(seed, "BHILAI_HUBS", every)
+
+    opened = seed.add_demo_hubs(db)
+    db.commit()
+
+    assert opened == 1
+    iit = client.get("/v1/serviceability", params={"lat": 21.2444, "lng": 81.3176}).json()
+    assert (iit["serviceable"], iit["store"]) == (True, "BH-04 IIT Bhilai")
+    # the hubs that were there keep the places nearer to them, and the new one has its own logins
+    assert client.get("/v1/serviceability", params={"lat": 21.219, "lng": 81.318}).json()["store"] == smriti_nagar
+    assert db.scalar(select(func.count()).select_from(Staff).where(Staff.username == f"receiver{iit['store_id']}")) == 1
+
+
+def test_a_demo_hub_that_can_no_longer_be_opened_where_it_is_listed_is_skipped(client, db, monkeypatch):
+    monkeypatch.setattr(config, "DEMO_HUBS", True)
+    taken = client.post("/v1/admin/stores", json={"name": "Someone else's hub", "lat": 21.2401, "lng": 81.3171})
+    assert taken.status_code == 201, taken.text
+
+    opened = seed.add_demo_hubs(db)
+    db.commit()
+
+    assert opened == 3                                  # the fourth would stand on the hub just opened
+    names = [s["name"] for s in client.get("/v1/stores", params={"city": "bhilai"}).json()]
+    assert "BH-04 IIT Bhilai" not in names and "BH-03 Durg" in names

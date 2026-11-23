@@ -4,10 +4,11 @@ Before the fix, the empty-shelf write-off also took the units already in the pic
 409 stock_mismatch. Now the write-off leaves tote units alone, and a scan of the expired batch is refused, so the
 picker reports the rest Not on shelf and it is picked from a fresh batch.
 Store 1 has 6 milk in batch M-OLD (expires tomorrow) and 24 in M-NEW."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
+from app import clock
 from app.models import StockItem, StockLedger
 from app.modules.inventory import service as inventory
 
@@ -17,7 +18,7 @@ from .test_order_flow import next_job, scan_all
 
 def expire_m_old(db) -> int:
     """M-OLD expired at midnight and the hourly write-off has run. Returns the units it wrote off."""
-    db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD")).expiry_date = date.today() - timedelta(days=1)
+    db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD")).expiry_date = clock.today() - timedelta(days=1)
     db.commit()
     return inventory.expire_stock(db)
 
@@ -70,7 +71,7 @@ def test_an_expired_batch_the_hourly_job_has_not_reached_is_refused_too(client, 
     place_paid_order(client, "x-2", 1, [(sku("Toned milk"), 2)])
     job = next_job(client)
     [line] = job["tasks"]
-    db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD")).expiry_date = date.today() - timedelta(days=1)
+    db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD")).expiry_date = clock.today() - timedelta(days=1)
     db.commit()
 
     scan = client.post(f"/v1/pick-tasks/{line['task_id']}/scans", json={"barcode": line["barcode"], "qty": 2}).json()

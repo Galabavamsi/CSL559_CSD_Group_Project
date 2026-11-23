@@ -9,11 +9,12 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, update
 
+from app import clock
 from app.db import SessionLocal
 from app.errors import DomainError
 from app.models import SKU, Bin, StockItem, StockLedger
@@ -84,7 +85,7 @@ def test_with_more_sellers_than_bins_the_slowest_keeps_its_place(db, sku):
     kulfi = new_sku.id
     assortment.add_sku(db, 1, kulfi)
     first = db.scalar(select(Bin).where(Bin.store_id == 1, Bin.code == "F-01-01"))
-    inventory.receive(db, 1, kulfi, 5, first.id, "K1", date.today() + timedelta(days=90), "test", "test")
+    inventory.receive(db, 1, kulfi, 5, first.id, "K1", clock.today() + timedelta(days=90), "test", "test")
     db.commit()
     plant_sales(db, {kulfi: every_day(9), ice_cream: every_day(4), peas: every_day(1)})
     plan = slotting.plan(db, 1)
@@ -218,7 +219,7 @@ def scan_in(client, db, receipt_id: int, sku_id: int, qty: int) -> None:
     sku = db.get(SKU, sku_id)
     scanned = client.post(f"/v1/goods-receipts/{receipt_id}/scans", json={
         "barcode": sku.barcode, "qty": qty, "batch_no": "NEW",
-        "expiry_date": (date.today() + timedelta(days=sku.shelf_life_days)).isoformat()})
+        "expiry_date": (clock.today() + timedelta(days=sku.shelf_life_days)).isoformat()})
     assert scanned.status_code == 200, scanned.text
 
 
@@ -333,7 +334,7 @@ def test_expired_batches_are_left_for_the_write_off(db, sku):
     chips = sku("Potato chips")
     plant_sales(db, {chips: every_day(9)})
     db.execute(update(StockItem).where(StockItem.store_id == 1, StockItem.sku_id == chips)
-               .values(expiry_date=date.today() - timedelta(days=1)))
+               .values(expiry_date=clock.today() - timedelta(days=1)))
     db.commit()
     assert chips not in moves_of(slotting.plan(db, 1))
 

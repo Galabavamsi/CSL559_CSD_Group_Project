@@ -14,7 +14,7 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ... import config
+from ... import clock, config
 from ...models import SKU, Bin, Farm, FulfilmentJob, Listing, PickTask, ProduceItem, QualityCheck, StockItem
 from ..inventory import service as inventory
 
@@ -38,7 +38,7 @@ def shop(db: Session, store_id: int) -> list[dict]:
     no other order is waiting for. `rescue` is there when units in their last day can be bought, with the lower
     price and how many units it applies to; an order for more pays the full price for the rest."""
     rows = inventory.availability(db, store_id)
-    today = date.today()
+    today = clock.today()
     promised = dict(db.execute(
         select(PickTask.stock_item_id, func.sum(PickTask.qty))
         .join(FulfilmentJob, FulfilmentJob.id == PickTask.job_id)

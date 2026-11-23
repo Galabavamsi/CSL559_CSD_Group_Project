@@ -5,11 +5,11 @@ gives each selling SKU a home bin, fastest nearest, and lists the batches to mov
 inventory.move. New deliveries go to the planned home bin first; otherwise a SKU is kept together, then the
 emptiest bin in the right temperature zone is used, and a bin is never filled past its capacity.
 """
-from datetime import date
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from ... import clock
 from ...errors import DomainError
 from ...models import SKU, Bin, StockItem, StockLevel
 from ..forecasting import service as forecasting
@@ -64,7 +64,7 @@ def plan(db: Session, store_id: int, days: int = VELOCITY_DAYS) -> dict:
     for item in items:
         held[item.bin_id][item.sku_id] = held[item.bin_id].get(item.sku_id, 0) + item.qty
     moves: list[dict] = []
-    fresh = [item for item in items if item.expiry_date >= date.today()]       # what inventory.allocate would pick
+    fresh = [item for item in items if item.expiry_date >= clock.today()]       # what inventory.allocate would pick
 
     def move(item: StockItem, to: Bin) -> None:
         moves.append({"stock_item_id": item.id, "sku_id": item.sku_id, "sku": item.sku.name,

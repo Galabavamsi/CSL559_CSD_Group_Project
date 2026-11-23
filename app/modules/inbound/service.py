@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ... import config, events
+from ... import clock, config, events
 from ...errors import DomainError, not_found
 from ...models import SKU, Bin, GoodsReceipt, GoodsReceiptLine, TransferOrder, TransferOrderLine, utcnow
 from ..inventory import service as inventory
@@ -105,13 +105,13 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
     sku = db.scalar(select(SKU).where(SKU.barcode == barcode))
     if sku is None:
         raise DomainError(422, "unknown_barcode", f"No product has barcode {barcode}")
-    expiry = expiry_date or date.today() + timedelta(days=sku.shelf_life_days)
+    expiry = expiry_date or clock.today() + timedelta(days=sku.shelf_life_days)
     batch_no = batch_no or f"B{expiry:%y%m%d}"
     line = next((ln for ln in receipt.lines if ln.sku_id == sku.id and ln.batch_no == batch_no), None)
     if line is not None and line.expiry_date != expiry:
         raise DomainError(422, "batch_mismatch", f"Batch {batch_no} of {sku.name} was scanned with expiry "
                                                  f"{line.expiry_date}, not {expiry}")
-    days_left = (expiry - date.today()).days
+    days_left = (expiry - clock.today()).days
     if damaged:
         outcome, reason = "damaged", "Damaged on arrival: recorded, never stocked"
     elif days_left < config.MIN_REMAINING_SHELF_LIFE * sku.shelf_life_days:

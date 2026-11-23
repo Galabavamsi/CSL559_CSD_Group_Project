@@ -166,6 +166,9 @@ export function createMockClient(): ApiClient {
     return row ? Math.max(0, row.onHand - row.reserved) : 0;
   }
 
+  /** Places this run's customer has asked for delivery at. */
+  const serviceRequests = new Set<string>();
+
   /** Give back the stock of every hold whose time has run out. The real API does this on a timer. */
   function sweepExpiredHolds(): void {
     const now = Date.now();
@@ -396,6 +399,18 @@ export function createMockClient(): ApiClient {
       delay(() => HUBS.filter((hub) => citySlug === undefined || hub.city === citySlug).map((hub) => ({ ...hub }))),
 
     checkServiceability: (point) => delay(() => serviceabilityOf(point)),
+
+    requestService: (point) =>
+      delay(() => {
+        currentUser();
+        if (serviceabilityOf(point).serviceable) {
+          throw new ApiError(409, 'already_served', 'A hub delivers to this address now');
+        }
+        const key = `${point.lat.toFixed(3)},${point.lng.toFixed(3)}`;
+        const isNew = !serviceRequests.has(key);
+        serviceRequests.add(key);
+        return { isNew, othersNearby: 3 }; // the demo's neighbours
+      }),
 
     listProducts: (hubId) =>
       delay(() => {

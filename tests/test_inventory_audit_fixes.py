@@ -2,12 +2,12 @@
 
 Store 1 has 30 rice and 30 sugar, each in one ambient bin, 4 white bread, and one vanilla ice cream and 30 peas in
 frozen bins; store 2 stocks rice too."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 
-from app import db as app_db
+from app import clock, db as app_db
 from app import seed
 from app.db import Base
 from app.errors import DomainError
@@ -129,7 +129,7 @@ def test_a_cycle_count_still_records_what_is_on_the_shelf_wherever_it_is(client,
 
 
 def receive(db, sku_id: int, bin_id: int, batch_no: str, expires_in: int, qty: int = 5) -> StockItem:
-    return inventory.receive(db, 1, sku_id, qty, bin_id, batch_no, date.today() + timedelta(days=expires_in))
+    return inventory.receive(db, 1, sku_id, qty, bin_id, batch_no, clock.today() + timedelta(days=expires_in))
 
 
 def test_a_named_batch_arriving_with_another_expiry_date_is_refused(client, db, sku):
@@ -146,8 +146,8 @@ def test_a_named_batch_arriving_with_another_expiry_date_is_refused(client, db, 
 
     assert (refused.value.status, refused.value.code) == (409, "batch_expiry_mismatch")
     assert refused.value.details == {"batch_no": "LOT-7",
-                                     "expiry_date": (date.today() + timedelta(days=2)).isoformat()}
-    assert (same_date.qty, same_date.expiry_date) == (10, date.today() + timedelta(days=2))
+                                     "expiry_date": (clock.today() + timedelta(days=2)).isoformat()}
+    assert (same_date.qty, same_date.expiry_date) == (10, clock.today() + timedelta(days=2))
     assert level(client, sugar) == (40, 0)
     assert_stock_is_consistent()
 
@@ -175,7 +175,7 @@ def test_an_emptied_batch_number_can_come_round_again_with_a_new_date(client, db
     again = receive(db, sugar, bin_id, "LOT-9", expires_in=300)
     db.commit()
 
-    assert (again.qty, again.expiry_date) == (5, date.today() + timedelta(days=300))
+    assert (again.qty, again.expiry_date) == (5, clock.today() + timedelta(days=300))
     assert_stock_is_consistent()
 
 

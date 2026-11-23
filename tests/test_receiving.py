@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import func, select, update
 
+from app import clock
 from app.db import SessionLocal
 from app.errors import DomainError
 from app.models import SKU, Bin, StockItem, StockLedger, TransferOrder
@@ -18,7 +19,7 @@ from .conftest import assert_stock_is_consistent, atp
 
 
 def in_days(n: int) -> str:
-    return (date.today() + timedelta(days=n)).isoformat()
+    return (clock.today() + timedelta(days=n)).isoformat()
 
 
 def open_truck(client, store_id: int = 1) -> tuple[dict, dict]:
@@ -376,7 +377,7 @@ def test_a_batch_without_a_number_is_named_after_its_expiry_date(client, db, sku
     the first batch and took its date. Two dates of one SKU in one receipt were a 422 batch_mismatch for the same
     reason."""
     sugar = sku("Sugar")
-    early, late = date.today() + timedelta(days=200), date.today() + timedelta(days=300)
+    early, late = clock.today() + timedelta(days=200), clock.today() + timedelta(days=300)
 
     def stocked() -> dict[date, tuple[set, int]]:
         """Batch names and units of sugar per expiry date."""
@@ -689,7 +690,7 @@ def test_a_line_whose_batch_number_reached_the_shelf_with_another_date_gets_no_b
     receipt = open_receipt(client)
     assert scan(client, db, receipt, bread, 4).status_code == 200       # LOT1, expiring in 4 days
     inventory.receive(db, 1, bread, 5, slotting.suggest_bin(db, 1, bread).id, "LOT1",
-                      date.today() + timedelta(days=3))
+                      clock.today() + timedelta(days=3))
     db.commit()
     [task] = tasks_for(client, receipt, bread)
     assert (task["bin_code"], task["qty"]) == (None, 4) and "send_back" in task["problem"]

@@ -1,5 +1,6 @@
 /**
- * A photograph for each kind of produce in the catalogue, shown when a product has no photo of its own.
+ * A photograph for each kind of produce in the catalogue, and for each packaged item a hub stocks, shown when a
+ * product has no photo of its own.
  *
  * These are openly licensed photographs from Wikimedia Commons (public domain, CC0 or CC BY), found through the
  * Firecrawl CLI and chosen by eye. Each one's author, licence and source page is in `assets/produce/credits.json`
@@ -10,6 +11,23 @@
 export type BundledImage = number;
 
 const PHOTOS: [string, BundledImage][] = [
+  // Packaged goods. "potato chips" has to be met before "potato", and "green peas" is nobody's chilli.
+  ['potato chips', require('../../../assets/produce/chips.jpg')],
+  ['green peas', require('../../../assets/produce/green-peas.jpg')],
+  ['ice cream', require('../../../assets/produce/ice-cream.jpg')],
+  ['noodles', require('../../../assets/produce/noodles.jpg')],
+  ['paneer', require('../../../assets/produce/paneer.jpg')],
+  ['bread', require('../../../assets/produce/bread.jpg')],
+  ['sugar', require('../../../assets/produce/sugar.jpg')],
+  ['atta', require('../../../assets/produce/atta.jpg')],
+  ['curd', require('../../../assets/produce/curd.jpg')],
+  ['milk', require('../../../assets/produce/milk.jpg')],
+  ['rice', require('../../../assets/produce/rice.jpg')],
+  ['soap', require('../../../assets/produce/soap.jpg')],
+  ['eggs', require('../../../assets/produce/eggs.jpg')],
+  ['oil', require('../../../assets/produce/oil.jpg')],
+  ['tea', require('../../../assets/produce/tea.jpg')],
+  // Produce.
   ['fenugreek leaves', require('../../../assets/produce/fenugreek-leaves.jpg')],
   ['bottle gourd', require('../../../assets/produce/bottle-gourd.jpg')],
   ['curry leaves', require('../../../assets/produce/curry-leaves.jpg')],
@@ -49,14 +67,30 @@ const ALSO_KNOWN_AS: Record<string, string> = {
   scallion: 'spring onion',
   corn: 'sweet corn',
   lauki: 'bottle gourd',
+  flour: 'atta',
+  yogurt: 'curd',
+  yoghurt: 'curd',
+  dahi: 'curd',
+  crisps: 'potato chips',
 };
 
-/** The catalogue photo for a product name such as "Tomato" or "Tomato, 500 g", or null when there is none. */
+/** True when `word` begins at the start of a word of `text`: "oil" is in "sunflower oil" but not in "boiled". */
+function startsAWord(text: string, word: string): boolean {
+  for (let at = text.indexOf(word); at !== -1; at = text.indexOf(word, at + 1)) {
+    if (at === 0 || !/[a-z]/.test(text[at - 1])) return true;
+  }
+  return false;
+}
+
+/**
+ * The catalogue photo for a product name such as "Tomato", "Bananas (6 pcs)" or "Sunflower oil 1 L", or null when
+ * there is none.
+ */
 export function producePhoto(name: string): BundledImage | null {
   let wanted = name.toLowerCase();
   for (const [other, ours] of Object.entries(ALSO_KNOWN_AS)) {
-    if (wanted.includes(other)) wanted = ours;
+    if (startsAWord(wanted, other)) wanted = ours;
   }
-  const match = PHOTOS.find(([produce]) => wanted.includes(produce));
+  const match = PHOTOS.find(([produce]) => startsAWord(wanted, produce));
   return match ? match[1] : null;
 }

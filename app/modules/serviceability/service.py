@@ -12,12 +12,12 @@ import math
 
 import h3
 from sqlalchemy import delete, func, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
 from ... import config, events
 from ...errors import DomainError
-from ...models import Bin, City, ServiceabilityMiss, Store, StoreZone
+from ...models import Bin, City, ServiceabilityMiss, ServiceRequest, Store, StoreZone
 
 log = logging.getLogger(__name__)
 
@@ -176,6 +176,46 @@ def open_store(db: Session, name: str, lat: float, lng: float, city: str | None 
             "bins": sum(len(zone) for zone in bins.values()), "zone_cells": cells}
 
 
+def _serving(db: Session, cell: str) -> tuple[Store, StoreZone] | None:
+    """The store that delivers to this cell right now, with the cell's zone row; None when nobody does. A closed
+    store serves nobody, and a busy one only the inner part of its zone."""
+    zone = db.get(StoreZone, cell)
+    store = db.get(Store, zone.store_id) if zone else None
+    if store is None or store.status == "closed":
+        return None
+    reach_km = store.radius_km * (config.BUSY_RADIUS_FACTOR if store.status == "busy" else 1)
+    return (store, zone) if zone.distance_km <= reach_km else None
+
+
+def request_service(db: Session, user_id: int, lat: float, lng: float, label: str | None) -> dict:
+    """A customer asks for delivery at a place nobody serves. Kept as the H3 cell, the customer and the area's name;
+    planning counts it as demand for a new hub. Asking again from the same cell is the same request. The answer
+    says how many other customers have asked from about a kilometre around. Commits.
+    409 already_served when a hub delivers there now: there is nothing to ask for."""
+    cell = h3.latlng_to_cell(lat, lng, config.H3_RESOLUTION)
+    serving = _serving(db, cell)
+    if serving is not None:
+        store = serving[0]
+        raise DomainError(409, "already_served", f"{store.name} delivers to this address now",
+                          {"store_id": store.id, "store": store.name})
+    mine = db.scalar(select(ServiceRequest).where(ServiceRequest.user_id == user_id, ServiceRequest.h3_cell == cell))
+    new = mine is None
+    if new:
+        db.add(ServiceRequest(user_id=user_id, h3_cell=cell, label=(label or "").strip() or None))
+        try:
+            db.commit()
+        except IntegrityError:          # two taps at once: the other one saved it
+            db.rollback()
+            new = False
+    around = list(h3.grid_disk(cell, config.SERVICE_REQUEST_NEARBY_RINGS))
+    others = db.scalar(select(func.count(func.distinct(ServiceRequest.user_id)))
+                       .where(ServiceRequest.h3_cell.in_(around), ServiceRequest.user_id != user_id))
+    nearest = nearest_store(db, lat, lng)
+    return {"requested": True, "new": new, "h3_cell": cell, "others_nearby": others,
+            "nearest_store": nearest[0].name if nearest else None,
+            "nearest_distance_km": round(nearest[1], 2) if nearest else None}
+
+
 def check(db: Session, lat: float, lng: float) -> dict:
     """Find the store that serves this point (FR-1): one lookup of the point's H3 cell.
 
@@ -185,14 +225,12 @@ def check(db: Session, lat: float, lng: float) -> dict:
     A point no store serves is saved as a miss (cell and time only) and commits.
     """
     cell = h3.latlng_to_cell(lat, lng, config.H3_RESOLUTION)
-    zone = db.get(StoreZone, cell)
-    store = db.get(Store, zone.store_id) if zone else None
-    if store is not None and store.status != "closed":
-        reach_km = store.radius_km * (config.BUSY_RADIUS_FACTOR if store.status == "busy" else 1)
-        if zone.distance_km <= reach_km:
-            return {"serviceable": True, "store_id": store.id, "store": store.name, "status": store.status,
-                    "distance_km": round(zone.distance_km, 2), "eta_minutes": eta_minutes(store, zone.distance_km),
-                    "h3_cell": cell}
+    serving = _serving(db, cell)
+    if serving is not None:
+        store, zone = serving
+        return {"serviceable": True, "store_id": store.id, "store": store.name, "status": store.status,
+                "distance_km": round(zone.distance_km, 2), "eta_minutes": eta_minutes(store, zone.distance_km),
+                "h3_cell": cell}
     # shortcut: any caller can add misses by repeating lookups; rate limiting (task 4.7) is the cure.
     try:
         db.add(ServiceabilityMiss(h3_cell=cell))

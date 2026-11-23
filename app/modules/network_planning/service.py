@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ... import config
-from ...models import Reservation, ServiceabilityMiss, Store, StoreZone, utcnow
+from ...models import Reservation, ServiceabilityMiss, ServiceRequest, Store, StoreZone, utcnow
 from ..serviceability.service import distance_km
 
 PAID = ("confirmed", "fulfilled")
@@ -28,23 +28,41 @@ def _misses_per_cell(db: Session, days: int) -> dict[str, int]:
     return _per_cell(db, ServiceabilityMiss.h3_cell, ServiceabilityMiss.ts >= utcnow() - timedelta(days=days))
 
 
+def _requests_per_cell(db: Session, days: int) -> dict[str, int]:
+    """Customers who asked for delivery from each cell (POST /v1/service-requests) in the last `days` days."""
+    return _per_cell(db, ServiceRequest.h3_cell, ServiceRequest.ts >= utcnow() - timedelta(days=days))
+
+
+def _unmet_per_cell(db: Session, days: int) -> dict[str, int]:
+    """Demand nobody served, per cell: every lookup turned away counts once, and every customer who went on to
+    ask for delivery there counts SERVICE_REQUEST_WEIGHT more."""
+    unmet = _misses_per_cell(db, days)
+    for cell, asked in _requests_per_cell(db, days).items():
+        unmet[cell] = unmet.get(cell, 0) + asked * config.SERVICE_REQUEST_WEIGHT
+    return unmet
+
+
 def heatmap(db: Session, days: int = 30) -> list[dict]:
-    """Paid orders and misses per H3 cell over the last `days` days, with each cell's outline for a map."""
+    """Paid orders, misses and requests for delivery per H3 cell over the last `days` days, with each cell's
+    outline for a map."""
     since = utcnow() - timedelta(days=days)
     orders = _per_cell(db, Reservation.h3_cell, Reservation.h3_cell.is_not(None),
                        Reservation.status.in_(PAID), Reservation.created_at >= since)
     misses = _misses_per_cell(db, days)
+    requests = _requests_per_cell(db, days)
     rows = []
-    for cell in sorted(orders.keys() | misses.keys()):
+    for cell in sorted(orders.keys() | misses.keys() | requests.keys()):
         lat, lng = h3.cell_to_latlng(cell)
         rows.append({"h3_cell": cell, "lat": round(lat, 6), "lng": round(lng, 6),
                      "boundary": [[round(a, 6), round(b, 6)] for a, b in h3.cell_to_boundary(cell)],
-                     "orders": orders.get(cell, 0), "misses": misses.get(cell, 0)})
+                     "orders": orders.get(cell, 0), "misses": misses.get(cell, 0),
+                     "requests": requests.get(cell, 0)})
     return rows
 
 
 def suggest_sites(db: Session, k: int = 3, days: int = 30) -> list[dict]:
-    """Up to `k` new store sites by greedy maximum coverage of unmet demand (misses in the last `days` days).
+    """Up to `k` new store sites by greedy maximum coverage of unmet demand (misses in the last `days` days, and
+    customers' requests for delivery, which weigh more).
 
     Candidates are the cells with misses, except NO_GO_CELLS and cells already inside a store's zone (a busy
     store's turned-away customers still count as demand, but the new store goes outside existing zones).
@@ -52,7 +70,7 @@ def suggest_sites(db: Session, k: int = 3, days: int = 30) -> list[dict]:
     central one), then removes that demand. Stops early when no candidate would gain anything, so it may
     return fewer than `k` sites.
     """
-    unmet = _misses_per_cell(db, days)
+    unmet = _unmet_per_cell(db, days)
     excluded = set(config.NO_GO_CELLS) | set(db.scalars(select(StoreZone.h3_cell)))
     # shortcut: only the MAX_CANDIDATES busiest cells are tried, which bounds the work however many misses
     # pile up; a site centred on a quiet cell inside a big cluster can be missed. Raise the cap if that bites.
