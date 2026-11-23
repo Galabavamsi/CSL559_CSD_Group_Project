@@ -9,13 +9,13 @@ the hub already publishes and moves the order in the publisher's transaction, so
 disagree: both change or neither does.
 """
 import contextvars
-from datetime import date, datetime
+from datetime import datetime
 
 import h3
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ... import config, events
+from ... import clock, config, events
 from ...errors import DomainError
 from ...models import (SKU, FulfilmentJob, Order, OrderEvent, OrderLine, PickTask, Reservation, Store, StoreZone,
                        utcnow)
@@ -91,7 +91,7 @@ def _lines_if_paid_now(db: Session, res: Reservation) -> list[OrderLine]:
     It asks the hub's own allocation which units would be picked, oldest batch first, and prices the ones in their
     last day at the rescue price: the walk `_price_by_batch` reads back from the pick tasks after payment. Units
     the hub would not find are left at the full price here; at payment they leave the order."""
-    today = date.today()
+    today = clock.today()
     lines = []
     for held in res.lines:
         sku = db.get(SKU, held.sku_id)
@@ -216,7 +216,7 @@ def _price_by_batch(db: Session, order: Order, job_id: int) -> None:
     """Price the order by what will be picked (docs/DESIGN.md, section 3.2): units the hub has allocated from a
     batch in its last day cost the rescue price, the rest the full price. It reads the pick tasks the hub has just
     created, so the bill and the picking cannot disagree about which units were the cheap ones. Does not commit."""
-    today = date.today()
+    today = clock.today()
     units: dict[tuple[int, float], int] = {}                # (sku, price charged) -> units
     skus: dict[int, SKU] = {}
     for task in db.scalars(select(PickTask).where(PickTask.job_id == job_id, PickTask.status == "pending")

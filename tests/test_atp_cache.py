@@ -1,10 +1,10 @@
 """ATP cache (HLD 9.2, task 1.6): whole-store availability is served from a short-lived cache that every stock change
 clears, and holds never trust it."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
-from app import cache, seed
+from app import cache, clock, seed
 from app.cache import TTLCache, atp_cache
 from app.db import SessionLocal
 from app.models import StockItem
@@ -50,7 +50,7 @@ def test_a_stale_cache_cannot_cause_an_oversell(client, sku):
 
 
 def expire_a_batch(db):
-    db.scalar(select(StockItem).where(StockItem.store_id == 1, StockItem.batch_no == "M-OLD")).expiry_date =         date.today() - timedelta(days=1)
+    db.scalar(select(StockItem).where(StockItem.store_id == 1, StockItem.batch_no == "M-OLD")).expiry_date =         clock.today() - timedelta(days=1)
     db.commit()
     assert inventory.expire_stock(db, 1) == 6
 

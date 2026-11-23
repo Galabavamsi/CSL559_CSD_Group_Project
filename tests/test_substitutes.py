@@ -4,11 +4,12 @@
 Store 1 has one vanilla ice cream (Rs 120, Frozen) and 30 frozen green peas (Rs 95, Frozen). Rice (Rs 140), oil
 (Rs 155), sugar (Rs 48) and atta (Rs 245), 30 of each, each in one bin, are each a category of their own (#62); tests
 that need several items to choose from put them in one with the `staples` fixture."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select, update
 
+from app import clock
 from app.cache import atp_cache
 from app.db import SessionLocal
 from app.models import SKU, StockItem
@@ -119,7 +120,7 @@ def test_units_that_cannot_be_found_when_the_order_is_paid_are_refunded_too(clie
     milk = sku("Toned milk")
     hold_id = client.post("/v1/reservations", json={"order_id": "s-9", "store_id": 1,
                                                     "lines": [{"sku_id": milk, "qty": 26}]}).json()["reservation_id"]
-    db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD")).expiry_date = date.today() - timedelta(days=1)
+    db.scalar(select(StockItem).where(StockItem.batch_no == "M-OLD")).expiry_date = clock.today() - timedelta(days=1)
     db.commit()
 
     assert client.post(f"/v1/reservations/{hold_id}/confirm").status_code == 200
@@ -324,7 +325,7 @@ def test_a_substitute_whose_only_batch_has_expired_is_refunded_and_the_reply_say
     report_empty(client, ice_cream)
     job_id = next_job(client)["job_id"]
     db.scalar(select(StockItem).where(StockItem.sku_id == peas, StockItem.store_id == 1)).expiry_date = (
-        date.today() - timedelta(days=1))
+        clock.today() - timedelta(days=1))
     db.commit()
 
     res = accept(client, job_id, ice_cream, peas)

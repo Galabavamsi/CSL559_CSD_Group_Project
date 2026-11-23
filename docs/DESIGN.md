@@ -291,6 +291,30 @@ payment, so in that rare case the order costs less than the bill said. The refus
 own transaction, after the pick job is built and priced, and undone as a whole; that is one wasted build of a pick
 job per refusal.
 
+### 3.4 Decision: a calendar date is India's date
+
+**What.** Everything that asks "what is the date today" asks `app/clock.py`, which answers with the date in India
+(UTC plus the offset in `LOCAL_UTC_OFFSET_MINUTES`, 330). That covers which batches may be sold and picked, the
+rescue price, the write-off of expired stock, the use-by date given to stock that arrives without one, and the
+demo data. Timestamps are untouched: they stay UTC, as every stored time is.
+
+**Why.** The server's clock is UTC, and the code took today's date from it. India is five and a half hours ahead,
+so for the first five and a half hours of every day the server was still on yesterday. Seen on staging on 24
+November at one in the morning: a batch with a use-by date of the 23rd was still on sale, and at the rescue
+price. A use-by date printed on a pack ends at midnight where the pack is.
+
+**Why an offset and not a time zone name.** India has one time zone and no daylight saving, so a fixed offset is
+exact, and the farm-supply code already used this setting for drop slots. A time zone database in the container
+would be one more thing to keep up to date, for no gain here.
+
+**Considered and not taken.** Setting the container's time zone to India. It would have fixed the date with no
+code change, and silently moved every log line and every place that formats a time; and the tests, which run on
+machines set to UTC, would then not be testing what runs.
+
+**Costs.** Sales statistics (forecasting, assortment, the day's sales) still count a day from midnight UTC. They
+bucket timestamps already stored, and moving the boundary would shift the history the forecasts were fitted on.
+A day of sales there runs from 05:30 to 05:30 in India, which splits the night, when almost nothing sells.
+
 ## 4. Delivery
 
 A packed order waits at the hub in a crate slot. Delivery has to answer five questions: when does a trip leave,

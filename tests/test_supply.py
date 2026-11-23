@@ -1,5 +1,7 @@
 """Stock-in side: replenishment, inbound receiving, slotting, forecasting (HLD 6.2 and 6.3)."""
-from datetime import date, timedelta
+from datetime import timedelta
+
+from app import clock
 
 from .conftest import assert_stock_is_consistent, atp
 
@@ -51,7 +53,7 @@ def test_slotting_keeps_a_sku_together_and_respects_zones(client, sku):
 
 def test_new_batch_gets_its_own_expiry(client, sku):
     milk = sku("Toned milk")
-    expiry = (date.today() + timedelta(days=5)).isoformat()
+    expiry = (clock.today() + timedelta(days=5)).isoformat()
     client.post("/v1/goods-receipts", json={
         "store_id": 1, "lines": [{"sku_id": milk, "qty": 10, "batch_no": "M-FRESH", "expiry_date": expiry}]})
     batches = {row["batch_no"]: row for row in client.get("/v1/stores/1/stock").json() if row["sku_id"] == milk}

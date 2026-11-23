@@ -1,11 +1,10 @@
 """Pick & Pack Service (HLD service 5): give pickers work, check every scan, pack the order."""
-from datetime import date
 from string import ascii_uppercase
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ... import config, events, metrics
+from ... import clock, config, events, metrics
 from ...errors import DomainError, not_found
 from ...models import FulfilmentJob, PickTask, Reservation, utcnow
 from ..fulfilment import service as fulfilment
@@ -145,7 +144,7 @@ def scan(db: Session, task_id: int, barcode: str, qty: int = 1, picker_id: str |
         db.commit()                   # keeps only last_activity_at: a wrong scan still shows the handheld is alive
         metrics.SCANS.labels("mismatch").inc()
         return {"match": False, "message": f"Wrong item. This line needs {task.sku.name}."}
-    if task.stock_item is not None and task.stock_item.expiry_date < date.today():
+    if task.stock_item is not None and task.stock_item.expiry_date < clock.today():
         db.commit()                   # keeps only last_activity_at, as above
         metrics.SCANS.labels("mismatch").inc()
         # The batch expired after the order was paid: never sell it. Not on shelf moves the line to a fresh batch.

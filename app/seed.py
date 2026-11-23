@@ -7,14 +7,14 @@ A few situations are planted on purpose so the demo has something to show:
   * Store 1, ice cream - exactly 1 left (shows two customers racing for the last unit)
   * Store 2, bananas   - out of stock (shows an item hidden from the customer)
 """
-from datetime import date, timedelta
+from datetime import timedelta
 from functools import cache
 
 import h3
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import config
+from . import clock, config
 from .auth import hash_password
 from .db import SessionLocal, recreate_tables
 from .models import SKU, City, ProduceItem, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
@@ -108,7 +108,7 @@ BHILAI_HUBS = [
 
 
 def seed(db: Session) -> None:
-    today = date.today()
+    today = clock.today()
     skus = []
     for n, (name, category, storage, shelf_life, price) in enumerate(SKUS, start=1):
         sku = SKU(name=name, category=category, barcode=f"890{n:010d}", storage_type=storage,

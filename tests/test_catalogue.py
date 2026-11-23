@@ -1,18 +1,18 @@
 """The shop's list (docs/DESIGN.md, section 3): availability, plus what a customer is told about the batch the next
 order would be picked from, and a rescue price for units in their last day."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import auth, seed
+from app import auth, clock, seed
 from app.main import app
 from app.models import StockItem, User, utcnow
 from app.modules.catalogue import service as catalogue
 from app.modules.farms import service as farms
 from tests.conftest import place_paid_order
 
-TODAY = date.today()
+TODAY = clock.today()
 
 
 def row(client, store_id: int, sku_id: int) -> dict:

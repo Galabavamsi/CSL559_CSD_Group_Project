@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from app import background
+from app import background, clock
 from app.models import EventLog, StockItem, StockLedger
 from app.modules.inventory import service as inventory
 
@@ -21,7 +21,7 @@ def _set_expiry(db, batch_no: str, expiry: date) -> StockItem:
 
 
 def yesterday() -> date:
-    return date.today() - timedelta(days=1)
+    return clock.today() - timedelta(days=1)
 
 
 def test_expired_batch_is_never_picked(client, db, sku):

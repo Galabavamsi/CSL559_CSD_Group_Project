@@ -14,7 +14,7 @@ from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ... import config, events, metrics
+from ... import clock, config, events, metrics
 from ...cache import atp_cache
 from ...errors import DomainError, not_found
 from ...models import (SKU, Bin, CycleCount, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
@@ -556,7 +556,7 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
         )
         if item is None:
             item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no="ADJ",
-                             expiry_date=date.today() + timedelta(days=sku.shelf_life_days), qty=0)
+                             expiry_date=clock.today() + timedelta(days=sku.shelf_life_days), qty=0)
             db.add(item)
         _change_item_qty(db, item, delta)
         if shelf_rules and slotting.room_in(db, bin_) < 0:      # a writer that takes no bin lock got in first
@@ -631,7 +631,7 @@ def expire_stock(db: Session, store_id: int | None = None, actor: str = "system"
 
     Holds are not touched: a paid order whose units expired may be left with reserved > on hand until the picker
     reaches the line, finds the shelf empty, and the usual empty-shelf path drops the line and frees its hold."""
-    query = select(StockItem).where(StockItem.expiry_date < date.today(), StockItem.qty > 0)
+    query = select(StockItem).where(StockItem.expiry_date < clock.today(), StockItem.qty > 0)
     if store_id is not None:
         get_store(db, store_id)
         query = query.where(StockItem.store_id == store_id)
@@ -650,7 +650,7 @@ def expire_stock(db: Session, store_id: int | None = None, actor: str = "system"
 def near_expiry(db: Session, store_id: int, days: int = 2) -> list[dict]:
     """Batches on the shelf that expire within `days` days (today counts as 0), soonest first."""
     get_store(db, store_id)
-    today = date.today()
+    today = clock.today()
     items = db.scalars(
         select(StockItem).join(Bin, Bin.id == StockItem.bin_id)
         .where(StockItem.store_id == store_id, StockItem.qty > 0,
@@ -778,7 +778,7 @@ def allocate(db: Session, store_id: int, sku_id: int, qty: int,
         select(StockItem)
         .join(Bin, Bin.id == StockItem.bin_id)
         .where(StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.qty > 0,
-               StockItem.expiry_date >= date.today())                 # never pick a batch that has expired
+               StockItem.expiry_date >= clock.today())                 # never pick a batch that has expired
         .order_by(StockItem.expiry_date, Bin.walk_seq)
         .execution_options(populate_existing=True)
     ).all()
@@ -855,7 +855,7 @@ def stock_by_bin(db: Session, store_id: int) -> list[dict]:
         .order_by(Bin.walk_seq, StockItem.expiry_date)
         .execution_options(populate_existing=True)
     ).all()
-    today = date.today()
+    today = clock.today()
     return [
         {
             "stock_item_id": i.id, "sku_id": i.sku_id, "sku": i.sku.name, "bin_id": i.bin_id,
