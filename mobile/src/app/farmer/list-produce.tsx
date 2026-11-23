@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { HelperText, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,6 +18,7 @@ import { formatDate, formatSlot, isoDateAfter } from '@/lib/dates';
 import { formatKg, formatRupees } from '@/lib/format';
 import { newIdempotencyKey } from '@/lib/ids';
 import { radius, space, TOUCH_TARGET, useAppTheme } from '@/theme';
+import { KeyboardScroll, KeyboardSpace } from '@/components/KeyboardSpace';
 
 /** Harvest dates offered, as days from today: a lot picked up to three days ago, or due within the week. */
 const HARVEST_DAYS = [-3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7];
@@ -102,8 +103,8 @@ export default function ListProduce() {
   } else {
     const passedOver = isApiError(createListing.error, 'no_hub_with_room') ? createListing.error.details.hubs : null;
     body = (
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardSpace>
+        <KeyboardScroll contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Card title="From which farm?">
             <View style={styles.choices} accessibilityRole="radiogroup">
               {farms.data.map((farm) => (
@@ -200,7 +201,7 @@ export default function ListProduce() {
               </View>
             </View>
           ) : null}
-        </ScrollView>
+        </KeyboardScroll>
 
         <View
           style={[
@@ -220,7 +221,7 @@ export default function ListProduce() {
             List produce
           </Button>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSpace>
     );
   }
 

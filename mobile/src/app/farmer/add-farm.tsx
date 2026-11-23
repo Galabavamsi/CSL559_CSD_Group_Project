@@ -2,7 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { HelperText, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -14,6 +14,7 @@ import { Screen } from '@/components/Screen';
 import { TextField } from '@/components/TextField';
 import { TopBar } from '@/components/TopBar';
 import { radius, space, tabularNumbers, useAppTheme } from '@/theme';
+import { KeyboardScroll, KeyboardSpace } from '@/components/KeyboardSpace';
 
 /** What the phone said about where it is. */
 interface Fix {
@@ -82,8 +83,8 @@ export default function AddFarm() {
   return (
     <Screen>
       <TopBar title="Add farm" backFallback="/farmer" />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardSpace>
+        <KeyboardScroll contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Card title="Farm name">
             <TextField
               label="Name"
@@ -160,7 +161,7 @@ export default function AddFarm() {
               ))}
             </View>
           ) : null}
-        </ScrollView>
+        </KeyboardScroll>
 
         <View
           style={[
@@ -184,7 +185,7 @@ export default function AddFarm() {
             Save farm
           </Button>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSpace>
     </Screen>
   );
 }

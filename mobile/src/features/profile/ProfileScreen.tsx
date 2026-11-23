@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { HelperText, Snackbar, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,6 +18,7 @@ import { useSession } from '@/state/session';
 import { fontFamily, radius, space, useAppTheme } from '@/theme';
 
 import { useSignOut } from './useSignOut';
+import { KeyboardScroll, KeyboardSpace } from '@/components/KeyboardSpace';
 
 const ROLE_LABEL: Record<Role, string> = { customer: 'Customer', farmer: 'Farmer', agent: 'Delivery agent' };
 
@@ -62,8 +63,8 @@ export function ProfileScreen() {
   const initial = (user.name ?? user.email).trim().charAt(0).toUpperCase();
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView
+    <KeyboardSpace>
+      <KeyboardScroll
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
         keyboardShouldPersistTaps="handled">
         <View style={styles.identity}>
@@ -182,12 +183,12 @@ export function ProfileScreen() {
           disabled={signOut.isPending}>
           Sign out
         </Button>
-      </ScrollView>
+      </KeyboardScroll>
 
       <Snackbar visible={saved} onDismiss={() => setSaved(false)} duration={2500}>
         Profile saved
       </Snackbar>
-    </KeyboardAvoidingView>
+    </KeyboardSpace>
   );
 }
 

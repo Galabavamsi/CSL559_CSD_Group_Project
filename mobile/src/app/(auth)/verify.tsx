@@ -1,6 +1,6 @@
 import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { HelperText, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,6 +16,7 @@ import { formatClock } from '@/lib/dates';
 import { useNow } from '@/lib/hooks';
 import { usePendingSignIn } from '@/state/pendingSignIn';
 import { space, tabularNumbers, useAppTheme } from '@/theme';
+import { KeyboardScroll, KeyboardSpace } from '@/components/KeyboardSpace';
 
 const CODE_LENGTH = 6;
 
@@ -69,8 +70,8 @@ export default function Verify() {
   return (
     <Screen>
       <TopBar title="Enter your code" backFallback="/welcome" />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
+      <KeyboardSpace>
+        <KeyboardScroll
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
           keyboardShouldPersistTaps="handled">
           <Text variant="bodyLarge" style={{ color: colors.onSurfaceVariant }}>
@@ -119,8 +120,8 @@ export default function Verify() {
           <View style={styles.demo}>
             <DemoNote>{`Demo data: the code is ${MOCK_OTP_CODE}.`}</DemoNote>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardScroll>
+      </KeyboardSpace>
     </Screen>
   );
 }
