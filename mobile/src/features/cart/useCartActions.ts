@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api';
 import { useProducts } from '@/api/queries';
-import { computeBill, type Bill } from '@/lib/bill';
+import { computeBill, type CartBill } from '@/lib/bill';
 import { cartLines, cartUnitCount, useCart } from '@/state/cart';
 import { useDeliveryLocation } from '@/state/deliveryLocation';
 
@@ -39,7 +39,7 @@ export interface CartSummary {
   /** Total units in the cart. */
   count: number;
   /** Priced against the hub's current list; null until that list has loaded. */
-  bill: Bill | null;
+  bill: CartBill | null;
 }
 
 /** The cart of the current hub, priced. A cart left over from another hub counts as empty. */

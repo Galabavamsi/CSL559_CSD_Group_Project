@@ -21,6 +21,16 @@ class AddressIn(BaseModel):
 class OrderIn(BaseModel):
     hold_id: str = Field(min_length=1, max_length=36, description="The id of the checkout hold being paid for")
     address: AddressIn
+    expected_total: float | None = Field(default=None, ge=0, le=10_000_000, allow_inf_nan=False,
+                                         description="The total the customer was shown, in rupees")
+
+
+@router.get("/v1/reservations/{reservation_id}/bill", summary="What paying for this hold costs")
+def read_bill(reservation_id: str, user: dict = Customer, db: Session = Depends(get_db)):
+    """The bill for the checkout screen: each line with the price charged and the full price, the saving from units
+    in their last day, and the total. It is the price if paid now; send the total back as `expected_total` when
+    paying, and a price that rose in between is refused instead of charged."""
+    return service.bill(db, user["user_id"], reservation_id)
 
 
 @router.post("/v1/orders", status_code=201, summary="Pay for a held cart and make it an order")
@@ -28,11 +38,12 @@ def place_order(body: OrderIn, user: dict = Customer, db: Session = Depends(get_
     """Confirms the hold and writes the order in one step: who it is for, where it goes, and the price of each
     unit. Payment is a stand-in: no money moves. Asking again for the same hold returns the same order. The address
     must be one the hold's hub delivers to (`422 address_outside_zone`); a hold that ran out is refused
-    (`409 hold_expired`)."""
+    (`409 hold_expired`). With `expected_total`, an order that would cost more than that is not placed
+    (`409 price_changed`, with the new bill) and the hold stays held."""
     address = body.address.model_dump()
     address["label"], address["line"] = " ".join(address["label"].split()), " ".join(address["line"].split())
     address["landmark"] = " ".join((address["landmark"] or "").split()) or None
-    return service.place(db, user["user_id"], body.hold_id, address)
+    return service.place(db, user["user_id"], body.hold_id, address, body.expected_total)
 
 
 @router.get("/v1/orders", summary="My orders, newest first")

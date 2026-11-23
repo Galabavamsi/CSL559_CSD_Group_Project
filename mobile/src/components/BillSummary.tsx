@@ -70,6 +70,11 @@ export function OrderLineRow({ line }: { line: OrderLine }) {
             {line.unitLabel}
           </Text>
         ) : null}
+        {line.unitPrice < line.listPrice ? (
+          <Text variant="bodySmall" numberOfLines={1} style={[tabularNumbers, { color: colors.tertiary }]}>
+            Rescue price: {formatRupees(line.unitPrice)} each, not {formatRupees(line.listPrice)}
+          </Text>
+        ) : null}
       </View>
       <Text variant="bodyMedium" style={tabularNumbers}>
         {formatRupees(line.unitPrice * line.quantity)}

@@ -120,7 +120,11 @@ export default function ProductDetail() {
               ) : null}
             </View>
             <Text variant="bodySmall" style={{ color: deal ? colors.tertiary : colors.onSurfaceVariant }}>
-              {deal ? 'Rescue deal: last day of freshness' : 'Price for one unit'}
+              {deal
+                ? product.markdownUnits !== null
+                  ? `Rescue deal, last day of freshness: ${product.markdownUnits} at this price`
+                  : 'Rescue deal: last day of freshness'
+                : 'Price for one unit'}
             </Text>
           </View>
           <View style={styles.stepper}>

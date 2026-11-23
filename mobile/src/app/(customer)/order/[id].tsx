@@ -85,7 +85,7 @@ export default function OrderTracking() {
         <Card title="Items">
           <View style={styles.lines}>
             {order.data.lines.map((line) => (
-              <OrderLineRow key={line.productId} line={line} />
+              <OrderLineRow key={`${line.productId}-${line.unitPrice}`} line={line} />
             ))}
           </View>
           <View style={styles.bill}>

@@ -95,10 +95,36 @@ Two things follow for the design.
   1.7 before applying a town speed, and the grouping of orders by direction (section 4.2) is to be checked against
   the road matrix, because two areas in the same direction can be on opposite sides of the line.
 
+**The key for map tiles (created 24 November, at the owner's request).** A map in a browser or a web view cannot
+sign its requests the way the server does, so Amazon Location gives it an API key instead. One exists now, named
+`farm2home-map-tiles`, in Mumbai, tagged for this project.
+
+- **It can read map tiles and nothing else** (`geo-maps:GetTile`). The key travels to every phone and browser that
+  draws the map, so anyone can copy it out; what a copied key can do should be as little as possible. Tiles are
+  the one thing the device has to fetch itself: the map asks for dozens as it is moved, and passing them through
+  our server would add a hop for nothing.
+- **Place search is not on the key**, which changes the earlier plan of one key for tiles and search. Search goes
+  through our server with the server's own role, where it can be limited to the city (the test above showed it
+  needs that), capped per person, and its answers remembered.
+- **It ends on 31 March 2027.** A copied key then stops by itself. Moving the date is one command
+  (`aws location update-key`), and AWS recommends an end date as the way to force a replacement.
+- **It is not limited to a web address.** AWS recommends limiting a key to the pages allowed to use it, but the
+  same map also runs inside the app's web view, which has no fixed address to name. To revisit with the
+  installable build: AWS can also limit a key to one Android or iOS app.
+- **Its value is not in this repository**, which is public. The server will hand the map's style address, key
+  included, to the app and the web pages from its own settings, so the key can be replaced without a new build of
+  the app.
+- **We ask for India's view of its borders** (`political-view=IND` in the style address). Amazon Location draws
+  disputed borders differently by country; a map shown in India should use India's.
+
+Tested the same day, from this laptop. With the key: the Standard style, its drawings and letters, and tiles over
+Bhilai at two zoom levels all arrived. Without the key, or with a wrong one: refused. A place search and a static
+picture asked for with this key: refused. Then drawn with MapLibre GL JS in a browser: Bhilai with the three hubs
+as pins, and at street level around the Civic Centre hub the map names the streets, the canal, the park and the
+market. So the map is detailed enough for a customer to move a pin to their door.
+
 **Costs and risks.**
 
-- **The map tiles themselves are not tested yet.** Drawing them needs an API key, which is created when the map is
-  built: one key, limited to reading map tiles and searching places, for this project only.
 - **Price.** Charged per request, with no minimum. Driving by car and the matrix are in the lowest price group;
   scooter routes and the stop-ordering call are in the next one up. We have not found the current rates per
   thousand; at demo volume (hundreds of requests) it is cents either way, and the cost guard on the account
@@ -148,6 +174,7 @@ from the hold and the job.
 | Call | Does |
 | --- | --- |
 | `POST /v1/orders` with a hold's id and a delivery address | Confirms the hold (the existing step), and writes the order: who, which hub, the address, each line with the price charged, the totals |
+| `GET /v1/reservations/{id}/bill` | What the held cart costs if paid now (section 3.3) |
 | `GET /v1/orders` | The customer's own orders, newest first |
 | `GET /v1/orders/{id}` | One order with its history, for the tracking screen |
 | `POST /v1/orders/{id}/cancel` | Cancels until the order is packed (the existing rule) |
@@ -230,7 +257,39 @@ keeps it honest: without it a customer could order ten at the rescue price when 
 interesting and neither can be explained in one sentence to a customer or checked in one test.
 
 **Costs.** The price a customer is shown can change between looking and paying, if someone else buys the last
-rescue units first. The hold answers with the prices it used, and the app shows the change before payment.
+rescue units first.
+
+### 3.3 Decision: the checkout shows the hub's bill, and a price that rose is asked about, not charged
+
+**What.** Two things, added on 24 November when the app moved onto the server's orders.
+
+- `GET /v1/reservations/{id}/bill` answers what the held cart would cost if paid this moment. The checkout shows
+  that, not a sum made on the phone, and asks again every 20 seconds.
+- `POST /v1/orders` takes `expected_total`, the total the customer was looking at. If the order would cost more,
+  nothing is paid, the hold stays held, and the answer is `409 price_changed` with the new bill. The app shows the
+  new total and the customer taps Pay again, or leaves. An order that costs less than shown is placed as it is.
+
+**Why.** A hold sets units aside, not batches. Two customers can each hold six packs while six remain at the
+rescue price, and both are rightly told the lower price, because either may be the one who pays first. Whoever
+paid second was charged the full price, on a screen that had said otherwise. Found while reading the app's
+checkout: its total was the phone's own sum, and nothing compared it with the order.
+
+**Why the bill comes from the hub's allocation.** The bill asks the same function that later chooses the bins
+which units it would pick, and prices those. A second copy of that walk, on the phone or in a separate price
+calculator, would be right until the day the two drifted apart. The phone still sums the cart before the hold,
+from the shop's list; that is an estimate and the cart says nothing more than the list does.
+
+**Why refuse instead of holding the price.** Keeping the shown price would mean either holding batches for ten
+minutes for carts that are often abandoned, which takes the rescue units off sale exactly when they most need to
+sell, or selling at a price the batch no longer supports. Refusing costs the customer one more tap, in a case
+that needs two people buying the same last-day item in the same ten minutes.
+
+**Considered and not taken.** Refusing any difference, lower as well. Nobody needs to be asked before paying less.
+
+**Costs.** Units the hub would fail to find are counted at the full price in the bill, and leave the order at
+payment, so in that rare case the order costs less than the bill said. The refusal is made inside the payment's
+own transaction, after the pick job is built and priced, and undone as a whole; that is one wasted build of a pick
+job per refusal.
 
 ## 4. Delivery
 
@@ -434,6 +493,13 @@ the results.
   address): https://docs.aws.amazon.com/location/latest/developerguide/how-to-display-a-map.html
 - AWS, "Pricing model" for Amazon Location (per request, no minimum; the same price whatever the authentication):
   https://docs.aws.amazon.com/location/latest/developerguide/pricing.html
+- AWS, "Best practices" for Amazon Location, API key optimization (only the actions needed; limit by web address
+  or by app; an end date to force replacement):
+  https://docs.aws.amazon.com/location/latest/developerguide/auth-best-practices.html
+- AWS CLI reference, `location create-key` (the actions a key may allow, `geo-maps:GetTile` among them):
+  https://docs.aws.amazon.com/cli/latest/reference/location/create-key.html
+- AWS, "How to set the political view of a map" (`political-view` in the style address):
+  https://docs.aws.amazon.com/location/latest/developerguide/how-to-set-political-view-map.html
 - Google, "Google Maps Platform core services pricing list: India" (70,000 free requests a month for each basic
   service; the rates): https://developers.google.com/maps/billing-and-pricing/pricing-india
 - Google, "Google Maps Platform Terms of Service" and "Service Specific Terms" (no use with or near a non-Google

@@ -6,7 +6,7 @@ import { ActivityIndicator, HelperText, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api, errorMessage, isApiError } from '@/api';
-import { useCreateHold, useHold, usePlaceOrder, useProducts, useReleaseHold } from '@/api/queries';
+import { useCreateHold, useHold, useHoldBill, usePlaceOrder, useProducts, useReleaseHold } from '@/api/queries';
 import { BillSummary, OrderLineRow } from '@/components/BillSummary';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
@@ -44,6 +44,7 @@ export default function Checkout() {
 
   const products = useProducts(hold?.hubId ?? null);
   const holdCheck = useHold(hold?.id ?? null);
+  const holdBill = useHoldBill(hold?.id ?? null);
   const placeOrder = usePlaceOrder();
   const releaseHold = useReleaseHold();
   const createHold = useCreateHold();
@@ -68,7 +69,10 @@ export default function Checkout() {
   }
 
   const lines = cartLines(quantities);
-  const bill = computeBill(lines, products.data ?? []);
+  // The hub's own bill for the held cart, which is what will be charged. Until it answers (or if this API has
+  // none), the phone's sum from the product list stands in for it.
+  const bill = holdBill.data ?? computeBill(lines, products.data ?? []);
+  const billReady = holdBill.data !== undefined || products.data !== undefined;
   const expired =
     secondsUntil(hold.expiresAt, now) <= 0 ||
     (holdCheck.data !== undefined && GIVEN_BACK.includes(holdCheck.data.status)) ||
@@ -106,6 +110,13 @@ export default function Checkout() {
           // Leave the shop on the stack and the cart and checkout off it: "back" from the order goes to the shop.
           router.dismissTo('/home');
           router.push({ pathname: '/order/[id]', params: { id: order.id } });
+        },
+        onError: (error) => {
+          // Nothing was charged and the items are still held: show the bill as it stands now.
+          if (isApiError(error, 'price_changed')) {
+            void holdBill.refetch();
+            void products.refetch();
+          }
         },
       },
     );
@@ -191,14 +202,14 @@ export default function Checkout() {
           </Card>
 
           <Card title="Your order">
-            {products.data === undefined && products.isError ? (
+            {!billReady && products.isError ? (
               <ErrorState error={products.error} onRetry={() => products.refetch()} retrying={products.isRefetching} />
-            ) : products.data === undefined ? (
+            ) : !billReady ? (
               <Skeleton height={72} />
             ) : (
               <View style={styles.lines}>
                 {bill.lines.map((line) => (
-                  <OrderLineRow key={line.productId} line={line} />
+                  <OrderLineRow key={`${line.productId}-${line.unitPrice}`} line={line} />
                 ))}
               </View>
             )}

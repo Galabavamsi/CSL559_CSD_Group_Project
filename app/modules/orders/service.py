@@ -42,15 +42,26 @@ def _stamp(at: datetime) -> str:
     return at.isoformat() + "Z"
 
 
+def _line_view(line: OrderLine) -> dict:
+    return {"product_id": line.sku_id, "name": line.name, "unit_label": line.unit_label,
+            "quantity": line.qty, "unit_price": line.unit_price, "list_price": line.list_price}
+
+
+def _totals(lines: list[OrderLine], delivery_fee: float) -> dict:
+    """The bill from the lines: the items at their full price, what rescue prices took off, and what is left."""
+    item_total = round(sum(line.qty * line.list_price for line in lines), 2)
+    savings = round(sum(line.qty * (line.list_price - line.unit_price) for line in lines), 2)
+    return {"item_total": item_total, "savings": savings, "delivery_fee": delivery_fee,
+            "total": round(item_total - savings + delivery_fee, 2)}
+
+
 def view(db: Session, order: Order) -> dict:
     hub = db.get(Store, order.store_id)
     return {
         "id": order.order_id, "status": order.status, "placed_at": _stamp(order.placed_at),
         "history": [{"status": event.status, "at": _stamp(event.at)} for event in order.events],
         "hub_id": order.store_id, "hub_name": hub.name, "hold_id": order.reservation_id,
-        "lines": [{"product_id": line.sku_id, "name": line.name, "unit_label": line.unit_label,
-                   "quantity": line.qty, "unit_price": line.unit_price, "list_price": line.list_price}
-                  for line in order.lines],
+        "lines": [_line_view(line) for line in order.lines],
         "item_total": order.item_total, "savings": order.savings, "delivery_fee": order.delivery_fee,
         "total": order.total, "payment": order.payment,
         "address": {"label": order.address_label, "line": order.address_line, "landmark": order.landmark,
@@ -74,13 +85,72 @@ def _move(db: Session, order_id: str, to: str, only_from: tuple[str, ...]) -> bo
 
 # --------------------------------------------------------------------------- placing
 
-def place(db: Session, user_id: int, hold_id: str, address: dict) -> dict:
+def _lines_if_paid_now(db: Session, res: Reservation) -> list[OrderLine]:
+    """The lines an order for this hold would have if it were paid this moment. Nothing is saved.
+
+    It asks the hub's own allocation which units would be picked, oldest batch first, and prices the ones in their
+    last day at the rescue price: the walk `_price_by_batch` reads back from the pick tasks after payment. Units
+    the hub would not find are left at the full price here; at payment they leave the order."""
+    today = date.today()
+    lines = []
+    for held in res.lines:
+        sku = db.get(SKU, held.sku_id)
+        picks, _missing = inventory.allocate(db, res.store_id, sku.id, held.qty)
+        rescued = sum(qty for item, qty in picks if catalogue.in_rescue(item.expiry_date, today))
+        if rescued:
+            lines.append(_line(sku, rescued, catalogue.rescue_price(sku.price)))
+        if held.qty > rescued:
+            lines.append(_line(sku, held.qty - rescued))
+    return lines
+
+
+def bill(db: Session, user_id: int, hold_id: str) -> dict:
+    """What paying for this hold costs (docs/DESIGN.md, section 3.2): the bill the checkout shows. Read-only.
+
+    For a hold not paid yet it is the price if paid now. That can still change before payment: a hold sets units
+    aside, not batches, so another customer can pay first for the last units at the rescue price. `place` refuses
+    to charge more than the total it is told the customer saw (409 price_changed). For a hold that is already an
+    order it is the order's bill."""
+    res = inventory.get_reservation(db, hold_id)
+    order = db.scalar(select(Order).where(Order.reservation_id == res.id))
+    if order is not None:
+        if order.user_id != user_id:
+            raise DomainError(404, "not_found", f"Reservation {hold_id} does not exist")
+        lines, fee = list(order.lines), order.delivery_fee
+    elif res.status != "held":
+        raise DomainError(409, "not_held", f"Reservation is {res.status}, so there is nothing to pay for")
+    elif res.expires_at < utcnow():
+        raise DomainError(409, "hold_expired", "The 10-minute hold ran out; the items are back on sale")
+    else:
+        lines, fee = _lines_if_paid_now(db, res), 0.0
+    return {"hold_id": res.id, "lines": [_line_view(line) for line in lines], **_totals(lines, fee)}
+
+
+def _refuse_a_dearer_bill(order: Order) -> None:
+    """Never charge more than the customer was shown. Called while the order is being placed, once it is priced by
+    what will be picked: raising here undoes the whole payment, and the hold stays held for another try."""
+    placing = _placing.get()
+    if placing is None or placing["reservation_id"] != order.reservation_id or placing["expected_total"] is None:
+        return
+    if order.total > placing["expected_total"] + 0.005:
+        raise DomainError(409, "price_changed",
+                          "The price of your cart changed while you were paying: another order took the last "
+                          "units at the lower price. Nothing was charged. Check the new total and pay again.",
+                          {"expected_total": placing["expected_total"], "hold_id": order.reservation_id,
+                           "lines": [_line_view(line) for line in order.lines],
+                           **_totals(order.lines, order.delivery_fee)})
+
+
+def place(db: Session, user_id: int, hold_id: str, address: dict, expected_total: float | None = None) -> dict:
     """Pay for a held cart and make it an order. Commits (through the hold's confirmation).
 
     The address has to be one the hold's hub delivers to (422 address_outside_zone). Asking again for the same hold
     returns the order made the first time. A hold that ran out is refused as the hold itself refuses it
     (409 hold_expired), and so is one that is no longer held (409 not_held). A hold already paid for with no
-    customer cannot be turned into an order afterwards (409 already_paid)."""
+    customer cannot be turned into an order afterwards (409 already_paid).
+
+    `expected_total` is the total the customer was shown. If the order would cost more, nothing is paid and the
+    hold stays held (409 price_changed, with the new bill). Costing less is not refused."""
     res = inventory.get_reservation(db, hold_id)
     existing = db.scalar(select(Order).where(Order.reservation_id == res.id))
     if existing is not None:
@@ -95,9 +165,14 @@ def place(db: Session, user_id: int, hold_id: str, address: dict) -> dict:
                           "The hub holding these items does not deliver to this address. Choose the delivery "
                           "location again and hold the cart from the hub that serves it.",
                           {"store_id": res.store_id, "serving_store_id": zone.store_id if zone else None})
-    token = _placing.set({"reservation_id": res.id, "user_id": user_id, "address": address})
+    token = _placing.set({"reservation_id": res.id, "user_id": user_id, "address": address,
+                          "expected_total": expected_total})
     try:
         inventory.confirm(db, res.id)        # publishes order.paid: on_order_paid writes the order with it
+    except DomainError as error:
+        if error.code == "price_changed":    # raised from inside the confirmation, before its commit
+            db.rollback()                    # the hold is held again, with no order and no pick job
+        raise
     finally:
         _placing.reset(token)
     order = db.scalar(select(Order).where(Order.reservation_id == res.id))
@@ -163,6 +238,7 @@ def on_job_state(db: Session, store_id: int, payload: dict) -> None:
         order = _order_for(db, payload["order_id"])
         if order is not None:
             _price_by_batch(db, order, payload["job_id"])
+            _refuse_a_dearer_bill(order)
     elif payload["state"] == "packed":
         _move(db, payload["order_id"], "packed", only_from=("confirmed",))
     elif payload["state"] == "cancelled":
@@ -174,10 +250,8 @@ def _order_for(db: Session, order_id: str) -> Order | None:
 
 
 def _retotal(order: Order) -> None:
-    """The bill from the lines: the items at their full price, what rescue prices took off, and what is left."""
-    order.item_total = round(sum(line.qty * line.list_price for line in order.lines), 2)
-    order.savings = round(sum(line.qty * (line.list_price - line.unit_price) for line in order.lines), 2)
-    order.total = round(order.item_total - order.savings + order.delivery_fee, 2)
+    bill = _totals(order.lines, order.delivery_fee)
+    order.item_total, order.savings, order.total = bill["item_total"], bill["savings"], bill["total"]
 
 
 @events.subscribe("order.line_dropped")

@@ -76,7 +76,7 @@ export default function Orders() {
 function OrderRow({ order, onPress }: { order: Order; onPress: () => void }) {
   const { colors } = useAppTheme();
   const units = order.lines.reduce((sum, line) => sum + line.quantity, 0);
-  const names = order.lines.map((line) => line.name).join(', ');
+  const names = [...new Set(order.lines.map((line) => line.name))].join(', ');
 
   return (
     <Pressable
