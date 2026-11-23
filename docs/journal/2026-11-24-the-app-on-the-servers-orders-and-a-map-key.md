@@ -69,7 +69,10 @@ too.
   errors; at street level around the Civic Centre hub it names streets, the canal, the park and the market.
 - **The bill and the refusal.** Eight new tests: the bill equals what the order then costs; two customers and
   six rescue packs; a price that fell; a total within half a paisa; who may read a bill; malformed totals.
-- **The app.** Type-checks. Tried on the phone against staging as far as staging's version allows (see below).
+- **The app.** Type-checks, and the phone's bundle builds. The recorder from the demo was run on the dev server
+  as an end-to-end check: the app's real web build against this branch's API, from a farmer listing a lot to a
+  customer paying and the hub packing. Not tried by hand on the phone: ordering needs a sign-in with an emailed
+  code, which is the owner's to do.
 
 ## What it leaves open
 
