@@ -42,8 +42,10 @@
 <div class="box warn">
   <h3>Three things a viewer should be told</h3>
   <ul>
-    <li><b>The phone app has not run on a phone yet.</b> Every screenshot here is the same app's web build at phone
-      size. The keyboard, the safe areas, secure storage and the location prompt are unseen on Android.</li>
+    <li><b>The phone app has run on one phone, on demo data only.</b> On a Galaxy M34 (Android 16) in Expo Go:
+      sign-in, the shop, cart, hold, checkout, payment, the order, and the farmer's home (section 5). It has not
+      run there against the real backend, and registering a farm, which needs the location prompt, was not walked
+      through. The other screenshots are the same app's web build at phone size.</li>
     <li><b>The recording ran on the project's development server</b>, with the real backend code and a real
       PostgreSQL, not on staging. Sign-in codes were read from that server's log, where the development email
       backend writes them. On AWS the code goes by email and the log never holds it.</li>

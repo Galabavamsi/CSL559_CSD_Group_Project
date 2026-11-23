@@ -5,7 +5,7 @@
 <h2>Is it correct, and can it be shipped?</h2>
 <table>
   <tr><th style="width:30%">What</th><th style="width:20%">Result</th><th>How it was measured</th></tr>
-  <tr><td>Automated tests</td><td><b>679 pass</b></td><td>The whole suite on AWS CodeBuild against a fresh PostGIS database: 3 min 59 s of tests, 5 min 20 s for the run. They include twenty buyers racing for the last unit and two receivers taking in one lot at once.</td></tr>
+  <tr><td>Automated tests</td><td><b>702 pass</b></td><td>The whole suite on AWS CodeBuild against a fresh PostGIS database, in about four minutes. They include twenty buyers racing for the last unit and two receivers taking in one lot at once.</td></tr>
   <tr><td>From a chosen commit to running on staging</td><td><b>9 minutes</b></td><td>A commit not tested before: tests (3 min 40 s), image build, rolling update, then the smoke test from outside the network.</td></tr>
   <tr><td>Database failover</td><td><b>2 failed calls in 14 s</b></td><td>The database was forced over to its standby while a probe called a database-backed endpoint about once a second. Failures at 20:20:35 and 20:20:44 UTC, success again from 20:20:49. The container was not restarted.</td></tr>
   <tr><td>Database password change</td><td><b>80 of 80 calls succeeded</b></td><td>AWS changes the master password every seven days. A change was forced (74 s), then 80 calls sent in parallel. The app reads the login when it opens a connection, so it needs no restart.</td></tr>
