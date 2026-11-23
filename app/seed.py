@@ -266,7 +266,7 @@ def reset() -> None:
             from scripts import generate_demand, generate_sales    # demo tooling; imported here, it imports this module
             for store_id in db.scalars(select(Store.id).order_by(Store.id)).all():
                 generate_sales.generate(store_id, db=db)
-            generate_demand.look_up(db, generate_demand.CLUSTERS)
+            generate_demand.look_up(db, generate_demand.clusters_for(db))
 
 
 if __name__ == "__main__":

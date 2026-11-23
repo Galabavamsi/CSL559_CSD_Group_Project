@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hub intake</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Hub intake, on a phone at the dock: one lot at a time, buttons big enough for a gloved thumb. */
+    .phone { max-width: 30rem; margin: 0 auto; padding: 0 1rem 2rem; }
+    .phone-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+      padding: 0.9rem 0; border-bottom: 3px solid var(--ink); margin-bottom: 1rem;
+    }
+    .phone-bar h1 { font-size: 1.4rem; }
+    .phone-bar label { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--ink-soft); }
+    .phone-bar select { max-width: 11rem; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem; }
+    .card + .card { margin-top: 1rem; }
+    .card h2 { font-size: 1.15rem; margin: 0 0 0.4rem; }
+    .muted { color: var(--ink-soft); }
+    .lot-list { list-style: none; margin: 0; padding: 0; }
+    .lot-list li { display: flex; gap: 0.75rem; align-items: center; justify-content: space-between;
+      padding: 0.7rem 0; border-bottom: 1px solid var(--line); }
+    .lot-list li:last-child { border-bottom: 0; }
+    .lot-list .empty { color: var(--ink-soft); }
+    .lot-list .btn { min-height: 3rem; min-width: 6.5rem; font-size: 1.05rem; }
+    .lot-name { font: 600 1.25rem/1.2 var(--display); }
+    .lot-meta { color: var(--ink-soft); font-size: 0.9rem; }
+    .pick { font: 600 1.5rem/1.25 var(--display); }
+    .go { font: 600 1.05rem var(--display); color: var(--ink-soft); margin-top: 0.75rem; }
+    .bin-big {
+      display: inline-block; background: var(--label); color: var(--label-ink);
+      font: 700 3rem/1.1 var(--display); letter-spacing: 0.02em; padding: 0.15rem 0.8rem; border-radius: 4px;
+    }
+    .weights { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 0.9rem; }
+    .weights label, .remarks label { display: block; margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
+    .weights input, .remarks input { width: 100%; min-height: 3rem; font-size: 1.25rem; margin-top: 0.2rem; }
+    .remarks { margin-top: 0.75rem; }
+    .remarks input { font-size: 1.05rem; }
+    .grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-top: 0.3rem; }
+    .grades .btn { min-height: 3rem; font-size: 1.1rem; }
+    .grades .btn[aria-checked="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+    .preview { margin-top: 0.9rem; padding: 0.7rem 0.8rem; border-radius: 4px; background: var(--floor); font-size: 1.05rem; }
+    .big { display: block; width: 100%; min-height: 3.5rem; margin-top: 0.75rem; font-size: 1.2rem; }
+    #message { font-size: 1.05rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="phone">
+    <header class="phone-bar">
+      <h1>Intake <span id="who" class="muted"></span></h1>
+      <label>Hub <select id="store"></select></label>
+    </header>
+
+    <section id="lots">
+      <div class="card">
+        <h2>Lots on their way</h2>
+        <ul id="expected" class="lot-list"></ul>
+      </div>
+      <div id="waiting-block" class="card" hidden>
+        <h2>Weighed, still on the dock</h2>
+        <ul id="waiting" class="lot-list"></ul>
+      </div>
+      <button id="reload" class="btn big">Look again</button>
+    </section>
+
+    <section id="weigh" class="card" hidden>
+      <p id="weigh-lot" class="pick"></p>
+      <p id="weigh-from" class="muted"></p>
+      <div class="weights">
+        <label>Arrived, kg <input id="received" type="number" inputmode="decimal" min="0" step="0.1"></label>
+        <label>Turned away, kg <input id="rejected" type="number" inputmode="decimal" min="0" step="0.1" value="0"></label>
+      </div>
+      <p class="go">Grade</p>
+      <div id="grades" class="grades" role="radiogroup" aria-label="Grade">
+        <button class="btn" role="radio" data-grade="A">A</button>
+        <button class="btn" role="radio" data-grade="B">B</button>
+        <button class="btn" role="radio" data-grade="C">C</button>
+        <button class="btn btn-danger" role="radio" data-grade="reject">Reject</button>
+      </div>
+      <div class="remarks">
+        <label>Note for the farmer (optional) <input id="remarks" maxlength="200" autocomplete="off"></label>
+      </div>
+      <p id="preview" class="preview" aria-live="polite"></p>
+      <button id="record" class="btn btn-primary big">Record and pack</button>
+      <button id="weigh-back" class="btn big">Back to the lots</button>
+    </section>
+
+    <section id="putaway" class="card" hidden aria-live="polite">
+      <p id="put-progress" class="muted"></p>
+      <p id="put-what" class="pick"></p>
+      <p class="go" id="put-go">Put them in bin</p>
+      <p id="put-bin" class="bin-big"></p>
+      <p id="put-problem" class="message is-bad" hidden></p>
+      <button id="put-btn" class="btn btn-primary big">In the bin</button>
+      <button id="send-back" class="btn btn-danger big" hidden>Send the rest back and close</button>
+    </section>
+
+    <p id="message" class="message" role="status"></p>
+  </div>
+  <script src="staff-login.js"></script>
+  <script src="common.js"></script>
+  <script src="intake.js"></script>
+</body>
+</html>

@@ -26,7 +26,7 @@ PAPER, INK, GREEN, MUTED = "0xFBF7F0", "0x1F2A1F", "0x2E7D32", "0x6B6F66"
 # clip -> (part number and title, what is real about it, is it a phone-shaped recording)
 CLIPS = {
     "1-farmer": ("1. The farmer lists produce", "Real API. The sign-in code is read from the server's log.", True),
-    "2-hub-intake": ("2. The hub takes the lot in", "Real API. Intake has no screen yet, so it is called directly.", False),
+    "2-hub-intake": ("2. The hub takes the lot in", "Real API, on the receiver's phone at the dock.", True),
     "3-customer": ("3. The customer orders", "Real API. Payment is a stand-in: no money moves.", True),
     "4-hub-picking": ("4. The hub picks and packs", "Real API, on the picker's phone screen.", True),
     "5-farmer-result": ("5. The farmer sees the grade", "Real API.", True),
@@ -93,7 +93,7 @@ def main() -> None:
     WORK.mkdir(exist_ok=True)
     captions = json.loads((OUT / "captions.json").read_text())
     parts = [title_card("0-opening", "JustInTimeFarm2Home",
-                        "One lot of tomatoes, from a farm to a customer's order, on the real backend. "
+                        "One lot of tomatoes, from a farm near Bhilai to a customer's order, on the real backend. "
                         "Recorded on 23 November 2026. Delivery is not built yet and is not shown.", 5.0)]
     for clip, (title, real, _phone) in CLIPS.items():
         if not (OUT / "video" / f"{clip}.webm").exists():

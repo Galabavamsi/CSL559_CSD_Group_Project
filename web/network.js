@@ -7,7 +7,10 @@ const colour = (name) => getComputedStyle($("map")).getPropertyValue(name).trim(
 const customers = (n) => `+${n} customer${n === 1 ? "" : "s"}`;
 
 let token = null;
-let fitted = null; // the area last fitted: the stores and the suggested sites
+let fitted = null; // the area last fitted: the stores and the suggested sites, or the city chosen
+let cities = [];   // from /v1/cities, for the city chooser
+// ?city=bhilai opens the map on one city; the chooser changes it. Everything is still drawn: only the view moves.
+let city = new URLSearchParams(location.search).get("city") || "";
 const map = L.map("map");
 const layers = L.layerGroup().addTo(map);
 // Fit again whenever the map's box changes size. A fit made while the box had no size (the page laid out late,
@@ -48,12 +51,17 @@ function drawCells(cells, field, fill) {
 }
 
 async function load() {
-  const [stores, cells, sites] = await Promise.all([
+  const [stores, cells, sites, allCities] = await Promise.all([
     api("/v1/stores"),
     api("/v1/network-planning/heatmap"),
     api("/v1/network-planning/suggestions"),
+    api("/v1/cities"),
   ]);
   layers.clearLayers();
+  cities = allCities;
+  $("city").replaceChildren(el("option", { value: "" }, "All cities"),
+    ...cities.map((c) => el("option", { value: c.city }, `${c.name} (${c.hubs} hub${c.hubs === 1 ? "" : "s"})`)));
+  $("city").value = cities.some((c) => c.city === city) ? city : "";
 
   for (const s of stores) {
     L.circle([s.lat, s.lng], { radius: s.radius_km * 1000, color: colour("--map-zone"), weight: 3, fillOpacity: 0.08 })
@@ -83,8 +91,12 @@ async function load() {
     ...[["Paid orders", sum("orders")], ["Turned away", sum("misses")], ["Cells with demand", cells.length]]
       .map(([label, value]) => el("div", {}, el("dt", {}, label), el("dd", {}, String(value)))));
 
+  const chosen = cities.find((c) => c.city === $("city").value);
   const points = [...stores.map((s) => [s.lat, s.lng]), ...sites.map((s) => [s.lat, s.lng])];
-  if (points.length) {
+  if (chosen) {
+    fitted = L.latLng(chosen.lat, chosen.lng).toBounds(chosen.radius_km * 2000 * 1.2); // the built-up area and a margin
+    map.fitBounds(fitted);
+  } else if (points.length) {
     fitted = L.latLngBounds(points).pad(0.4);
     map.fitBounds(fitted);
   }
@@ -126,4 +138,9 @@ function refresh() {
 }
 
 $("refresh").onclick = refresh;
+$("city").onchange = () => {
+  city = $("city").value;
+  history.replaceState(null, "", city ? `?city=${city}` : location.pathname);
+  refresh();
+};
 refresh();

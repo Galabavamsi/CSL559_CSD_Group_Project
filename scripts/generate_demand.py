@@ -18,9 +18,11 @@ from pathlib import Path
 if __package__ in (None, ""):          # run as a file: make `import app` work
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db import SessionLocal, init_db  # noqa: E402
+from app.models import City, Store  # noqa: E402
 from app.modules.serviceability import service as serviceability  # noqa: E402
 from app.seed import seed_if_empty  # noqa: E402
 
@@ -31,6 +33,22 @@ CLUSTERS = [
     {"name": "South-east, no store", "lat": 12.905, "lng": 77.650, "spread_km": 0.6, "lookups": 50},
     {"name": "West, no store", "lat": 12.960, "lng": 77.500, "spread_km": 0.6, "lookups": 15},
 ]
+
+
+# Bhilai, used once the city has hubs (DEMO_HUBS, or hubs opened from the network map): a crowd inside BH-01's
+# zone, and two outside every zone. Risali is 3.4 km from BH-01, just past its 3 km; Kumhari is far to the east.
+BHILAI_CLUSTERS = [
+    {"name": "Around BH-01 Civic Centre", "lat": 21.197, "lng": 81.348, "spread_km": 1.0, "lookups": 40},
+    {"name": "Risali, no hub", "lat": 21.160, "lng": 81.338, "spread_km": 0.5, "lookups": 35},
+    {"name": "Kumhari, no hub", "lat": 21.266, "lng": 81.519, "spread_km": 0.5, "lookups": 12},
+]
+
+
+def clusters_for(db: Session) -> list[dict]:
+    """The clusters that suit the hubs there are: Bangalore's always, Bhilai's once Bhilai has a hub."""
+    bhilai_hubs = db.scalar(select(func.count()).select_from(Store).join(City, City.id == Store.city_id)
+                            .where(City.slug == "bhilai"))
+    return CLUSTERS + (BHILAI_CLUSTERS if bhilai_hubs else [])
 
 
 def look_up(db: Session, clusters: list[dict], seed: int = 7) -> dict:
@@ -55,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     init_db()
     with SessionLocal() as db:
         seed_if_empty(db)
-        result = look_up(db, CLUSTERS, args.seed)
+        result = look_up(db, clusters_for(db), args.seed)
     print(f"{result['lookups']} lookups, {result['misses']} could not be served and were saved as misses. "
           "Open /network.html to see them.")
     return 0

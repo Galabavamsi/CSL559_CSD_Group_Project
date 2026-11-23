@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from ... import config, events
 from ...errors import DomainError, not_found
-from ...models import (SKU, Bin, Farm, Listing, ProduceItem, QualityCheck, StockItem, Store, User, utcnow)
+from ...models import (SKU, Bin, Farm, GoodsReceipt, Listing, ProduceItem, QualityCheck, StockItem, Store, User,
+                       utcnow)
 from ..inbound import service as inbound
 from ..serviceability import service as serviceability
 
@@ -241,6 +242,16 @@ def expected_drops(db: Session, store_id: int) -> list[dict]:
                       .order_by(Listing.drop_from, Listing.id)).all()
     return [{**listing_view(db, listing), "farmer": farmer.name or farmer.email, "farmer_phone": farmer.phone,
              **rejection_rate(db, listing.farm_id)} for listing, farmer in rows]
+
+
+def lots_on_dock(db: Session, store_id: int) -> list[dict]:
+    """Lots weighed at this hub whose packs still wait on the dock: their goods receipt is open. A receiver who was
+    interrupted finds the lot here and carries on putting it away."""
+    lots = db.scalars(select(Listing).join(QualityCheck, QualityCheck.listing_id == Listing.id)
+                      .join(GoodsReceipt, GoodsReceipt.id == QualityCheck.receipt_id)
+                      .where(Listing.store_id == store_id, GoodsReceipt.status == "open")
+                      .order_by(Listing.id)).all()
+    return [listing_view(db, lot) for lot in lots]
 
 
 def _units(db: Session, item: ProduceItem, accepted_g: int, packs: list[dict] | None) -> list[tuple[SKU, int]]:
