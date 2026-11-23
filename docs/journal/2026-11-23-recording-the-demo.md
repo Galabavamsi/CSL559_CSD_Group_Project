@@ -68,8 +68,9 @@ basmati rice beside the farmer's tomatoes. The recording shows the Vegetables ta
 ## What was checked
 
 - The whole run, five times, the last one with no failed stage: 7 clips, 33 screenshots, a video of 3 min 29 s.
-- Stills taken from the finished video at 14 points were looked at: titles, the "what is real" line and the
-  captions are where they should be and none is cut off.
+- Five stills from the finished video were looked at (the opening card, a phone part, the hub part, the
+  sign-in of a later part and the demo-data part): titles, the "what is real" line and the captions are where
+  they should be and none is cut off. The video was not watched from start to finish.
 - Every page of the PDF was read after it was printed.
 - `scripts/hub_intake.py` took in a second lot on the same server (see the handbook's metrics page for the run).
 
