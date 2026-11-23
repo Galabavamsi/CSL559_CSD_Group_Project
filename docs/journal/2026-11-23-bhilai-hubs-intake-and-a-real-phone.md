@@ -79,8 +79,11 @@ The fix took three tries on the phone, each of which a guess from the documentat
 ## What was checked
 
 - 23 new tests (21 for opening a hub, 2 for lots on the dock); the whole suite on the dev server and on AWS.
-- The intake screen, the map's city view and its button, in a real browser on the dev server, as part of the
-  recorded run: one lot of tomatoes from a farm near Bhilai to a packed order, with no failed stage.
+- The intake screen and the map's city view, in a real browser on the dev server, as part of the recorded run: one
+  lot of tomatoes from a farm near Bhilai to a packed order, with no failed stage.
+- "Open a hub here", pressed in a real browser on the site among Risali's turned-away customers: "BH-04 Risali"
+  opened with 228 cells, an address in Risali that had been refused was served from 0.7 km, and the list of
+  suggested sites moved on to the next gap.
 - The app on the phone, as above.
 
 ## What it leaves open
