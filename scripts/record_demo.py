@@ -306,7 +306,7 @@ def customer_orders(browser) -> None:
         more.first.click()
     page.wait_for_timeout(PAUSE * 1000)
     shot(page, "customer-home-added")
-    page.get_by_label(re.compile(r"^View cart")).click()
+    page.get_by_label(re.compile(r"^View cart")).locator("visible=true").first.click()     # a screen left behind keeps its own
     see(page, re.compile(r"^Hold my items"))
     say(clip, "Holding the cart sets the items aside at the hub for 10 minutes: whole cart or nothing")
     shot(page, "customer-cart")
@@ -366,7 +366,7 @@ def on_demo_data(browser) -> None:
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "mock-product")
     page.go_back()
-    page.get_by_label(re.compile(r"^View cart")).click()
+    page.get_by_label(re.compile(r"^View cart")).locator("visible=true").first.click()     # a screen left behind keeps its own
     see(page, re.compile(r"^Hold my items")).click()
     see(page, "Your items are held")
     page.locator("input >> visible=true").first.fill("12 Lake Road")

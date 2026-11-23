@@ -81,6 +81,20 @@ def test_a_hub_with_enough_is_left_alone_and_one_that_runs_low_gets_one_more_lot
     assert_stock_is_consistent()
 
 
+def test_produce_that_runs_low_is_not_reordered_from_the_warehouse(client, db, hubs):
+    """The reorder job raises a truck from the warehouse for anything under its reorder point. Farm produce does
+    not come from a warehouse: without this rule every hub would wait for trucks of tomatoes that never arrive."""
+    demo_supply.top_up(db)
+    hub = hubs["BH-03 Durg"]
+    tomato = db.scalar(select(SKU.id).where(SKU.name.like("Tomato%"), SKU.unit_grams == 500))
+    place_paid_order(client, "desk-1", hub, [(tomato, 20)])                     # 3 left, far under the reorder point
+
+    res = client.post("/v1/replenishment/run", params={"store_id": hub})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["transfer_order"] is None
+
+
 def test_the_demo_farms_belong_to_an_account_nobody_can_sign_in_to(client, db, hubs):
     demo_supply.top_up(db)
 
