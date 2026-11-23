@@ -118,8 +118,12 @@ Resources:
         # The same few lines serve both ways of starting. Started by a push, CodeBuild has already checked the
         # commit out; started by hand, there is no source, so the commit is fetched here. The checks themselves
         # are in the repository (infra/ci-test.sh), so they are versioned with the code they check.
+        # `set -e`: a commit that cannot be checked out must end the run. Without it the block carried on and
+        # tested the default branch under the name of the commit asked for.
         BuildSpec: |
           version: 0.2
+          env:
+            shell: bash
           phases:
             install:
               runtime-versions:
@@ -127,6 +131,7 @@ Resources:
             build:
               commands:
                 - |
+                  set -euo pipefail
                   if [ -z "${CODEBUILD_SOURCE_REPO_URL:-}" ]; then
                     git clone --quiet "$REPO_URL" src
                     cd src
