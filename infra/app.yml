@@ -181,6 +181,8 @@ Resources:
             - {Name: DEMO_PRODUCE, Value: "on"}          # the produce items and their units, for farmers to list
             - {Name: DEMO_HUBS, Value: "on"}             # Bhilai's demo hubs: each is opened once, if it is not there
             - {Name: DEMO_SUPPLY, Value: "on"}           # demo farms deliver to hubs that are nearly out of an item
+            - {Name: AGENT_SELF_SIGNUP, Value: "on"}     # a demo by one person: anyone may sign up as a delivery agent
+            - {Name: POOL_MAX_WAIT_MINUTES, Value: "2"}  # a lone packed order leaves after two minutes, not ten
           Secrets:
             - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecret}
             - {Name: DEMO_PASSWORD, ValueFrom: !Ref StaffPassword}

@@ -367,18 +367,26 @@ so the people running a hub meet one idea twice.
 (section 8) will say at what order rate pooling starts to pay; the handbook should report that number and not
 only the happy case.
 
-### 4.2 Decision: orders that lie in the same direction travel together
+### 4.2 Decision: the order that has waited longest goes, with its nearest neighbours by direction
 
-**What.** When more orders wait than one trip takes, the hub's waiting orders are sorted by their bearing from the
-hub (the compass direction of the address) and cut into trips of neighbours on that circle, starting at the
-largest gap. This is the sweep method.
+**What.** When more orders wait than one trip takes, the trip is the order that has waited longest and the
+waiting orders nearest to it in compass direction from the hub, up to the trip's limit. Of two equally near, the
+longer wait goes.
 
-**Why.** A trip that goes north and then south drives past the hub in between. Sorting by direction is the simplest
-grouping that avoids it, it needs nothing but the points, and it has a fifty-year record as the standard first
-answer to this problem. It is also easy to draw: the wedges are visible on a map.
+**Why.** A trip that goes north and then south drives past the hub in between. Grouping by direction is the
+simplest rule that avoids it and needs nothing but the points. Starting from the longest wait keeps the promise in
+4.1: the order that made the trip due is always on it.
 
-**Costs.** It ignores rivers, railway lines and one-way roads, which a road-time matrix would see. With road times
-available (section 1.2) the grouping can be checked against them; the rule does not change.
+**Changed in the building (24 November).** The first version of this section cut the whole circle of waiting
+orders into fixed wedges, the textbook sweep, and sent the wedge holding the oldest order. The first test of it
+showed the flaw: with three orders waiting and room for two, the oldest could land alone in a leftover wedge, and
+an agent left with one bag while two that could have gone stayed behind. A trip is formed one at a time here, as
+agents come free, so there is no need to divide everything at once. The sweep remains the right tool for planning
+many trips together, which the simulated day (section 8) may want.
+
+**Costs.** It ignores rivers, railway lines and one-way roads, which a road-time matrix would see. In Bhilai the
+railway makes that matter (section 1.2). With road times the neighbours would be chosen by minutes, not degrees;
+the rule's shape does not change.
 
 ### 4.3 Decision: the order of stops is the best one, found by trying them all
 
@@ -465,6 +473,31 @@ agents), which is real load; it would then move to a socket or to push notificat
 
 A dispatch panel on the ops dashboard: bags waiting and for how long, trips forming and out, agents on duty. It is
 the hub's answer to "why has this order not left", and the demo's proof that pooling happened.
+
+### 4.10 What is built, and what is not (24 November)
+
+Built, so that an order reaches a door: forming trips (4.1, 4.2), the order of stops (4.3), the agent who takes it
+(4.4), checking bags out (4.5), the door code (4.6), a failed hand-over (the first half of 4.7), and what the hub
+sees as an API (`GET /v1/stores/{id}/dispatch`, 4.9). The agent has screens in the app for all of it.
+
+Different from what the sections above say, each for a reason:
+
+- **Distances are straight lines times 1.7**, not road times. The road matrix is one more network call in the
+  path of forming a trip, and the straight line gives the same order of stops for a handful of addresses in one
+  direction. It gives the wrong length; the trip's kilometres are an estimate until the matrix is wired in.
+- **A bag is confirmed by a tap**, not by scanning its label. The agent's screen shows the crate slot and the
+  order number to match by eye. Scanning needs the camera permission and a printed label, neither of which a demo
+  on one phone has.
+- **An agent chooses their hub in the app**, while off duty. Section 4.4 has the platform team attach them, and
+  `POST /v1/admin/agents` does that. Choosing in the app is for a demo run by one person, as is the setting
+  `AGENT_SELF_SIGNUP`, which lets anyone sign up as an agent. Both are on for staging and off by default.
+- **A locked code can only end in "not delivered".** The hub cannot release it yet.
+
+Not built: what the hub does with a bag that comes back (4.7), the agent's position and the customer's map
+(4.8), a time of arrival, and the dispatch panel as a page (4.9 is an API only).
+
+On staging a trip leaves when the oldest order has waited two minutes, not ten, so that one person can show a
+delivery without three more orders or a long pause.
 
 ## 5. Asking farms for what the hub expects to sell
 

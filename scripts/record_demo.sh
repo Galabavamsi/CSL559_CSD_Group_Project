@@ -16,7 +16,7 @@ if [ "${1:-}" != "mock" ]; then
   pkill -f "uvicorn app.main:app --port 8000" 2>/dev/null; pkill -f "http.server 809" 2>/dev/null; sleep 1
   sudo docker exec pg psql -U darkstore -d postgres -qc "DROP DATABASE IF EXISTS demo WITH (FORCE)" -c "CREATE DATABASE demo" 2>/dev/null
   echo "=== the API, on an empty database, with produce and email written to its log"
-  DARKSTORE_DB=$DB DEMO_PRODUCE=on DEMO_HUBS=on EMAIL_BACKEND=log RATE_LIMIT_PER_SECOND=0 OTP_RESEND_SECONDS=0 REPLENISHMENT_INTERVAL_MINUTES=0 \
+  DARKSTORE_DB=$DB DEMO_PRODUCE=on DEMO_HUBS=on AGENT_SELF_SIGNUP=on POOL_MAX_WAIT_MINUTES=0 EMAIL_BACKEND=log RATE_LIMIT_PER_SECOND=0 OTP_RESEND_SECONDS=0 REPLENISHMENT_INTERVAL_MINUTES=0 \
     nohup $PY -m uvicorn app.main:app --port 8000 > /tmp/f2h-api.log 2>&1 &
   for _ in $(seq 1 60); do curl -fs http://127.0.0.1:8000/health >/dev/null && break; sleep 1; done
   curl -s http://127.0.0.1:8000/health; echo
