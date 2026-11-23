@@ -8,13 +8,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Order } from './types';
+import { storageName } from '@/config';
 
 export interface DeviceOrder {
   reservationId: string;
   order: Order;
 }
 
-const storageKey = (userId: number) => `f2h.orders.${userId}`;
+const storageKey = (userId: number) => storageName(`f2h.orders.${userId}`);
 
 /** A user's orders, newest first. */
 export async function readDeviceOrders(userId: number): Promise<DeviceOrder[]> {

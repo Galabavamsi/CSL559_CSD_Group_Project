@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import { storageName } from '@/config';
 
 /** Where the customer wants deliveries, and the hub that serves that point. */
 export interface DeliveryLocation {
@@ -39,7 +40,7 @@ export const useDeliveryLocation = create<DeliveryLocationState>()(
       setAddress: (addressLine, landmark) => set({ addressLine, landmark }),
     }),
     {
-      name: 'f2h.delivery-location',
+      name: storageName('f2h.delivery-location'),
       storage: createJSONStorage(() => AsyncStorage),
       partialize: ({ location, addressLine, landmark }) => ({ location, addressLine, landmark }),
     },
