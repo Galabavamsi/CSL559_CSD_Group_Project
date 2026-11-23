@@ -151,6 +151,22 @@ INTAKE_OVER_TOLERANCE = float(os.getenv("INTAKE_OVER_TOLERANCE", "0.1"))   # a l
 # Add the produce items and their units (tomato, onion, spinach...) to the demo data. Off for the tests, which
 # count the original catalogue; on for a hosted copy.
 DEMO_PRODUCE = os.getenv("DEMO_PRODUCE", "off") == "on"
+# Delivery (docs/DESIGN.md, section 4). A trip is formed at a hub when an agent is free and either POOL_MIN_ORDERS
+# packed orders wait or the oldest has waited POOL_MAX_WAIT_MINUTES; it takes at most TRIP_MAX_ORDERS. Every order of
+# the stops is tried, so TRIP_MAX_ORDERS may not pass 8. ROAD_FACTOR turns a straight line into road kilometres
+# (measured for Bhilai: 1.6 to 1.9). A door code may be mistyped DOOR_CODE_TRIES times.
+POOL_MIN_ORDERS = int(os.getenv("POOL_MIN_ORDERS", "4"))
+POOL_MAX_WAIT_MINUTES = float(os.getenv("POOL_MAX_WAIT_MINUTES", "10"))
+TRIP_MAX_ORDERS = int(os.getenv("TRIP_MAX_ORDERS", "6"))
+if not 1 <= TRIP_MAX_ORDERS <= 8:
+    raise ValueError("TRIP_MAX_ORDERS must be between 1 and 8")
+ROAD_FACTOR = float(os.getenv("ROAD_FACTOR", "1.7"))
+DOOR_CODE_TRIES = int(os.getenv("DOOR_CODE_TRIES", "5"))
+DELIVERY_CHECK_SECONDS = float(os.getenv("DELIVERY_CHECK_SECONDS", "30"))
+# A delivery agent's account is made by the platform team (POST /v1/admin/agents). With this on, anyone may sign
+# up as an agent and choose a hub, which is what a demo with one person and two email addresses needs.
+AGENT_SELF_SIGNUP = os.getenv("AGENT_SELF_SIGNUP", "off") == "on"
+
 # Demo farms (app/demo_supply.py): lots that arrive without a farmer, through the hub's ordinary intake, whenever a
 # hub has fewer than DEMO_SUPPLY_MIN_UNITS of an item on sale. A hosted demo's shops are then never empty. Off for
 # the tests and for the recorded demo, which shows a hub's first lot arriving at empty shelves.

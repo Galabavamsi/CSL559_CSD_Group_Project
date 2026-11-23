@@ -90,7 +90,8 @@ def request_code(db: Session, email: str, role: str) -> tuple[dict, tuple[str, s
     db.execute(delete(LoginCode).where(LoginCode.email == email, LoginCode.created_at <= now - timedelta(days=1)))
     db.execute(update(LoginCode).where(LoginCode.email == email, LoginCode.used_at.is_(None)).values(used_at=now))
     user = db.scalar(select(User).where(User.email == email))
-    may_sign_in = user is not None or role in SELF_SIGNUP_ROLES
+    may_sign_in = (user is not None or role in SELF_SIGNUP_ROLES
+                   or (role == "agent" and config.AGENT_SELF_SIGNUP))
     code = f"{secrets.randbelow(10 ** 6):06d}"
     # An address that may not sign in gets a row too, already spent: it counts towards the limits above, so the
     # answers and their timing stay the same, and no code exists that could be guessed.

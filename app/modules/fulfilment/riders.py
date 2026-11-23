@@ -62,6 +62,30 @@ def _rider_of(db: Session, job: FulfilmentJob, rider_id: str) -> RiderAssignment
     return assignment
 
 
+def give_to_agent(db: Session, job: FulfilmentJob, rider_id: str) -> None:
+    """A delivery agent checks this order's bag out of the hub in their own app (docs/DESIGN.md, section 4.5). The
+    made-up rider a packed order is given steps aside: the trip's agent is its rider, and the bag leaves in the same
+    step. Does not commit. 409 not_packed if the bag is not waiting at the hub."""
+    now = utcnow()
+    handed = db.execute(
+        update(FulfilmentJob)
+        .where(FulfilmentJob.id == job.id, FulfilmentJob.state == "packed")
+        .values(state="handed_over", handed_at=now)
+        .execution_options(synchronize_session=False)
+    ).rowcount == 1
+    if not handed:
+        raise DomainError(409, "not_packed", f"Order {job.order_id} is not waiting at the hub, so it cannot be loaded")
+    db.refresh(job)
+    if job.rider is None:
+        job.rider = RiderAssignment(rider_id=rider_id)
+    job.rider.rider_id, job.rider.status = rider_id, "collected"
+    job.rider.arrived_at = job.rider.arrived_at or now
+    job.rider.collected_at = now
+    db.flush()
+    events.publish(db, "fulfilment.state_changed", job.store_id,
+                   {"job_id": job.id, "order_id": job.order_id, "state": "handed_over", "rider_id": rider_id})
+
+
 def arrive(db: Session, rider_id: str, order_id: str) -> dict:
     """The rider is at the store for this order: say which crate slot holds the bag. Commits."""
     job = job_for_order(db, order_id)

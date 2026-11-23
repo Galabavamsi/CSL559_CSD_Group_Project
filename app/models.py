@@ -556,6 +556,53 @@ class IdempotencyRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+# --------------------------------------------------------------------------- delivery
+
+class AgentProfile(Base):
+    """Where a delivery agent works and whether they are on duty (docs/DESIGN.md, section 4.4). The account itself
+    is a row in `users` with the role agent. `free_since` is set while the agent is on duty with no trip: the one
+    free longest takes the next trip."""
+    __tablename__ = "agent_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True, index=True)
+    on_duty: Mapped[bool] = mapped_column(Boolean, default=False)
+    free_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Trip(Base):
+    """One agent's round from a hub with several orders' bags, and back. assigned (bags still at the hub) -> out
+    (every bag checked out) -> done (every stop delivered or failed)."""
+    __tablename__ = "trips"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(12), default="assigned", index=True)
+    km: Mapped[float] = mapped_column(Float)                          # the planned round, hub to hub
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    stops: Mapped[list["TripStop"]] = relationship(order_by="TripStop.seq", cascade="all, delete-orphan",
+                                                   back_populates="trip")
+    agent: Mapped[User] = relationship()
+
+
+class TripStop(Base):
+    """One order on a trip, in the order the stops are made. waiting (bag at the hub) -> loaded (checked out by the
+    agent) -> delivered (the customer's code was right) or failed. An order is on at most one trip."""
+    __tablename__ = "trip_stops"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id"), index=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), unique=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10), default="waiting")
+    loaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failed_reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    code_tries: Mapped[int] = mapped_column(Integer, default=0)      # wrong door codes typed so far
+    trip: Mapped[Trip] = relationship(back_populates="stops")
+    order: Mapped[Order] = relationship()
+
+
 class EventLog(Base):
     """Every event published on the in-process bus. Stands in for Kafka in the prototype."""
     __tablename__ = "event_log"
