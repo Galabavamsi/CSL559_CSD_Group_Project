@@ -1,0 +1,430 @@
+# Design of what is left
+
+*Written 24 November 2026, nine days before the demo. There is no earlier design document to follow for these
+parts, so this one makes the decisions and gives the reason for each. What is already built is described in
+`docs/handbook/` and `docs/journal/`; this document covers what is not.*
+
+Every decision below has the same four parts: **what** we will do, **why**, what was **considered and not taken**,
+and what it **costs or risks**. A fact from outside the project has a link under Sources at the end. Where a fact
+could not be confirmed, the text says so.
+
+## 0. What the design has to respect
+
+| Constraint | Consequence |
+| --- | --- |
+| Nine days, one developer | Prefer rules that fit in a page and can be tested, over rules that are optimal |
+| The demo is live, in Bhilai, on a phone | Nothing in the demo path may depend on a service that can fail on the day without a fallback |
+| The app runs in Expo Go until there is an installable build | No library that needs its own native code |
+| One copy of the API runs | Timed work stays in the process; anything that must not run twice is guarded in the database |
+| The showcase is the AWS architecture, paid from credits | When two services are equal, the one on AWS is chosen |
+| Stock is whole units, held per hub and item | Nothing here may weaken the hold: no design that prices or promises below that level without the same guard |
+
+## 1. Maps and location
+
+### 1.1 What is used today
+
+- **The phone app has no map.** A customer's location is the phone's GPS fix or an area picked from a list. A
+  farm's location is a GPS fix good to 50 m.
+- **The hub's network map** is a web page drawn with Leaflet on OpenStreetMap's public tiles.
+- **Every distance is computed by us:** PostGIS for "nearest hub" and "hubs within reach", H3 cells for "which hub
+  serves this address". Distances are straight lines. A delivery time is a packing time plus minutes per
+  straight-line kilometre.
+- **No maps service is called and no key exists.** Google Maps was mentioned at the start of the project and never
+  wired in.
+
+### 1.2 Decision: Amazon Location Service, drawn with MapLibre
+
+**What.** One provider for the three things we need: map tiles, place search (an address typed by a customer
+becomes a point, and a point becomes an address), and road routing (travel times between a hub and its stops). The
+maps are drawn with MapLibre GL JS, the open-source renderer Amazon Location documents for its tiles. On the phone
+the map lives in a web view (an Expo "DOM component"), so the same map code serves the phone and the web pages.
+
+**Why.**
+
+1. **It is in the region we run in.** Amazon Location has Maps, Places and Routes endpoints in Mumbai
+   (`ap-south-1`), beside the rest of the system.
+2. **It is on the account and the credits we already have.** No second billing relationship, no second place where
+   a key can leak, and access is granted the way everything else here is: by IAM, or by an API key scoped to named
+   actions.
+3. **It can be used in Expo Go.** This is what rules out the obvious alternative for now. A native Google map in
+   React Native (`react-native-maps`) no longer works inside Expo Go: users report a blank map, and a maintainer's
+   reply says Expo Go stopped supporting it, so it needs our own development build with our own key. A MapLibre map
+   in a web view needs no native code, and Expo's DOM components are documented as supported in Expo Go.
+4. **Google's routing and places may not be mixed with someone else's map.** Google's terms say its core services
+   are not to be used with or near a non-Google map, and repeat that for Routes and Places. So "Google for
+   addresses, something else for the map" is not open to us: choosing Google means Google for all three, which
+   brings back point 3.
+5. **The routing API has what pooling needs.** A route matrix (travel time between every pair of points) and a
+   waypoint optimiser for up to 50 stops.
+
+**Considered and not taken.**
+
+- **Google Maps Platform.** Probably the best address data in India, and at our volume it would cost nothing:
+  India pricing gives each basic service 70,000 free requests a month. Not taken because of points 3 and 4, and
+  because it needs a billing account in India that is the owner's to set up. It stays the fallback if Amazon's
+  data proves poor (see the risk below).
+- **OpenStreetMap's public tiles with our own routing server (OSRM).** Free, and it is what the network map does
+  today. Not taken for the app: OpenStreetMap's tile policy asks applications that make heavy use to run their own
+  tile servers or use a third party, and an app distributed to phones is exactly that case. Running tile and
+  routing servers ourselves is a week we do not have.
+- **An Indian provider (Mappls).** Not evaluated: no time to compare a fourth option.
+
+**Costs and risks.**
+
+- **The quality of Amazon Location's data for Bhilai is unknown.** We could not find a page that states its
+  coverage of India. The first hour of the work is a test with real addresses (Supela, Nehru Nagar, Risali, a
+  village farm): place search, a route, a matrix. If the answers are poor, we stop and take Google with a
+  development build, or stay with section 1.3 alone.
+- **Price.** Charged per request, with no minimum. We have not found the current rates per thousand; at demo
+  volume (hundreds of requests) it is cents either way, and the cost guard on the account already watches the
+  total.
+- **A web view map is less smooth than a native one.** Acceptable for a pin on a map and a route line.
+- **The network map keeps OpenStreetMap's tiles until this is done**, with their attribution, at a handful of
+  views a day.
+
+### 1.3 Decision: a map is never required
+
+**What.** Every flow keeps working with no map service at all: a GPS fix or an area from the list for the customer,
+a GPS fix for the farm, straight-line distances for pooling and for the order of stops. The map and road times
+improve what is there; nothing waits for them.
+
+**Why.** The demo runs on a network we do not control, which has already blocked our own domain once. A design in
+which "the map did not load" means "the order cannot be placed" would put the whole demo behind one more external
+call. And it lets delivery be built and tested before any maps work is done.
+
+**Costs.** Two code paths for distance. They are kept honest by one function that returns travel minutes between
+two points and says which method it used.
+
+### 1.4 Decision: what location we keep
+
+| Whose | When it is read | What is kept | Why |
+| --- | --- | --- | --- |
+| Customer | When they choose where to deliver | The point of the address, with the order | The stop's position; the hub's zone |
+| Farm | Once, at registration | One point, refused if rougher than 50 m | It decides the hub |
+| Delivery agent | Every 15 seconds, only while on a trip, only with the app open | The latest point per trip, and one point a minute as a trail | The customer's "where is my order"; the hub's view |
+
+An agent's position is not read when they are off a trip, and a customer sees it only for their own order while
+it is out for delivery. Reading location in the background needs a native build and a stronger permission; the
+agent keeps the app open instead, and the screen says so.
+
+## 2. Orders as records on the server
+
+### 2.1 What exists
+
+A cart is **held** (`POST /v1/reservations`), which sets stock aside for ten minutes. **Paying** confirms the hold
+and creates a pick job. The job is picked and **packed**. None of this knows who the customer is: the hold
+endpoints are open, and the phone app remembers its own orders in the phone's storage and works out their progress
+from the hold and the job.
+
+### 2.2 Decision: an order is created at payment, around the hold
+
+**What.** A new `orders` table and four endpoints, for signed-in customers only:
+
+| Call | Does |
+| --- | --- |
+| `POST /v1/orders` with a hold's id and a delivery address | Confirms the hold (the existing step), and writes the order: who, which hub, the address, each line with the price charged, the totals |
+| `GET /v1/orders` | The customer's own orders, newest first |
+| `GET /v1/orders/{id}` | One order with its history, for the tracking screen |
+| `POST /v1/orders/{id}/cancel` | Cancels until the order is packed (the existing rule) |
+
+The hold stays exactly as it is, including its open endpoint, so the hub's demo desk still works.
+
+**Why at payment and not at the hold.** A hold is a cart that may never be paid; most are released or expire. An
+order is a promise to deliver. Writing an order row for every hold would fill the customer's history with
+abandoned carts and would need a clean-up job to remove them.
+
+**Why around the hold and not instead of it.** The hold is the part of the system with the strongest guarantee
+(no overselling, proven under races), and most of the test suite leans on it. An order adds identity, address, prices and
+history on top; it does not touch how stock is promised.
+
+**Considered and not taken.** Making the hold endpoints require a customer login. It would be right in
+production, but the hub's desk page and many tests place anonymous holds, and nothing in the demo is made
+safer by it.
+
+**Costs.** Two ids for one purchase (the hold's and the order's). The order carries the hold's id and that is the
+only link the app needs.
+
+### 2.3 Decision: an order's state is written when it changes, not worked out when read
+
+**What.** The order has a `status` and a history table of `(status, at)`. The order module subscribes to the events
+the hub already publishes (order paid, job packed, job cancelled) and to the new delivery events (trip formed, trip
+left, delivered, delivery failed), and moves the order forward when one arrives, in the same transaction as the
+event.
+
+| Status | Set when |
+| --- | --- |
+| `confirmed` | The order is placed (payment is a stand-in, so placed and confirmed are one moment) |
+| `packed` | The hub packs the job |
+| `pooled` | The order is put on a trip |
+| `out_for_delivery` | The agent leaves the hub with it |
+| `delivered` | The agent enters the customer's code |
+| `cancelled` | The customer cancels before packing, or nothing could be picked |
+| `delivery_failed` | The agent could not hand it over |
+
+**Why.** The app shows a timeline with times, which a status worked out on the fly cannot give. Delivery adds
+states that no existing table has. And an event handler in the publisher's transaction cannot leave an order
+disagreeing with its job: either both change or neither does.
+
+**Costs.** A status can only be as right as the events. Each transition is a guarded update (`WHERE status = the
+one before`), so an event arriving twice changes nothing.
+
+### 2.4 Decision: payment stays a stand-in
+
+**What.** `POST /v1/orders` takes no payment details and records `payment: "stand_in"`. **Why.** A gateway needs a
+merchant account, webhooks and refunds, and proves nothing about micro-warehousing. The seam is one function, so a
+gateway replaces it without changing the order. **Cost.** The demo must say that no money moves, and does.
+
+## 3. What a customer is told about a pack
+
+### 3.1 Decision: the shop describes the batch a customer would get next
+
+**What.** For each item, the shop's list adds the facts of the batch that would be picked first: its grade, harvest
+date, use-by date and farm. These already exist (a batch is `L<listing>`, the listing has the farm and harvest
+date, the quality check has the grade); they are joined in, not stored again.
+
+**Why one batch per item and not a row per batch.** Stock is promised per hub and item, and picked oldest batch
+first. A customer cannot choose a batch, so showing several would offer a choice the hub does not honour. The
+oldest batch is what the next order receives.
+
+**Costs.** An order larger than what is left of the oldest batch receives some units from a newer one. They are
+never older than shown, but their grade may differ. The order's lines record the batch of every unit, so the
+receipt is exact even when the shop's summary was not.
+
+### 3.2 Decision: a rescue price on a batch in its last day, for that batch's units only
+
+**What.** When the batch to be picked first has one day of shelf life left or less, its units are offered at a
+lower price (a setting, 30% off to begin with), and the shop says how many units are left at that price. An
+order's lines are priced by walking the batches oldest first, the same walk that later chooses the bins: units
+from the expiring batch at the rescue price, the rest at the full price.
+
+**Why.** Wastage is a number this system is judged on, and produce a day from its date is still good to eat today.
+A price that follows the batch is the smallest honest version of that. Pricing by the same walk as picking is what
+keeps it honest: without it a customer could order ten at the rescue price when only three such packs exist.
+
+**Considered and not taken.** A price that falls gradually with age, or that reacts to demand. Both are more
+interesting and neither can be explained in one sentence to a customer or checked in one test.
+
+**Costs.** The price a customer is shown can change between looking and paying, if someone else buys the last
+rescue units first. The hold answers with the prices it used, and the app shows the change before payment.
+
+## 4. Delivery
+
+A packed order waits at the hub in a crate slot. Delivery has to answer five questions: when does a trip leave,
+which orders are on it, in what order are they dropped, who takes it, and how is the hand-over proved.
+
+### 4.1 Decision: a trip leaves when there are enough orders or when the oldest has waited long enough
+
+**What.** At each hub, packed orders wait in a pool. A trip is formed when a delivery agent is free and either
+`POOL_MIN_ORDERS` orders are waiting (4 to begin with) or the oldest has waited `POOL_MAX_WAIT_MINUTES` (10 to begin
+with). A trip takes at most `TRIP_MAX_ORDERS` (6). A timed job checks every 30 seconds; packing an order checks at
+once.
+
+**Why.** This is the whole idea of pooling in one rule: waiting buys fuller trips, and the deadline caps what
+waiting costs the customer. Both numbers are settings, and can be set per city later: a tier-2 city with fewer orders
+would wait longer for the same fill. It is also the rule the hub already uses for picking (three orders in one walk once four are waiting),
+so the people running a hub meet one idea twice.
+
+**Considered and not taken.**
+
+- **Fixed slots** (a trip every hour, or morning and evening). The fullest trips, and usual for milk and groceries
+  on subscription. Not taken because the app promises a time in minutes from the order, and a slot would make that
+  promise "by 6 pm".
+- **Deciding trip by trip with an optimiser** that weighs every waiting order against every agent. Not taken: at a
+  few orders an hour per hub it would choose what the rule chooses, and it could not be explained on a slide.
+
+**Costs.** With one order an hour, every trip carries one order and pooling saves nothing. The simulator
+(section 8) will say at what order rate pooling starts to pay; the handbook should report that number and not
+only the happy case.
+
+### 4.2 Decision: orders that lie in the same direction travel together
+
+**What.** When more orders wait than one trip takes, the hub's waiting orders are sorted by their bearing from the
+hub (the compass direction of the address) and cut into trips of neighbours on that circle, starting at the
+largest gap. This is the sweep method.
+
+**Why.** A trip that goes north and then south drives past the hub in between. Sorting by direction is the simplest
+grouping that avoids it, it needs nothing but the points, and it has a fifty-year record as the standard first
+answer to this problem. It is also easy to draw: the wedges are visible on a map.
+
+**Costs.** It ignores rivers, railway lines and one-way roads, which a road-time matrix would see. With road times
+available (section 1.2) the grouping can be checked against them; the rule does not change.
+
+### 4.3 Decision: the order of stops is the best one, found by trying them all
+
+**What.** For a trip of up to 8 stops, every order of the stops is tried and the one with the least travel time
+from the hub and back is kept. Travel time comes from the road matrix when the maps service answers, and from
+straight-line distance at a town speed when it does not.
+
+**Why.** Eight stops have 40,320 orders, which a laptop tries in well under a second. For trips this small there
+is no reason to accept an approximate answer or to add a solver, and the result is the same every time, so it can
+be tested exactly.
+
+**Considered and not taken.** Amazon Location's waypoint optimiser, which takes 50 stops and knows traffic. It
+would make the order of stops depend on a network call at the moment a trip is formed; we will use it to check
+our answers, not to produce them.
+
+**Costs.** It stops scaling at about ten stops. A trip is capped at six orders, so this limit is not reached.
+
+### 4.4 Decision: the free agent who has waited longest takes the trip
+
+**What.** Delivery agents are app accounts created by the platform team and attached to one hub. An agent goes on
+duty in the app. A formed trip is given to the on-duty agent at that hub who has been free the longest. The claim
+is one guarded update, as for a picker and a pick job, so a trip cannot have two agents.
+
+**Why.** First come, first served is fair, obvious to the agents and needs no tuning. **Not taken:** letting
+agents bid for or decline trips; it needs rules for what happens when everyone declines.
+
+**Costs.** No account of where the agent is: an agent just back from the north gets a trip to the south. With all
+trips starting and ending at the hub this costs nothing.
+
+### 4.5 Decision: the bag is checked out of the hub, order by order
+
+**What.** At the hub the agent's screen lists the trip's bags with their crate slots. The agent confirms each bag
+(its order number is on the label; the app can take it typed or scanned later). When every bag is confirmed, the
+trip leaves and its orders become `out_for_delivery`. This replaces the made-up rider the prototype assigns to
+each packed order.
+
+**Why.** The moment a bag leaves the hub is the moment responsibility for it changes hands, and the prototype's
+hand-over rule ("only this order's rider, only with this order's bag") already encodes that. The trip keeps the
+rule and applies it to several bags.
+
+### 4.6 Decision: a four-digit code, worked out from a secret and never stored
+
+**What.** Each order has a four-digit code, shown to the customer once the order is on a trip. At the door the
+customer reads it out and the agent types it in. The server works the code out as a keyed hash (HMAC) of the order
+id and the server's secret, reduced to four digits; it is not kept in the database. Five wrong tries lock the
+hand-over for that order until the hub releases it.
+
+**Why a code at all.** It proves the agent and the customer were together, with no signature pad and no
+photograph, and a customer can pass it to a neighbour or a guard by phone. **Why worked out and not stored.** The
+customer's app has to be able to show the code at any time, so a one-way hash in the database would not do, and
+the alternative is to store it readable. Working it out on request means a copy of the database does not contain
+any codes. **Why four digits.** It is read aloud on a doorstep; the limit of five tries, by an agent whose name is
+on the trip, is what protects it.
+
+**Costs.** Changing the server's secret changes every outstanding code. The secret is not changed while orders are
+out.
+
+### 4.7 Decision: an order that cannot be handed over comes back, and the hub decides
+
+**What.** The agent marks the stop as failed with a reason (nobody home, refused, could not find it). The order
+becomes `delivery_failed`, the customer is told, and the bag returns with the agent. At the hub, each unit is
+either put back on the shelf (if its batch still has more than half its shelf life, the same rule as at the dock)
+or written off, through the existing stock adjustments.
+
+**Why.** Produce that has been out for an hour is usually still good; throwing it away by rule would add to the
+wastage the system exists to reduce, and putting it back by rule would shelve what a customer just refused. A
+person at the hub looks at it.
+
+**Costs.** One more task for the hub. Refunds are a stand-in, like payment.
+
+### 4.8 Decision: positions are sent and fetched by ordinary requests, not over a socket
+
+**What.** The agent's app posts its position every 15 seconds while on a trip. The customer's app asks for its
+order every 15 seconds while it is out for delivery and gets the last position and a time of arrival.
+
+**Why.** The system already has a live socket, for the hub's staff, relayed inside the one API process. Phones on
+mobile data lose sockets as they move between cells and when the app goes to the background; a request every 15
+seconds does not care. "Where is my order" does not need better than 15 seconds.
+
+**Costs.** At a thousand orders out at once this is about 80 requests a second (67 from customers, the rest from
+agents), which is real load; it would then move to a socket or to push notifications. At demo scale it is nothing.
+
+### 4.9 What the hub sees
+
+A dispatch panel on the ops dashboard: bags waiting and for how long, trips forming and out, agents on duty. It is
+the hub's answer to "why has this order not left", and the demo's proof that pooling happened.
+
+## 5. Asking farms for what the hub expects to sell
+
+### 5.1 Decision: a hub posts requests; a farmer answers one with a listing
+
+**What.** Each evening, per hub and item: expected sales tomorrow (the forecast the hub already makes), plus a
+margin, minus what is on the shelf and what is already on its way, converted from units to kilograms with the pack
+size. If the result is above a floor, the hub posts a request ("up to 60 kg of tomatoes, tomorrow morning"). Farmers
+within 60 km see the open requests in the app and answer with a listing; the request's remaining quantity goes
+down by what is listed.
+
+**Why.** Today a farmer lists what they have and hopes the hub wants it. The hub knows what it expects to sell.
+Telling farmers closes the loop the name "just in time" promises, and it reuses three things that exist: the
+forecast, the hub's count of what is coming, and the listing.
+
+**Considered and not taken.** Setting the quantity by the newsvendor rule (order more when running out costs more
+than throwing away). It is the right next step and needs a cost of running out and a cost of wastage that we would
+be inventing. A fixed margin is honest about being a guess.
+
+**Costs.** It is the piece most likely to be cut if delivery takes longer than planned. Nothing else depends on it.
+
+## 6. Decisions not to do something before the demo
+
+| Not doing | Why |
+| --- | --- |
+| **Removing the dark store's groceries from Bangalore's hubs** | About six hundred tests are written against that data, and staging already holds it; removing it there means deleting data on a hosted database. Bhilai's hubs hold only produce, and the demo is in Bhilai |
+| **A production environment** | Staging is production-shaped and is what the demo uses. A second environment doubles the daily cost and the things that can drift, and nobody would look at it |
+| **A second copy of the API** | The timed jobs and the staff's live feed run inside the process; two copies would run jobs twice. Moving them out is a week. The load balancer, the standby database and the rollback are already in place for it |
+| **Real staff accounts** | The hub's logins are shared demo accounts behind one password per environment. Replacing them touches every staff screen |
+| **Location in the background, native maps, push notifications** | Each needs our own build of the app and its own permissions. They follow the installable build |
+
+## 7. An installable build
+
+**What.** After delivery works, one Android build made by Expo's build service (EAS), installed from a file.
+**Why not now.** Expo Go is enough to demo and to develop in, and this laptop cannot build Android itself. The
+build service needs an Expo account, which is the owner's to create. **Why at all.** A build of our own is what
+lifts the limits in section 6's last row, and "install this" is a stronger ending to a demo than "open Expo Go".
+
+## 8. A simulated day
+
+**What.** A script that plays one day through the real API with a compressed clock: farmers list in the morning,
+the hub takes lots in, customers order through the day in clusters around real areas, pickers pick, trips form
+and agents deliver. It reports what the design is judged on: minutes from order to door, orders per trip,
+kilometres per order with and without pooling, units wasted, and how often a customer was refused.
+
+**Why.** Every number in the handbook so far comes from one order or from a load test of reads. Pooling is a claim
+about many orders, and only a day of them can support or deny it. **Why through the API.** A model of the system
+would test the model. The scripted pickers that exist already do it this way.
+
+**Costs.** Compressed time hides real picking and driving speeds, so those are inputs to the run, stated beside
+the results.
+
+## 9. Order of work
+
+| Day | Piece | If it runs late |
+| --- | --- | --- |
+| 1 | Orders on the server; the app reads them | Nothing below works without it |
+| 2 | Batch facts and the rescue price in the shop | The rescue price can wait; the facts are cheap |
+| 3 to 5 | Delivery: pool, trips, agent's screens, the code, the hub's dispatch panel | Failed deliveries and the position trail are cut first |
+| 6 | Maps: the address test, then the map in the app and on the network page | Section 1.3 means the demo does not need it |
+| 7 | Requests to farms | Cut whole |
+| 8 | The simulated day and its numbers | A shorter run |
+| 9 | Rehearsal on the phone, on the venue's kind of network; fixes only | Not cut |
+
+## Sources
+
+- AWS, "Amazon Location Service endpoints and quotas" (Maps, Places and Routes endpoints in `ap-south-1`; request
+  quotas): https://docs.aws.amazon.com/general/latest/gr/location.html
+- AWS, "Amazon Location Service Routes V2" (route matrix; waypoint optimisation, 50 waypoints):
+  https://docs.aws.amazon.com/location/latest/APIReference/API_Operations_Amazon_Location_Service_Routes_V2.html
+  and https://aws.amazon.com/location/routes/
+- AWS, "How to display a map" (Amazon Location's tiles drawn with MapLibre GL JS, with an API key in the style
+  address): https://docs.aws.amazon.com/location/latest/developerguide/how-to-display-a-map.html
+- AWS, "Pricing model" for Amazon Location (per request, no minimum; the same price whatever the authentication):
+  https://docs.aws.amazon.com/location/latest/developerguide/pricing.html
+- Google, "Google Maps Platform core services pricing list: India" (70,000 free requests a month for each basic
+  service; the rates): https://developers.google.com/maps/billing-and-pricing/pricing-india
+- Google, "Google Maps Platform Terms of Service" and "Service Specific Terms" (no use with or near a non-Google
+  map; repeated for Routes and Places): https://cloud.google.com/maps-platform/terms and
+  https://cloud.google.com/maps-platform/terms/maps-service-terms
+- `react-native-maps`, issue 5888, "Google Maps blank in Expo Go" (a maintainer's reply that Expo Go no longer
+  supports it; works in development builds): https://github.com/react-native-maps/react-native-maps/issues/5888
+- Expo, "react-native-maps" (the key is set through a config plugin and needs a rebuild):
+  https://docs.expo.dev/versions/latest/sdk/map-view/
+- Expo, "Using React DOM in Expo native apps" (DOM components; supported in Expo Go):
+  https://docs.expo.dev/guides/dom-components/
+- OpenStreetMap Foundation, "Tile Usage Policy" (heavy users should run their own tile servers or use a third
+  party; attribution; no bulk downloading): https://operations.osmfoundation.org/policies/tiles/
+- B. E. Gillett and L. R. Miller, "A Heuristic Algorithm for the Vehicle-Dispatch Problem", *Operations Research*
+  22(2), 1974 (the sweep method): https://pubsonline.informs.org/doi/fpi/10.1287/opre.22.2.340
+- Not found: a page stating Amazon Location's map and address coverage for India, and its current price per
+  thousand requests. Both are to be checked before section 1.2 is built.
+- Our own, not from a source: every number given as a setting (4 orders, 10 minutes, 6 per trip, 30% off, 15
+  seconds). They are starting values to be changed by what the simulated day shows.
