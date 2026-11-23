@@ -1,5 +1,6 @@
 import type {
   AuthSession,
+  Bill,
   City,
   Farm,
   Hold,
@@ -46,6 +47,8 @@ export interface ApiClient {
   createHold(request: HoldRequest): Promise<Hold>;
   getHold(holdId: string): Promise<Hold>;
   releaseHold(holdId: string): Promise<Hold>;
+  /** What paying for the hold costs right now, as the hub would charge it. */
+  getHoldBill(holdId: string): Promise<Bill>;
   /** Takes the (demo) payment and turns the hold into an order. */
   placeOrder(request: PlaceOrderRequest): Promise<Order>;
 

@@ -1,4 +1,4 @@
-import type { CartLine, OrderLine, Product } from '@/api/types';
+import type { Bill, CartLine, OrderLine, Product } from '@/api/types';
 
 /** Rupees a customer pays for one unit today: the markdown price when the batch is marked down. */
 export function unitPrice(product: Product): number {
@@ -15,14 +15,27 @@ export function discountPercent(product: Product): number {
   return isRescueDeal(product) ? Math.round((1 - (product.markdownPrice as number) / product.price) * 100) : 0;
 }
 
-export interface Bill {
-  lines: OrderLine[];
+export interface Charge {
+  /** Units at the markdown price, and units at the usual price. */
+  markedDown: number;
+  usual: number;
+  total: number;
+}
+
+/**
+ * How a quantity of one product is charged: the marked-down units first, because the hub picks the oldest batch
+ * first, and the rest at the usual price.
+ */
+export function chargeFor(product: Product, quantity: number): Charge {
+  const markedDown = isRescueDeal(product) ? Math.min(quantity, product.markdownUnits ?? quantity) : 0;
+  const usual = quantity - markedDown;
+  return { markedDown, usual, total: markedDown * unitPrice(product) + usual * product.price };
+}
+
+/** A cart priced on the phone, from the hub's product list. */
+export interface CartBill extends Bill {
   /** Cart lines whose product the hub no longer lists. They are left out of the totals. */
   missingProductIds: number[];
-  itemTotal: number;
-  savings: number;
-  deliveryFee: number;
-  total: number;
 }
 
 /**
@@ -31,8 +44,11 @@ export interface Bill {
  */
 const DELIVERY_FEE = 0;
 
-/** Price a cart against a hub's product list. */
-export function computeBill(cart: CartLine[], products: Product[]): Bill {
+/**
+ * Price a cart against a hub's product list. This is the phone's own sum, for the cart; once the items are held,
+ * the checkout shows the hub's bill instead (`getHoldBill`).
+ */
+export function computeBill(cart: CartLine[], products: Product[]): CartBill {
   const byId = new Map(products.map((product) => [product.id, product]));
   const lines: OrderLine[] = [];
   const missingProductIds: number[] = [];
@@ -44,13 +60,10 @@ export function computeBill(cart: CartLine[], products: Product[]): Bill {
       missingProductIds.push(productId);
       continue;
     }
-    lines.push({
-      productId,
-      name: product.name,
-      unitLabel: product.unitLabel,
-      quantity,
-      unitPrice: unitPrice(product),
-    });
+    const { markedDown, usual } = chargeFor(product, quantity);
+    const line = { productId, name: product.name, unitLabel: product.unitLabel, listPrice: product.price };
+    if (markedDown > 0) lines.push({ ...line, quantity: markedDown, unitPrice: unitPrice(product) });
+    if (usual > 0) lines.push({ ...line, quantity: usual, unitPrice: product.price });
     fullPriceTotal += product.price * quantity;
   }
 

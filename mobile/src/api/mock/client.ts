@@ -194,6 +194,7 @@ export function createMockClient(): ApiClient {
         unitLabel: item.unitLabel,
         price,
         markdownPrice: item.useByInDays <= 1 ? Math.round(price * MARKDOWN_FACTOR) : null,
+        markdownUnits: null, // the demo marks down every unit of an item in its last day
         grade: item.grade,
         harvestDate: isoDateAfter(-item.harvestedDaysAgo),
         useByDate: isoDateAfter(item.useByInDays),
@@ -459,6 +460,20 @@ export function createMockClient(): ApiClient {
           throw new ApiError(409, 'already_paid', 'This order is already paid.');
         }
         return holdView(hold);
+      }),
+
+    getHoldBill: (holdId) =>
+      delay(() => {
+        sweepExpiredHolds();
+        const hold = findHold(holdId);
+        if (hold.status === 'expired') {
+          throw new ApiError(409, 'hold_expired', 'The 10-minute hold ran out; the items are back on sale');
+        }
+        if (hold.status !== 'held') {
+          throw new ApiError(409, 'not_held', `Reservation is ${hold.status}, so there is nothing to pay for`);
+        }
+        const { lines, itemTotal, savings, deliveryFee, total } = computeBill(hold.lines, productsOf(findHub(hold.hubId)));
+        return { lines, itemTotal, savings, deliveryFee, total };
       }),
 
     placeOrder: (request) =>

@@ -2,16 +2,16 @@
  * The real API over HTTP. Each method maps one backend answer (snake_case JSON) to the app's own types.
  *
  * Used as the backend has them today: accounts (email codes, sessions, profile), cities, hubs, serviceability,
- * availability per hub, reservations (hold, confirm, release) and farm supply (produce items, farms, listings).
- * Customer orders do not exist on the backend yet: see `deviceOrders.ts` for how they are bridged.
+ * the shop's list per hub, reservations (hold, release), the bill for a hold, customer orders (place, list, read,
+ * cancel) and farm supply (produce items, farms, listings).
  */
 import { useSession } from '@/state/session';
 
 import type { ApiClient } from './client';
-import { readDeviceOrders, saveDeviceOrder, type DeviceOrder } from './deviceOrders';
 import { ApiError } from './errors';
 import type {
   AuthSession,
+  Bill,
   City,
   Farm,
   Grade,
@@ -87,23 +87,60 @@ interface RawServiceability {
 }
 
 /**
- * GET /v1/stores/{id}/availability. Today it sends the first five fields; a produce unit's label and family come
- * from /v1/produce-items. The batch fields (grade, dates, markdown, farm, photo) are read as soon as the API
- * starts sending them and are simply absent from the screens until then.
+ * One row of GET /v1/stores/{id}/shop: what the hub can sell of an item, the batch the next order would be picked
+ * from, and the lower price for units of a batch in its last day.
  */
-interface RawAvailability {
+interface RawShopRow {
   sku_id: number;
   name: string;
+  unit_label: string | null;
+  /** The produce family ("vegetables", "leafy", ...); null for an item that is not farm produce. */
+  family: string | null;
   category: string;
   price: number;
   atp: number;
-  unit_label?: string | null;
-  markdown_price?: number | null;
-  grade?: string | null;
-  harvest_date?: string | null;
-  use_by_date?: string | null;
-  farm_name?: string | null;
-  image_url?: string | null;
+  batch: {
+    batch_no: string;
+    use_by: string;
+    units: number;
+    harvest_date: string | null;
+    grade: string | null;
+    farm: string | null;
+  } | null;
+  rescue: { price: number; units: number } | null;
+}
+
+interface RawOrderLine {
+  product_id: number;
+  name: string;
+  unit_label: string | null;
+  quantity: number;
+  unit_price: number;
+  list_price: number;
+}
+
+/** GET /v1/reservations/{id}/bill, and the sums of an order. `item_total` is at the full price. */
+interface RawBill {
+  lines: RawOrderLine[];
+  item_total: number;
+  savings: number;
+  delivery_fee: number;
+  total: number;
+}
+
+interface RawOrder extends RawBill {
+  id: string;
+  status: OrderStatus;
+  placed_at: string;
+  history: { status: OrderStatus; at: string }[];
+  hub_id: number;
+  hub_name: string;
+  address: { label: string; line: string; landmark: string | null; lat: number; lng: number };
+  delivery_code: string | null;
+  pooled_with: number | null;
+  eta_minutes: number | null;
+  agent_name: string | null;
+  can_cancel: boolean;
 }
 
 interface RawReservation {
@@ -229,32 +266,61 @@ function slug(text: string): string {
   return text.trim().toLowerCase().replace(/[\s_]+/g, '-');
 }
 
-/** What /v1/produce-items knows about one sellable unit. */
-interface UnitInfo {
-  itemName: string;
-  family: string;
-  unitLabel: string | null;
-}
-
 /** The backend's produce families, as the app's category slugs. */
 const CATEGORY_OF_FAMILY: Record<string, string> = { leafy: 'leafy-greens' };
 
-function toProduct(raw: RawAvailability, unit: UnitInfo | undefined): Product {
+function toProduct(raw: RawShopRow): Product {
   return {
     id: raw.sku_id,
-    // A produce unit is stored as "Tomato, 500 g" under the category "Tomato"; the shop shows the item's own
-    // name, its unit label and its family instead.
-    name: unit ? unit.itemName : raw.name,
-    category: unit ? (CATEGORY_OF_FAMILY[unit.family] ?? slug(unit.family)) : slug(raw.category),
-    unitLabel: raw.unit_label ?? unit?.unitLabel ?? null,
+    name: raw.name,
+    // Farm produce is grouped by its family; anything else by the category it is stocked under.
+    category: raw.family ? (CATEGORY_OF_FAMILY[raw.family] ?? slug(raw.family)) : slug(raw.category),
+    unitLabel: raw.unit_label,
     price: raw.price,
-    markdownPrice: raw.markdown_price ?? null,
-    grade: toGrade(raw.grade),
-    harvestDate: raw.harvest_date ?? null,
-    useByDate: raw.use_by_date ?? null,
-    farmName: raw.farm_name ?? null,
-    imageUrl: raw.image_url ?? null,
+    markdownPrice: raw.rescue?.price ?? null,
+    markdownUnits: raw.rescue?.units ?? null,
+    grade: toGrade(raw.batch?.grade),
+    harvestDate: raw.batch?.harvest_date ?? null,
+    useByDate: raw.batch?.use_by ?? null,
+    farmName: raw.batch?.farm ?? null,
+    imageUrl: null,
     available: Math.max(0, raw.atp),
+  };
+}
+
+/** The app's "item total" is what the items cost after markdowns; the API's is before them. */
+function toBill(raw: RawBill): Bill {
+  return {
+    lines: raw.lines.map((line) => ({
+      productId: line.product_id,
+      name: line.name,
+      unitLabel: line.unit_label,
+      quantity: line.quantity,
+      unitPrice: line.unit_price,
+      listPrice: line.list_price,
+    })),
+    itemTotal: raw.item_total - raw.savings,
+    savings: raw.savings,
+    deliveryFee: raw.delivery_fee,
+    total: raw.total,
+  };
+}
+
+function toOrder(raw: RawOrder): Order {
+  return {
+    ...toBill(raw),
+    id: raw.id,
+    status: raw.status,
+    placedAt: raw.placed_at,
+    history: raw.history,
+    hubId: raw.hub_id,
+    hubName: raw.hub_name,
+    address: raw.address,
+    deliveryCode: raw.delivery_code,
+    pooledWith: raw.pooled_with,
+    etaMinutes: raw.eta_minutes,
+    agentName: raw.agent_name,
+    canCancel: raw.can_cancel,
   };
 }
 
@@ -330,16 +396,6 @@ function toListing(raw: RawListing): Listing {
   };
 }
 
-/** How far a reservation's status says the order has come. Later stages are not visible to the app yet. */
-const ORDER_STATUS_OF: Record<HoldStatus, OrderStatus> = {
-  held: 'placed',
-  confirmed: 'confirmed',
-  fulfilled: 'packed',
-  released: 'cancelled',
-  expired: 'cancelled',
-  cancelled: 'cancelled',
-};
-
 function toApiError(status: number, payload: unknown): ApiError {
   if (typeof payload === 'object' && payload !== null) {
     const { error, detail } = payload as { error?: unknown; detail?: unknown };
@@ -382,7 +438,6 @@ interface RequestOptions {
 export function createHttpClient(baseUrl: string): ApiClient {
   /** The one renewal in flight, shared by every caller that needs it. */
   let renewal: Promise<boolean> | null = null;
-  let unitInfo: Promise<Map<number, UnitInfo>> | null = null;
 
   async function send(method: string, path: string, options: RequestOptions, token: string | null): Promise<Response> {
     const controller = new AbortController();
@@ -471,47 +526,6 @@ export function createHttpClient(baseUrl: string): ApiClient {
     return read<T>(retry);
   }
 
-  function signedInUser(): User {
-    const { user } = useSession.getState();
-    if (!user) throw new ApiError(401, 'not_logged_in', 'Sign in to continue.');
-    return user;
-  }
-
-  /** Label and family of every produce unit, by SKU id. Asked for once; an API without it gives an empty map. */
-  function produceUnitInfo(): Promise<Map<number, UnitInfo>> {
-    unitInfo ??= request<RawProduceItem[]>('GET', '/v1/produce-items', { anonymous: true })
-      .then((items) => {
-        const bySku = new Map<number, UnitInfo>();
-        for (const item of items) {
-          for (const unit of item.units) {
-            bySku.set(unit.sku_id, { itemName: item.name, family: item.family, unitLabel: unit.unit_label });
-          }
-        }
-        return bySku;
-      })
-      .catch(() => {
-        unitInfo = null; // try again with the next product list
-        return new Map<number, UnitInfo>();
-      });
-    return unitInfo;
-  }
-
-  /** Bring a saved order up to date with its reservation, and save it again if it moved. */
-  async function refreshed(userId: number, entry: DeviceOrder): Promise<Order> {
-    const reservation = await request<RawReservation>('GET', `/v1/reservations/${entry.reservationId}`);
-    const status = ORDER_STATUS_OF[reservation.status];
-    if (status === entry.order.status) return entry.order;
-    const order: Order = {
-      ...entry.order,
-      status,
-      history: [...entry.order.history, { status, at: new Date().toISOString() }],
-    };
-    await saveDeviceOrder(userId, { ...entry, order });
-    return order;
-  }
-
-  const isOpen = (order: Order) => order.status === 'placed' || order.status === 'confirmed';
-
   return {
     mode: 'http',
 
@@ -547,13 +561,8 @@ export function createHttpClient(baseUrl: string): ApiClient {
     checkServiceability: async ({ lat, lng }) =>
       toServiceability(await request<RawServiceability>('GET', `/v1/serviceability?lat=${lat}&lng=${lng}`)),
 
-    listProducts: async (hubId) => {
-      const [rows, units] = await Promise.all([
-        request<RawAvailability[]>('GET', `/v1/stores/${hubId}/availability`),
-        produceUnitInfo(),
-      ]);
-      return rows.map((row) => toProduct(row, units.get(row.sku_id)));
-    },
+    listProducts: async (hubId) =>
+      (await request<RawShopRow[]>('GET', `/v1/stores/${hubId}/shop`)).map(toProduct),
 
     createHold: async ({ orderId, hubId, lines, h3Cell }) =>
       toHold(
@@ -571,56 +580,25 @@ export function createHttpClient(baseUrl: string): ApiClient {
 
     releaseHold: async (holdId) => toHold(await request<RawReservation>('DELETE', `/v1/reservations/${holdId}`)),
 
+    getHoldBill: async (holdId) => toBill(await request<RawBill>('GET', `/v1/reservations/${holdId}/bill`)),
+
     placeOrder: async (placed) => {
-      const user = signedInUser();
-      // Confirming the reservation is how an order is paid for today.
-      const reservation = await request<RawReservation>('POST', `/v1/reservations/${placed.holdId}/confirm`);
-      const now = new Date().toISOString();
-      const order: Order = {
-        id: reservation.order_id,
-        status: 'confirmed',
-        placedAt: now,
-        history: [
-          { status: 'placed', at: now },
-          { status: 'confirmed', at: now },
-        ],
-        hubId: reservation.store_id,
-        hubName: placed.hubName,
-        lines: placed.lines,
-        itemTotal: placed.itemTotal,
-        savings: placed.savings,
-        deliveryFee: placed.deliveryFee,
-        total: placed.total,
-        address: placed.address,
-        deliveryCode: null,
-        pooledWith: null,
-        etaMinutes: placed.etaMinutes,
-        agentName: null,
-        canCancel: false,
-      };
-      await saveDeviceOrder(user.id, { reservationId: reservation.reservation_id, order });
-      return order;
-    },
-
-    listOrders: async () => {
-      const user = signedInUser();
-      const saved = await readDeviceOrders(user.id);
-      // Only orders that can still move are asked about; if the API cannot be reached, the saved copy is shown.
-      return Promise.all(
-        saved.map((entry) => (isOpen(entry.order) ? refreshed(user.id, entry).catch(() => entry.order) : entry.order)),
+      const { label, line, landmark, lat, lng } = placed.address;
+      const order = toOrder(
+        await request<RawOrder>('POST', '/v1/orders', {
+          body: { hold_id: placed.holdId, address: { label, line, landmark, lat, lng }, expected_total: placed.total },
+        }),
       );
+      // The API promises no delivery time until delivery is built; keep the hub's estimate for the first screen.
+      return { ...order, etaMinutes: order.etaMinutes ?? placed.etaMinutes };
     },
 
-    getOrder: async (orderId) => {
-      const user = signedInUser();
-      const entry = (await readDeviceOrders(user.id)).find((saved) => saved.order.id === orderId);
-      if (!entry) throw new ApiError(404, 'not_found', `Order ${orderId} does not exist`);
-      return isOpen(entry.order) ? refreshed(user.id, entry) : entry.order;
-    },
+    listOrders: async () => (await request<RawOrder[]>('GET', '/v1/orders')).map(toOrder),
 
-    cancelOrder: async () => {
-      throw new ApiError(501, 'not_supported', 'Orders cannot be cancelled from the app yet. Please contact the hub.');
-    },
+    getOrder: async (orderId) => toOrder(await request<RawOrder>('GET', `/v1/orders/${encodeURIComponent(orderId)}`)),
+
+    cancelOrder: async (orderId) =>
+      toOrder(await request<RawOrder>('POST', `/v1/orders/${encodeURIComponent(orderId)}/cancel`)),
 
     listProduceItems: async () => (await request<RawProduceItem[]>('GET', '/v1/produce-items')).map(toProduceItem),
 

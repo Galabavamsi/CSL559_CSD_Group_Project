@@ -23,6 +23,7 @@ export const queryKeys = {
   serviceability: (point: LatLng | null) => ['serviceability', point?.lat, point?.lng] as const,
   products: (hubId: number | null) => ['products', hubId] as const,
   hold: (holdId: string | null) => ['hold', holdId] as const,
+  holdBill: (holdId: string | null) => ['hold', holdId, 'bill'] as const,
   orders: ['orders'] as const,
   order: (orderId: string) => ['orders', orderId] as const,
   produceItems: ['produce-items'] as const,
@@ -124,6 +125,21 @@ export function useHold(holdId: string | null) {
     queryFn: () => api.getHold(holdId as string),
     enabled: holdId !== null,
     staleTime: 0,
+    retry: false,
+  });
+}
+
+/**
+ * What the hub would charge for the held cart right now. Asked again every so often: another customer can pay
+ * first for the last units at a lower price, and the total shown has to follow.
+ */
+export function useHoldBill(holdId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.holdBill(holdId),
+    queryFn: () => api.getHoldBill(holdId as string),
+    enabled: holdId !== null,
+    staleTime: 0,
+    refetchInterval: 20_000,
     retry: false,
   });
 }

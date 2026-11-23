@@ -96,6 +96,11 @@ export interface Product {
   price: number;
   /** Lower price for a batch with one day left; null when the batch is not marked down. */
   markdownPrice: number | null;
+  /**
+   * How many units the lower price applies to: an order for more pays the usual price for the rest.
+   * Null when there is no markdown, or no limit on it.
+   */
+  markdownUnits: number | null;
   grade: Grade | null;
   /** Calendar dates as YYYY-MM-DD. */
   harvestDate: string | null;
@@ -142,6 +147,10 @@ export type OrderStatus =
   | 'cancelled'
   | 'delivery_failed';
 
+/**
+ * Units of one product at one price. An order holds a product twice when some of its units came from a batch in
+ * its last day and the rest did not.
+ */
 export interface OrderLine {
   productId: number;
   name: string;
@@ -149,6 +158,19 @@ export interface OrderLine {
   quantity: number;
   /** Rupees actually charged for one unit (the markdown price when there was one). */
   unitPrice: number;
+  /** Rupees one unit costs without a markdown. */
+  listPrice: number;
+}
+
+/** What a cart costs: its lines, and the sums the bill shows. */
+export interface Bill {
+  lines: OrderLine[];
+  /** What the items cost after markdowns. */
+  itemTotal: number;
+  /** What markdowns took off the full price. */
+  savings: number;
+  deliveryFee: number;
+  total: number;
 }
 
 export interface OrderEvent {
@@ -279,6 +301,10 @@ export interface NewListing {
   harvestDate: string;
 }
 
+/**
+ * Paying for a hold. The bill is the one the customer was shown: the API works out its own, and refuses to
+ * charge more than `total` (`price_changed`).
+ */
 export interface PlaceOrderRequest {
   holdId: string;
   hubName: string;

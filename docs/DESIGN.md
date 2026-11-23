@@ -174,6 +174,7 @@ from the hold and the job.
 | Call | Does |
 | --- | --- |
 | `POST /v1/orders` with a hold's id and a delivery address | Confirms the hold (the existing step), and writes the order: who, which hub, the address, each line with the price charged, the totals |
+| `GET /v1/reservations/{id}/bill` | What the held cart costs if paid now (section 3.3) |
 | `GET /v1/orders` | The customer's own orders, newest first |
 | `GET /v1/orders/{id}` | One order with its history, for the tracking screen |
 | `POST /v1/orders/{id}/cancel` | Cancels until the order is packed (the existing rule) |
@@ -256,7 +257,39 @@ keeps it honest: without it a customer could order ten at the rescue price when 
 interesting and neither can be explained in one sentence to a customer or checked in one test.
 
 **Costs.** The price a customer is shown can change between looking and paying, if someone else buys the last
-rescue units first. The hold answers with the prices it used, and the app shows the change before payment.
+rescue units first.
+
+### 3.3 Decision: the checkout shows the hub's bill, and a price that rose is asked about, not charged
+
+**What.** Two things, added on 24 November when the app moved onto the server's orders.
+
+- `GET /v1/reservations/{id}/bill` answers what the held cart would cost if paid this moment. The checkout shows
+  that, not a sum made on the phone, and asks again every 20 seconds.
+- `POST /v1/orders` takes `expected_total`, the total the customer was looking at. If the order would cost more,
+  nothing is paid, the hold stays held, and the answer is `409 price_changed` with the new bill. The app shows the
+  new total and the customer taps Pay again, or leaves. An order that costs less than shown is placed as it is.
+
+**Why.** A hold sets units aside, not batches. Two customers can each hold six packs while six remain at the
+rescue price, and both are rightly told the lower price, because either may be the one who pays first. Whoever
+paid second was charged the full price, on a screen that had said otherwise. Found while reading the app's
+checkout: its total was the phone's own sum, and nothing compared it with the order.
+
+**Why the bill comes from the hub's allocation.** The bill asks the same function that later chooses the bins
+which units it would pick, and prices those. A second copy of that walk, on the phone or in a separate price
+calculator, would be right until the day the two drifted apart. The phone still sums the cart before the hold,
+from the shop's list; that is an estimate and the cart says nothing more than the list does.
+
+**Why refuse instead of holding the price.** Keeping the shown price would mean either holding batches for ten
+minutes for carts that are often abandoned, which takes the rescue units off sale exactly when they most need to
+sell, or selling at a price the batch no longer supports. Refusing costs the customer one more tap, in a case
+that needs two people buying the same last-day item in the same ten minutes.
+
+**Considered and not taken.** Refusing any difference, lower as well. Nobody needs to be asked before paying less.
+
+**Costs.** Units the hub would fail to find are counted at the full price in the bill, and leave the order at
+payment, so in that rare case the order costs less than the bill said. The refusal is made inside the payment's
+own transaction, after the pick job is built and priced, and undone as a whole; that is one wasted build of a pick
+job per refusal.
 
 ## 4. Delivery
 

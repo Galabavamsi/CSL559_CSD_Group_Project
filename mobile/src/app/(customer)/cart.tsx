@@ -18,7 +18,7 @@ import { RowSkeleton } from '@/components/Skeleton';
 import { EmptyState, ErrorState } from '@/components/StateViews';
 import { TopBar } from '@/components/TopBar';
 import { useSetCartQuantity } from '@/features/cart/useCartActions';
-import { computeBill } from '@/lib/bill';
+import { chargeFor, computeBill, unitPrice } from '@/lib/bill';
 import { secondsUntil } from '@/lib/dates';
 import { useNow } from '@/lib/hooks';
 import { newOrderId } from '@/lib/ids';
@@ -49,6 +49,7 @@ export default function Cart() {
   const lines = hubId !== null && cartHubId === hubId ? cartLines(quantities) : [];
   const productById = new Map((products.data ?? []).map((product) => [product.id, product]));
   const bill = computeBill(lines, products.data ?? []);
+  const listedLines = lines.filter((line) => productById.has(line.productId));
   // While a hold runs, "available" already has this cart taken out of it, so it says nothing about this cart.
   const shortLines = holding
     ? []
@@ -133,9 +134,10 @@ export default function Cart() {
           ) : null}
 
           <Card>
-            {bill.lines.map((line, index) => {
+            {listedLines.map((line, index) => {
               const product = productById.get(line.productId) as Product;
               const short = shortLines.some((shortLine) => shortLine.productId === line.productId);
+              const charge = chargeFor(product, line.quantity);
               return (
                 <View key={line.productId}>
                   {index > 0 ? <Divider style={styles.lineDivider} /> : null}
@@ -149,15 +151,17 @@ export default function Cart() {
                     />
                     <View style={styles.flex}>
                       <Text variant="titleSmall" numberOfLines={2}>
-                        {line.name}
+                        {product.name}
                       </Text>
-                      {line.unitLabel ? (
+                      {product.unitLabel ? (
                         <Text variant="bodySmall" numberOfLines={1} style={{ color: colors.onSurfaceVariant }}>
-                          {line.unitLabel}
+                          {product.unitLabel}
                         </Text>
                       ) : null}
                       <Text variant="bodySmall" style={[tabularNumbers, { color: colors.onSurfaceVariant }]}>
-                        {formatRupees(line.unitPrice)} each
+                        {charge.markedDown > 0 && charge.usual > 0
+                          ? `${charge.markedDown} at ${formatRupees(unitPrice(product))}, ${charge.usual} at ${formatRupees(product.price)}`
+                          : `${formatRupees(charge.markedDown > 0 ? unitPrice(product) : product.price)} each`}
                       </Text>
                       {short ? (
                         <Text variant="labelMedium" style={{ color: colors.tertiary }}>
@@ -168,14 +172,14 @@ export default function Cart() {
                     <View style={styles.lineEnd}>
                       <View style={styles.lineStepper}>
                         <QuantityStepper
-                          itemName={line.name}
+                          itemName={product.name}
                           quantity={line.quantity}
                           max={holding ? line.quantity : product.available}
                           onChange={(quantity) => setQuantity(line.productId, quantity)}
                         />
                       </View>
                       <Text variant="titleSmall" style={[styles.lineTotal, tabularNumbers]}>
-                        {formatRupees(line.unitPrice * line.quantity)}
+                        {formatRupees(charge.total)}
                       </Text>
                     </View>
                   </View>
