@@ -10,8 +10,10 @@
       <td>Hub locations are PostGIS points; "which hub serves this address" is an H3 cell lookup; "which hub is nearest" is an indexed nearest-neighbour query.</td></tr>
   <tr><td><b>Farmer</b>: register a farm, list a lot, get a hub and a drop slot, see the quality check</td><td><span class="tag real">Real</span></td>
       <td>30 tests, and in the phone app. A GPS fix rougher than 50 m is refused. Produce too old to be accepted is refused at listing, before the trip.</td></tr>
-  <tr><td><b>Hub intake</b>: weigh, grade, kilograms into units, put away</td><td><span class="tag api">Real, API only</span></td>
-      <td>Works and is tested, but has no screen. The demo calls it with <code>scripts/hub_intake.py</code>.</td></tr>
+  <tr><td><b>Hub intake</b>: weigh, grade, kilograms into units, put away</td><td><span class="tag real">Real</span></td>
+      <td>On the intake page, on a phone at the dock. A receiver who is interrupted finds the lot again under "still on the dock".</td></tr>
+  <tr><td><b>Opening a hub</b> at a site, and <b>hubs in Bhilai</b></td><td><span class="tag real">Real</span></td>
+      <td>One call creates the hub, its shelves, its delivery zone and its logins; the network map has a button for it. 21 tests. Bhilai has three hubs in the demo data. Staging gets them when this version is deployed there.</td></tr>
   <tr><td><b>Shop</b>: what this hub can deliver now</td><td><span class="tag real">Real</span></td>
       <td>Available = on the shelf, minus held for other carts, minus a small safety margin on some items.</td></tr>
   <tr><td><b>Cart hold, payment, cancel</b></td><td><span class="tag real">Real</span></td>
@@ -32,8 +34,6 @@
       <td>Screens exist; nothing behind them.</td></tr>
   <tr><td><b>Delivery</b>: pooling orders into trips, the agent's app, live location, hand-over</td><td><span class="tag none">Not built</span></td>
       <td>The agent's side of the app is one placeholder screen.</td></tr>
-  <tr><td><b>Hubs in Bhilai</b></td><td><span class="tag none">Not built</span></td>
-      <td>Bhilai exists as a city with its tier and radius, but no hub is there on the real backend and nothing can open one. A Bhilai address is not serviceable and a lot listed from a Bhilai farm is refused. Only the app's demo data has Bhilai hubs.</td></tr>
   <tr><td><b>Stock requests to farms</b> (the hub asks for what it expects to sell)</td><td><span class="tag none">Not built</span></td><td>Today the farmer offers; the hub does not ask.</td></tr>
   <tr><td><b>Photographs</b> from the farm and the quality check; <b>paying the farmer</b>; a <b>map pin</b> for addresses</td><td><span class="tag none">Not built</span></td><td>Accepted weight and asking price are recorded; no payment is. Location is the phone's GPS or a list of areas.</td></tr>
   <tr><td><b>A production environment; an installable Android build; a city-scale simulator</b></td><td><span class="tag none">Not built</span></td><td>Staging only. The app runs inside Expo Go. Load has been measured on one machine only.</td></tr>
@@ -47,8 +47,9 @@
     <li><b>The recording ran on the project's development server</b>, with the real backend code and a real
       PostgreSQL, not on staging. Sign-in codes were read from that server's log, where the development email
       backend writes them. On AWS the code goes by email and the log never holds it.</li>
-    <li><b>The hub's desk and dashboards still carry the dark store's groceries</b> (milk, bread, rice) beside the
-      new produce. They are demo data from the prototype and will be replaced by produce only.</li>
+    <li><b>Bangalore's two hubs still carry the dark store's groceries</b> (milk, bread, rice). They are demo data
+      from the prototype. Bhilai's hubs start empty and hold only what farms bring, which is why the recording is
+      set there.</li>
   </ul>
 </div>
 

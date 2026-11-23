@@ -1,44 +1,45 @@
 <h1><small>8 · Demo guide</small>How to show it</h1>
-<p class="lede">Open with the recording, which shows the whole journey. Then do the customer and hub half live.
-  The farmer's half cannot be done live from Bhilai yet, and this page says why.</p>
+<p class="lede">Open with the recording, which shows the whole journey. Then do the same journey live, in Bhilai,
+  once staging runs this version.</p>
 
 <table>
   <tr><th style="width:4%"></th><th style="width:27%">Way</th><th>What the audience sees</th><th style="width:27%">What it needs</th></tr>
   <tr><td><b>A</b></td><td><b>The recording</b><br><code>docs/handbook/farm2home-demo.mp4</code></td>
       <td>The journey of section 3 on the real backend, with captions, then the screens that still run on demo data.</td><td>A laptop. Nothing else.</td></tr>
-  <tr><td><b>B</b></td><td><b>Live on staging:</b> order, hold, pick, pack</td>
-      <td>A customer's phone and the hub's screens changing each other in real time.</td><td>Mobile data, Expo Go on the phone, the staff password, an email inbox.</td></tr>
+  <tr><td><b>B</b></td><td><b>Live on staging:</b> list, weigh, order, pick, pack</td>
+      <td>A farmer's and a customer's phone and the hub's screens changing each other in real time.</td><td>Mobile data, Expo Go on the phone, the staff password, two email inboxes.</td></tr>
   <tr><td><b>C</b></td><td><b>The app on demo data</b></td>
       <td>Rescue deals, grades, tracking and the door-step code: the screens the backend has not caught up with.</td><td>Phone and laptop on one network. No server.</td></tr>
 </table>
 
 <div class="box warn">
-  <h3>What blocks a fully live demo from Bhilai today</h3>
+  <h3>What a live demo from Bhilai still needs</h3>
   <ul>
-    <li><b>Bhilai has no hub on the real backend.</b> A farm's location is the phone's GPS fix and a lot is accepted
-      only within 60 km of a hub. From Bhilai the farmer can sign in and register a farm, but listing a lot is
-      refused, and a Bhilai address is not serviceable. Hubs for Bhilai are the first item in section 9.</li>
-    <li><b>Hub intake has no screen.</b> It is one command (<code>scripts/hub_intake.py</code>) until it has one.</li>
-    <li><b>The app has not been rehearsed on a phone against staging.</b> The recording ran the same app and the
-      same backend code on the development server. Rehearse way B before the day.</li>
+    <li><b>Staging on this version.</b> Bhilai's three hubs and the intake page arrive with the next deploy; until
+      then staging has hubs in Bangalore only, and a lot listed from Bhilai is refused.</li>
+    <li><b>A rehearsal on the phone.</b> The recording ran the same app and the same backend code on the
+      development server. Walk through way B once before the day.</li>
+    <li><b>A GPS fix good to 50 m for the farm.</b> A phone rarely gets one indoors: register the farm outside, or
+      by a window, before the audience arrives.</li>
   </ul>
 </div>
 
-<h2>B. The live walk, about six minutes</h2>
+<h2>B. The live walk, about ten minutes</h2>
 <p>Start the app from the <code>mobile</code> folder and scan the QR code with Expo Go:</p>
 <pre><code>$env:EXPO_PUBLIC_API_URL = "https://staging.farm2home.galabavamsi.com"; npx.cmd expo start --clear</code></pre>
 <table>
   <tr><th style="width:4%"></th><th style="width:15%">Who</th><th style="width:38%">Do</th><th>Say</th></tr>
-  <tr><td>1</td><td>Hub, laptop</td><td>Open the hub desk (the site's front page) and <code>/ops.html</code>; sign in.</td>
-      <td>"This is one hub: what is on its shelves, what is held for carts, and a live feed of everything that happens."</td></tr>
-  <tr><td>2</td><td>Customer, phone</td><td>Sign in as Customer. Choose Bangalore, MG Road.</td>
-      <td>"No password: a code by email. The address decides the hub, and the shop shows only what that hub can deliver now."</td></tr>
-  <tr><td>3</td><td>Customer, phone</td><td>Add two of an item. View cart. Hold my items.</td>
-      <td>"Holding sets the units aside for ten minutes: whole cart or nothing." Point at Held going from 0 to 2 on the hub desk.</td></tr>
-  <tr><td>4</td><td>Customer, phone</td><td>Type an address. Pay.</td><td>"Payment is a stand-in; no money moves. The order now waits for a picker."</td></tr>
-  <tr><td>5</td><td>Picker, laptop or a second phone</td><td>Open <code>/picker.html?store=1</code>. Get next order. Scan all. Mark packed.</td>
+  <tr><td>1</td><td>Farmer, phone</td><td>Sign in as Farmer. Open the farm. List produce: Tomato, 40 kg, ₹18, harvested today.</td>
+      <td>"No password: a code by email. The system chose the nearest hub with room for 40 kg, and a slot tomorrow morning."</td></tr>
+  <tr><td>2</td><td>Receiver, laptop or a second phone</td><td>Open <code>/intake.html</code> and choose the hub the farmer was given. Weigh: 39.5 arrived, 1.5 turned away, grade A. Record and pack. In the bin.</td>
+      <td>"The hub weighs and grades. 38 kg becomes 76 packs of 500 g, and they are on sale the moment they are in their bin."</td></tr>
+  <tr><td>3</td><td>Farmer, phone</td><td>Pull down to refresh My listings.</td><td>"The farmer sees the grade and what was turned away. That record follows the farm to its next delivery."</td></tr>
+  <tr><td>4</td><td>Customer, phone</td><td>Account, sign out. Sign in as Customer with the second inbox. Choose Bhilai, then an area that hub serves. Add two Tomato. View cart. Hold my items.</td>
+      <td>"The shop shows only what this hub can deliver now. Holding sets two packs aside for ten minutes: whole cart or nothing."</td></tr>
+  <tr><td>5</td><td>Customer, phone</td><td>Type an address. Pay.</td><td>"Payment is a stand-in; no money moves. The order now waits for a picker."</td></tr>
+  <tr><td>6</td><td>Picker, laptop or a second phone</td><td>Open <code>/picker.html</code>, choose the same hub. Get next order. Scan all. Mark packed.</td>
       <td>"The picker is sent to the bin holding the oldest batch. Every unit is scanned. Only at packing does stock on hand go down."</td></tr>
-  <tr><td>6</td><td>Customer, phone</td><td>Open Orders, then the order.</td><td>"Packed. From here it would be pooled with its neighbours into one trip. That is what we build next."</td></tr>
+  <tr><td>7</td><td>Customer, phone</td><td>Open Orders, then the order.</td><td>"Packed. From here it would be pooled with its neighbours into one trip. That is what we build next."</td></tr>
 </table>
 <h2 style="break-before: page">Before the day</h2>
 <div class="two">
@@ -58,11 +59,11 @@
 </ul>
 </div>
 
-<h3>The receiver's step, when a lot is expected</h3>
-<p>Staging's shelves hold the prototype's groceries today; produce appears once a farm lot is taken in. When a lot
-  is on its way to a hub, the receiver's step is one command, and the packs are on sale as it prints each line:</p>
+<h3>The same receiver's step from a command line</h3>
+<p>If the intake page cannot be used, <code>scripts/hub_intake.py</code> does the same for the lot that has waited
+  longest at the hub whose number is given:</p>
 <pre><code>$env:STAFF_PASSWORD = "the staff password"
-py scripts\hub_intake.py --url https://staging.farm2home.galabavamsi.com --store 1 --received 39.5 --rejected 1.5 --grade A</code></pre>
+py scripts\hub_intake.py --url https://staging.farm2home.galabavamsi.com --store 3 --received 39.5 --rejected 1.5 --grade A</code></pre>
 
 <div class="two">
 <div>
@@ -71,7 +72,7 @@ py scripts\hub_intake.py --url https://staging.farm2home.galabavamsi.com --store
 <pre><code>npx.cmd expo start --clear</code></pre>
 <p>Any email signs in and the code is <code>123456</code>. Nothing leaves the phone. Choose Bhilai, Supela. Show a
   rescue deal, a product's grade and harvest date, checkout, and the order moving to Out for delivery with its
-  door-step code. Sign in as Farmer to list a lot in Bhilai. Say plainly that this is demo data: these are the
+  door-step code. Say plainly that this is demo data: these are the
   screens, not yet the system.</p>
 </div>
 <div>
@@ -81,7 +82,8 @@ py scripts\hub_intake.py --url https://staging.farm2home.galabavamsi.com --store
   <tr><td>The site does not load, or "blocked by policy"</td><td>The network blocks the domain. Switch to mobile data.</td></tr>
   <tr><td>Expo Go cannot reach the laptop</td><td>Same hotspot for both; allow Node through Windows Firewall when asked.</td></tr>
   <tr><td>No code in the inbox</td><td>Check spam. Wait a minute and ask again; five an hour per address.</td></tr>
-  <tr><td>"No paid orders are waiting" on the picker page</td><td>The order is unpaid, or for the other hub: check the store number.</td></tr>
+  <tr><td>"No paid orders are waiting" on the picker page</td><td>The order is unpaid, or for another hub: check the hub chosen at the top.</td></tr>
+  <tr><td>"No hub within 60 km" when listing</td><td>Staging is not on this version yet, or the farm was registered somewhere else.</td></tr>
   <tr><td>Anything else</td><td>Play the recording.</td></tr>
 </table>
 </div>

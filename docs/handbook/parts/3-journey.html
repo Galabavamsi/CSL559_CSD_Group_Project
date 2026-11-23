@@ -3,23 +3,25 @@
   PostgreSQL database, recorded on 23 November 2026. The video shows the same run.</p>
 
 <div class="step"><div class="n">1</div><h2>The farmer lists a lot</h2>
-  <p>Ravi signs in with a code sent to his email, registers his farm where he stands, and lists what he picked
-    this morning. The backend looks for the nearest hub that has shelves of the right temperature and room for the
+  <p>Ravi signs in with a code sent to his email, registers his farm near Bhilai where he stands, and lists what
+    he picked this morning. The backend looks for the nearest hub that has shelves of the right temperature and room for the
     weight, and gives him a slot.</p></div>
 <div class="phones">
   <figure><img src="shots/farmer-home-empty.png" alt=""><figcaption><b>Signed in, no farm yet</b>The first sign-in of an address creates the account.</figcaption></figure>
   <figure><img src="shots/farmer-add-farm.png" alt=""><figcaption><b>The farm is where he stands</b>The phone is sure of this spot to 18 m. Over 50 m is refused.</figcaption></figure>
   <figure><img src="shots/farmer-list-produce.png" alt=""><figcaption><b>Tomato, 40 kg, ₹18 a kg</b>The app says how long it keeps and how customers buy it.</figcaption></figure>
-  <figure><img src="shots/farmer-listing-made.png" alt=""><figcaption><b>A hub and a slot</b>DS-01 Central, 19.1 km away. Tomorrow, 6 to 9 am.</figcaption></figure>
+  <figure><img src="shots/farmer-listing-made.png" alt=""><figcaption><b>A hub and a slot</b>BH-01 Civic Centre, 14.6 km away. Tomorrow, 6 to 9 am.</figcaption></figure>
 </div>
 
 <div class="step"><div class="n">2</div><h2>The hub weighs it, grades it and shelves it</h2>
-  <p>At the dock the receiver records what arrived and what is turned away, and gives a grade. The accepted weight
-    is packed into the item's smallest unit and put away. This step has no screen yet; the recording calls the
-    API, and the hub's desk shows the result.</p></div>
-<div class="two">
-  <figure class="wide clip"><img src="shots/hub-desk-before.png" alt=""><figcaption><b>Before:</b> the hub's desk. No tomatoes on the shelves.</figcaption></figure>
-  <figure class="wide clip"><img src="shots/hub-desk-after.png" alt=""><figcaption><b>After:</b> "Tomato, 500 g: 76 left", and the events that put it there.</figcaption></figure>
+  <p>At the dock the receiver's phone lists the lots on their way. She records what arrived and what is turned
+    away, and gives a grade. The accepted weight is packed into the item's smallest unit, and the phone names the
+    bin for each portion.</p></div>
+<div class="phones short">
+  <figure><img src="shots/hub-intake-lots.png" alt=""><figcaption><b>Lots on their way</b>With the slot and the farm's record: this is its first delivery.</figcaption></figure>
+  <figure><img src="shots/hub-intake-weigh.png" alt=""><figcaption><b>Weigh and grade</b>The screen says what will be packed before it is recorded.</figcaption></figure>
+  <figure><img src="shots/hub-intake-putaway.png" alt=""><figcaption><b>Put away</b>76 packs, batch L1, into chilled bin C-01-01.</figcaption></figure>
+  <figure><img src="shots/hub-intake-done.png" alt=""><figcaption><b>On sale</b>From the moment the bin is confirmed.</figcaption></figure>
 </div>
 <table class="keep">
   <tr><th>Listed</th><th>Arrived</th><th>Turned away</th><th>Accepted</th><th>Packed</th><th>Trim</th><th>Batch</th><th>Use by</th></tr>
@@ -31,8 +33,8 @@
     the shop lists what that hub can deliver now. Holding the cart sets two packs aside at the hub; paying
     confirms the order.</p></div>
 <div class="phones">
-  <figure><img src="shots/customer-location.png" alt=""><figcaption><b>Where to deliver</b>MG Road is in DS-01 Central's zone.</figcaption></figure>
-  <figure><img src="shots/customer-home-tomato.png" alt=""><figcaption><b>The farmer's tomatoes, on sale</b>The same packs the hub put away a moment ago.</figcaption></figure>
+  <figure><img src="shots/customer-location.png" alt=""><figcaption><b>Where to deliver</b>Supela is in BH-01 Civic Centre's zone.</figcaption></figure>
+  <figure><img src="shots/customer-home-tomato.png" alt=""><figcaption><b>The farmer's tomatoes, on sale</b>All this hub has: the packs put away a moment ago.</figcaption></figure>
   <figure><img src="shots/customer-cart.png" alt=""><figcaption><b>Cart and bill</b>Two packs, ₹48. Delivery is pooled and free.</figcaption></figure>
   <figure><img src="shots/customer-checkout.png" alt=""><figcaption><b>Held for ten minutes</b>The clock is the hub's hold. Payment is a stand-in.</figcaption></figure>
 </div>
@@ -62,7 +64,7 @@
   <table style="margin-bottom:0">
     <tr><th style="width:5%"></th><th style="width:33%">Part</th><th>What is real in it</th></tr>
     <tr><td>1</td><td>The farmer lists produce</td><td>Real backend. The sign-in code is read from the server's log.</td></tr>
-    <tr><td>2</td><td>The hub takes the lot in</td><td>Real backend. Intake has no screen, so it is called directly while the hub's desk is on screen.</td></tr>
+    <tr><td>2</td><td>The hub takes the lot in</td><td>Real backend, on the receiver's intake page.</td></tr>
     <tr><td>3</td><td>The customer orders</td><td>Real backend. Payment is a stand-in: no money moves.</td></tr>
     <tr><td>4</td><td>The hub picks and packs</td><td>Real backend, on the picker's page.</td></tr>
     <tr><td>5, 6</td><td>The farmer sees the grade; the customer's order is packed</td><td>Real backend. Delivery is not built and is not shown.</td></tr>

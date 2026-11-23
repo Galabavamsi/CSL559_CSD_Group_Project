@@ -12,8 +12,10 @@ const dock = {
 };
 const me = () => `receiver${dock.store}`;
 const kg = (n) => `${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })} kg`;
-const slot = (iso) => new Date(iso).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short",
-  hour: "numeric", minute: "2-digit" });
+const clock = (iso) => new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+const slot = (lot) => `${new Date(lot.drop_from).toLocaleDateString("en-IN", { weekday: "short", day: "numeric",
+  month: "short" })}, ${clock(lot.drop_from)} to ${clock(lot.drop_until)}`;
+const day = (date) => new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 // One key per action, so a tap repeated on a bad connection is done once.
 // (crypto.randomUUID needs HTTPS; getRandomValues also works on a plain-HTTP address.)
 const newKey = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -49,7 +51,7 @@ function lotRow(lot, label, onclick) {
     el("div", {},
       el("p", { className: "lot-name" }, `${lot.item}, ${kg(lot.qty_kg)}`),
       el("p", { className: "lot-meta" }, [lot.farm, lot.farmer].filter(Boolean).join(" · ")),
-      el("p", { className: "lot-meta" }, `Slot ${slot(lot.drop_from)}${record}`)),
+      el("p", { className: "lot-meta" }, `Slot ${slot(lot)}${record}`)),
     el("button", { className: "btn btn-primary", onclick }, label));
 }
 
@@ -101,7 +103,7 @@ function startWeighing(lot) {
   dock.lot = lot;
   dock.key = newKey();
   $("weigh-lot").textContent = `${lot.item}, ${kg(lot.qty_kg)} listed`;
-  $("weigh-from").textContent = `${[lot.farm, lot.farmer].filter(Boolean).join(" · ")} · harvested ${lot.harvest_date}`;
+  $("weigh-from").textContent = `${[lot.farm, lot.farmer].filter(Boolean).join(" · ")} · harvested ${day(lot.harvest_date)}`;
   $("received").value = String(lot.qty_kg);
   $("rejected").value = "0";
   $("remarks").value = "";
@@ -143,7 +145,7 @@ async function nextPortion() {
   dock.task = task;
   dock.key = newKey();
   const stuck = task.bin_code === null;       // no bin has room, or the batch number clashes: the server says which
-  $("put-progress").textContent = `Portion ${dock.done + 1} of ${dock.done + tasks.length} · batch ${task.batch_no}, use by ${task.expiry_date}`;
+  $("put-progress").textContent = `Portion ${dock.done + 1} of ${dock.done + tasks.length} · batch ${task.batch_no}, use by ${day(task.expiry_date)}`;
   $("put-what").textContent = `${task.qty} × ${task.sku}`;
   $("put-go").hidden = $("put-bin").hidden = $("put-btn").hidden = stuck;
   $("put-bin").textContent = task.bin_code ?? "";

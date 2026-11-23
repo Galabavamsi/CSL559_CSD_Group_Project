@@ -33,8 +33,8 @@
     <rect class="g" x="0" y="6" width="165" height="82" rx="8"/><text class="k" x="10" y="22">1 · FARMER'S PHONE</text>
     <text class="t" x="10" y="40">Farmer lists a lot</text><text class="s" x="10" y="56">40 kg of tomatoes at ₹18 a kg,</text><text class="s" x="10" y="70">harvested today</text>
     <rect class="g" x="185" y="6" width="165" height="82" rx="8"/><text class="k" x="195" y="22">2 · BACKEND, POSTGIS</text>
-    <text class="t" x="195" y="40">A hub and a slot are chosen</text><text class="s" x="195" y="56">nearest hub with room: 19.1 km;</text><text class="s" x="195" y="70">tomorrow, 06:00 to 09:00</text>
-    <rect class="g" x="370" y="6" width="165" height="82" rx="8"/><text class="k" x="380" y="22">3 · HUB DOCK</text>
+    <text class="t" x="195" y="40">A hub and a slot are chosen</text><text class="s" x="195" y="56">nearest hub with room: 14.6 km;</text><text class="s" x="195" y="70">tomorrow, 06:00 to 09:00</text>
+    <rect class="g" x="370" y="6" width="165" height="82" rx="8"/><text class="k" x="380" y="22">3 · RECEIVER'S PHONE</text>
     <text class="t" x="380" y="40">Weighed and graded</text><text class="s" x="380" y="56">39.5 kg arrived, 1.5 kg turned</text><text class="s" x="380" y="70">away, grade A</text>
     <rect class="g" x="555" y="6" width="165" height="82" rx="8"/><text class="k" x="565" y="22">4 · HUB DOCK</text>
     <text class="t" x="565" y="40">Kilograms become packs</text><text class="s" x="565" y="56">38 kg accepted = 76 packs</text><text class="s" x="565" y="70">of 500 g, batch L1</text>
@@ -72,8 +72,8 @@
       <tr><td>Bhilai</td><td>2</td><td class="num">8 km</td><td class="num">3 km</td></tr>
     </table>
     <p>The same code runs both. A dense tier-1 city gets hubs close together, each serving a small radius; a
-      tier-2 city gets fewer hubs with a longer reach. Bangalore has two hubs in the demo data. Bhilai's hubs are
-      meant to be placed from demand by the network-planning tool (section 5) and none is seeded yet.</p>
+      tier-2 city gets fewer hubs with a longer reach. Bangalore has two hubs in the demo data and Bhilai three, opened
+      with the same call the network map uses when it suggests a new site (section 5).</p>
   </div>
 </div>
 
@@ -81,9 +81,9 @@
 <table>
   <tr><th style="width:13%">Person</th><th style="width:24%">Screen</th><th>What they do there</th><th style="width:19%">Today</th></tr>
   <tr><td><b>Farmer</b></td><td>Phone app</td><td>Registers a farm at its location, lists produce, sees the hub, the drop slot and the hub's quality check</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Hub receiver</b></td><td>None yet: the API, from a script</td><td>Weighs and grades a lot, packs it into units, puts them away</td><td><span class="tag api">API only</span></td></tr>
+  <tr><td><b>Hub receiver</b></td><td>Intake page on a phone (web)</td><td>Weighs and grades a lot, has it packed into units, puts each portion in its bin</td><td><span class="tag real">Real backend</span></td></tr>
   <tr><td><b>Customer</b></td><td>Phone app</td><td>Picks a delivery area, shops what the hub has, holds a cart, pays, follows the order as far as Packed</td><td><span class="tag real">Real backend</span></td></tr>
   <tr><td><b>Hub picker</b></td><td>Picker page on a phone (web)</td><td>Claims the next order, walks the bins in order, scans every unit, packs</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Hub manager</b></td><td>Ops dashboard, hub desk, network map (web)</td><td>Problems first, every KPI beside its target, a live event feed, where the next hub should go</td><td><span class="tag real">Real backend</span></td></tr>
+  <tr><td><b>Hub manager</b></td><td>Ops dashboard, hub desk, network map (web)</td><td>Problems first, every KPI beside its target, a live event feed, where the next hub should go, and opening it</td><td><span class="tag real">Real backend</span></td></tr>
   <tr><td><b>Delivery agent</b></td><td>Phone app</td><td>Pooled trips, hand-over against the customer's code</td><td><span class="tag none">Not built</span></td></tr>
 </table>
