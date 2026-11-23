@@ -2,10 +2,11 @@
 
 What it shows, in order, is one lot of tomatoes going from a farm to a customer's order:
 
-    farmer   signs in with an emailed code, registers a farm, lists 40 kg of tomatoes, gets a hub and a drop slot
-    hub      weighs and grades the lot, packs it into units and puts them away (through the API: there is no
-             intake screen yet), and the stock appears on the hub's desk
-    customer signs in, picks a delivery area, finds the tomatoes in the shop, holds a cart and pays
+    farmer   signs in with an emailed code, registers a farm near Bhilai, lists 40 kg of tomatoes, and gets a hub
+             and a drop slot
+    hub      on the intake screen, the receiver weighs and grades the lot; it is packed into units, and each
+             portion is put into its bin
+    customer signs in, picks a delivery area in Bhilai, finds the tomatoes in the shop, holds a cart and pays
     hub      a picker claims the order, scans it and packs it
     customer sees the order move to Packed
 
@@ -14,7 +15,8 @@ agent's placeholder screen. A second, short pass shows the app on its built-in d
 for orders, tracking and rescue deals look like before the backend has them.
 
 It needs, already running (scripts/record_demo.sh starts them on the dev server):
-    the API at API_URL, on an empty database, with EMAIL_BACKEND=log and its log in API_LOG
+    the API at API_URL, on an empty database, with DEMO_PRODUCE=on, DEMO_HUBS=on, EMAIL_BACKEND=log and its log
+    in API_LOG
     the phone app's web build made with EXPO_PUBLIC_API_URL=API_URL at APP_URL, and the mock build at MOCK_URL
 and Playwright with Chromium. The browser runs with web security off, because the web build and the API are on
 different ports here; a phone has no such rule.
@@ -41,7 +43,8 @@ PHONE = {"viewport": {"width": 390, "height": 844}, "device_scale_factor": 2, "c
          "locale": "en-IN", "timezone_id": "Asia/Kolkata"}
 DESK = {"viewport": {"width": 1280, "height": 800}, "device_scale_factor": 1.5, "color_scheme": "light",
         "locale": "en-IN", "timezone_id": "Asia/Kolkata"}
-FARM = {"latitude": 12.80, "longitude": 77.59, "accuracy": 18}       # 19 km south of the Central hub
+FARM = {"latitude": 21.10, "longitude": 81.45, "accuracy": 18}       # 15 km south-east of Bhilai's Civic Centre hub
+HUB = 3                                                              # BH-01 Civic Centre, the first hub DEMO_HUBS opens
 FARMER, CUSTOMER = "ravi.farmer@example.com", "asha.customer@example.com"
 PAUSE = 1.7                                                          # seconds a viewer gets to read a screen
 
@@ -160,7 +163,7 @@ def farmer_lists(browser) -> None:
     shot(page, "farmer-list-produce")
     page.get_by_role("button", name="List produce").locator("visible=true").last.click()
     see(page, "Where and when to drop it")
-    say(clip, "The nearest hub with room is chosen (PostGIS), with a morning drop slot")
+    say(clip, "The nearest hub with room is chosen (PostGIS): BH-01 in Bhilai, with a morning drop slot")
     shot(page, "farmer-listing-made")
     page.wait_for_timeout(PAUSE * 2500)
     see(page, "Back to my listings").click()
@@ -184,47 +187,43 @@ def farmer_sees_result(browser) -> None:
 
 # --------------------------------------------------------------------------- the hub
 
-def hub_takes_in(browser, listing_id: int) -> None:
+def hub_takes_in(browser, listing_id: int) -> None:      # the listing must exist: the farmer stage made it
     clip = "2-hub-intake"
-    context = browser.new_context(**DESK, record_video_dir=str(VIDEO / clip), record_video_size=DESK["viewport"])
-    started[clip] = time.monotonic()
-    page = context.new_page()
-    page.goto(API_URL + "/")
-    page.locator("#check-location").wait_for()
-    page.wait_for_timeout(1500)
-    say(clip, "The hub's desk before the lot arrives: no tomatoes in stock")
-    shot(page, "hub-desk-before")
+    context, page = new_phone(browser, clip)
+    page.goto(API_URL + f"/intake.html?store={HUB}")
+    page.get_by_role("button", name="Weigh").first.wait_for()
+    page.wait_for_timeout(1200)
+    say(clip, "At the hub's dock, the receiver's phone lists the lots on their way, with each farm's record")
+    shot(page, "hub-intake-lots")
     page.wait_for_timeout(PAUSE * 1500)
-
-    staff = api("POST", "/v1/auth/login", {"username": "receiver1", "password": "demo"})["access_token"]
-    say(clip, "The receiver weighs and grades the lot: 39.5 kg arrived, 1.5 kg rejected, grade A (no screen yet: API)")
-    intake = api("POST", f"/v1/listings/{listing_id}/intake", {"received_kg": 39.5, "rejected_kg": 1.5, "grade": "A",
-                                                             "remarks": "firm, even colour"}, staff)
-    receipt = intake["receipt"]["receipt_id"]
-    (OUT / "intake.json").write_text(json.dumps(intake, indent=1))
+    page.get_by_role("button", name="Weigh").first.click()
+    page.locator("#received").fill("39.5")
+    page.locator("#rejected").fill("1.5")
+    page.locator("#remarks").fill("firm, even colour")
+    say(clip, "Weighed and graded: 39.5 kg arrived, 1.5 kg is turned away, grade A")
     page.wait_for_timeout(PAUSE * 1500)
-    say(clip, f"38 kg accepted becomes {intake['packed'][0]['units']} packs of 500 g, put away bin by bin")
-    for task in api("GET", f"/v1/goods-receipts/{receipt}/putaway-tasks", token=staff):
-        api("POST", f"/v1/goods-receipts/{receipt}/putaway",
-            {"sku_id": task["sku_id"], "batch_no": task["batch_no"], "bin_code": task["bin_code"], "qty": task["qty"]}, staff)
-    api("POST", f"/v1/goods-receipts/{receipt}/close", token=staff)
-    page.reload()
-    page.get_by_text("Tomato, 500 g").first.wait_for()
-    page.get_by_text("Tomato, 500 g").first.scroll_into_view_if_needed()
-    page.wait_for_timeout(800)
-    say(clip, "The packs are on the shelf and on sale the moment they are put away")
-    shot(page, "hub-desk-after")
-    page.wait_for_timeout(PAUSE * 2500)
-    path = page.video.path()
-    context.close()
-    pathlib.Path(path).rename(VIDEO / f"{clip}.webm")
-    (VIDEO / clip).rmdir()
+    shot(page, "hub-intake-weigh")
+    page.locator("#record").click()
+    page.locator("#put-btn").wait_for()
+    say(clip, "38 kg accepted becomes 76 packs of 500 g, and the phone names the bin for each portion")
+    page.wait_for_timeout(PAUSE * 1500)
+    shot(page, "hub-intake-putaway")
+    for _ in range(12):
+        if not page.locator("#put-btn").is_visible():
+            break
+        page.locator("#put-btn").click()
+        page.wait_for_timeout(1300)
+    page.get_by_text(re.compile(r"^Done:")).wait_for()
+    say(clip, "The packs are on sale the moment they are in their bin")
+    shot(page, "hub-intake-done")
+    page.wait_for_timeout(PAUSE * 2000)
+    finish(context, clip)
 
 
 def hub_picks(browser) -> None:
     clip = "4-hub-picking"
     context, page = new_phone(browser, clip)
-    page.goto(API_URL + "/picker.html?store=1")
+    page.goto(API_URL + f"/picker.html?store={HUB}")
     page.locator("#next").wait_for()
     page.wait_for_timeout(1200)
     say(clip, "At the hub, a picker's phone: claim the next paid order")
@@ -254,11 +253,20 @@ def hub_screens(browser) -> None:
     """Stills of the hub's other screens, for the handbook."""
     context = browser.new_context(**DESK)
     page = context.new_page()
-    for name, path, wait in (("hub-ops-dashboard", "/ops.html", 3500), ("hub-network-map", "/network.html", 6000),
-                             ("hub-desk", "/", 2500), ("api-docs", "/docs", 3000)):
+    page.goto(API_URL + "/ops.html")
+    page.locator("#store-select option").nth(HUB - 1).wait_for(state="attached")
+    page.select_option("#store-select", str(HUB))
+    page.wait_for_timeout(3500)
+    page.screenshot(path=str(SHOTS / "hub-ops-dashboard.png"), full_page=True)
+    page.goto(API_URL + "/")
+    page.locator("#store-select option").nth(HUB - 1).wait_for(state="attached")
+    page.select_option("#store-select", str(HUB))
+    page.wait_for_timeout(2500)
+    page.screenshot(path=str(SHOTS / "hub-desk.png"), full_page=True)
+    for name, path, wait in (("hub-network-map", "/network.html?city=bhilai", 7000), ("api-docs", "/docs", 3000)):
         page.goto(API_URL + path)
         page.wait_for_timeout(wait)
-        page.screenshot(path=str(SHOTS / f"{name}.png"), full_page=name in ("hub-ops-dashboard", "hub-desk"))
+        page.screenshot(path=str(SHOTS / f"{name}.png"))
     context.close()
 
 
@@ -271,8 +279,8 @@ def customer_orders(browser) -> None:
     see(page, "Delivery location")
     shot(page, "customer-location-empty")
     say(clip, "Where to deliver: the hub whose zone covers the address serves it")
-    page.get_by_role("radio", name="Bangalore", exact=True).click()
-    page.get_by_role("radio", name="MG Road, Bangalore").click()
+    page.get_by_role("radio", name="Bhilai", exact=True).click()
+    page.get_by_role("radio", name="Supela, Bhilai").click()
     see(page, "Deliver here")
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-location")
@@ -280,13 +288,7 @@ def customer_orders(browser) -> None:
 
     page.get_by_label(re.compile(r"^Add Tomato")).first.wait_for()
     page.wait_for_timeout(1500)
-    shot(page, "customer-home-real")
-    say(clip, "The shop shows only what that hub can deliver now, including the farmer's tomatoes")
-    page.wait_for_timeout(PAUSE * 1000)
-    page.get_by_role("tab", name="Vegetables").click()                  # the hub's demo data still has groceries
-    page.wait_for_timeout(1000)
-    if not page.get_by_label(re.compile(r"^Add Tomato")).locator("visible=true").count():
-        page.get_by_role("tab", name="All").click()
+    say(clip, "The shop shows only what that hub can deliver now: the farmer's tomatoes, put away a moment ago")
     add = page.get_by_label(re.compile(r"^Add Tomato")).locator("visible=true").first
     add.scroll_into_view_if_needed()
     page.wait_for_timeout(PAUSE * 1500)
@@ -305,7 +307,7 @@ def customer_orders(browser) -> None:
     page.wait_for_timeout(PAUSE * 1500)
     see(page, re.compile(r"^Hold my items")).click()
     see(page, "Your items are held")
-    page.locator("input >> visible=true").first.fill("12 Lake Road, MG Road")
+    page.locator("input >> visible=true").first.fill("14 Garden Road, Supela")
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-checkout")
     say(clip, "Paying confirms the order; an unpaid hold expires and gives the stock back")
@@ -383,8 +385,8 @@ def on_demo_data(browser) -> None:
 
 
 def expected_listing() -> int:
-    staff = api("POST", "/v1/auth/login", {"username": "receiver1", "password": "demo"})["access_token"]
-    return api("GET", "/v1/stores/1/expected-drops", token=staff)[0]["listing_id"]
+    staff = api("POST", "/v1/auth/login", {"username": f"receiver{HUB}", "password": "demo"})["access_token"]
+    return api("GET", f"/v1/stores/{HUB}/expected-drops", token=staff)[0]["listing_id"]
 
 
 def run(browser, stage, *args) -> bool:

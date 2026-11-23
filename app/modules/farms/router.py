@@ -94,6 +94,14 @@ def expected_drops(store_id: PathId, db: Session = Depends(get_db),
     return service.expected_drops(db, store_id)
 
 
+@router.get("/v1/stores/{store_id}/lots-on-dock", summary="Lots weighed here whose packs are not all put away yet")
+def lots_on_dock(store_id: PathId, db: Session = Depends(get_db),
+                 staff: dict = Depends(require_role("receiver", "manager", "ops"))):
+    """Each has `quality_check.receipt_id`: carry on with that goods receipt's putaway tasks."""
+    check_store(staff, store_id)
+    return service.lots_on_dock(db, store_id)
+
+
 @router.post("/v1/listings/{listing_id}/intake", summary="Weigh and grade a lot at the hub, and pack what is accepted")
 def intake(listing_id: PathId, body: IntakeIn, idempotency_key: IdempotencyKey = None, db: Session = Depends(get_db),
            staff: dict = Depends(require_role("receiver", "manager"))):

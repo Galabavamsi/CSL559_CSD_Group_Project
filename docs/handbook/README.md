@@ -1,7 +1,7 @@
 # Handbook
 
 `JustInTimeFarm2Home-handbook.pdf` is the document: what is built, how a hub works, what was measured, how to demo
-it, and what is left. `farm2home-demo.mp4` is the recording it refers to (3 min 29 s, no sound).
+it, and what is left. `farm2home-demo.mp4` is the recording it refers to (3 min 31 s, no sound).
 
 | File | What it is |
 | --- | --- |

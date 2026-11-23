@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, HelperText, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -24,6 +24,7 @@ import { formatRupees } from '@/lib/format';
 import { cartLines, useCart } from '@/state/cart';
 import { useDeliveryLocation } from '@/state/deliveryLocation';
 import { radius, space, useAppTheme } from '@/theme';
+import { KeyboardScroll, KeyboardSpace } from '@/components/KeyboardSpace';
 
 /** Reservation states that mean the stock is no longer set aside for this cart. */
 const GIVEN_BACK = ['released', 'expired', 'cancelled'];
@@ -154,8 +155,8 @@ export default function Checkout() {
   return (
     <Screen>
       <TopBar title="Checkout" backFallback="/cart" />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardSpace>
+        <KeyboardScroll contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <HoldCountdown hold={hold} hubName={location.hubName} now={now} />
 
           <Card title="Deliver to">
@@ -220,7 +221,7 @@ export default function Checkout() {
                 : 'Test payment: this version confirms the order with the hub and takes no money.'}
             </Text>
           </View>
-        </ScrollView>
+        </KeyboardScroll>
 
         <View
           style={[
@@ -248,7 +249,7 @@ export default function Checkout() {
             Cancel and release my items
           </Button>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSpace>
     </Screen>
   );
 }

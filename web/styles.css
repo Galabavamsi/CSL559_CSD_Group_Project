@@ -240,3 +240,7 @@ tr.is-current td:first-child { box-shadow: inset 3px 0 0 var(--label); }
   .network { grid-template-columns: 1fr; padding: 1rem; }
   .network-map { min-height: 55vh; }
 }
+
+/* Network map: a suggested site's row holds its cell, its gain and a button; let the button drop to its own line. */
+#suggestions li { flex-wrap: wrap; }
+#suggestions .btn { margin-left: auto; }

@@ -406,3 +406,30 @@ def test_only_this_hubs_receivers_and_managers_take_in_a_lot(tomatoes, farmer, c
         assert receiver.post(url, json=body).status_code == 200
     assert TestClient(app).post(url, json=body).status_code == 401
     assert TestClient(app).post("/v1/listings/9999/intake", headers=receiver.headers, json=body).status_code == 404
+
+
+def test_a_weighed_lot_stays_on_the_dock_list_until_its_receipt_is_closed(tomatoes, client_as):
+    with client_as("receiver", 1) as receiver:
+        before = receiver.get("/v1/stores/1/lots-on-dock").json()
+        receipt = take_in(receiver, tomatoes["listing_id"], received_kg=20).json()["receipt"]["receipt_id"]
+        waiting = receiver.get("/v1/stores/1/lots-on-dock").json()
+        for task in receiver.get(f"/v1/goods-receipts/{receipt}/putaway-tasks").json():
+            receiver.post(f"/v1/goods-receipts/{receipt}/putaway", json={
+                "sku_id": task["sku_id"], "batch_no": task["batch_no"], "bin_code": task["bin_code"], "qty": task["qty"]})
+        put_away = receiver.get("/v1/stores/1/lots-on-dock").json()
+        receiver.post(f"/v1/goods-receipts/{receipt}/close")
+        after = receiver.get("/v1/stores/1/lots-on-dock").json()
+
+    assert before == []
+    assert [(lot["item"], lot["quality_check"]["receipt_id"]) for lot in waiting] == [("Tomato", receipt)]
+    assert len(put_away) == 1          # everything is in its bin, but the receipt is not closed yet
+    assert after == []
+
+
+def test_a_rejected_lot_never_waits_on_the_dock_and_the_list_is_for_ones_own_hub(tomatoes, client_as):
+    with client_as("receiver", 1) as receiver, client_as("receiver", 2) as elsewhere:
+        take_in(receiver, tomatoes["listing_id"], received_kg=20, grade="reject")
+
+        assert receiver.get("/v1/stores/1/lots-on-dock").json() == []
+        assert elsewhere.get("/v1/stores/1/lots-on-dock").status_code == 403
+        assert elsewhere.get("/v1/stores/2/lots-on-dock").json() == []

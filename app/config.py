@@ -125,6 +125,11 @@ HUB_SEARCH_KM = float(os.getenv("HUB_SEARCH_KM", "60"))
 HUB_CANDIDATES = int(os.getenv("HUB_CANDIDATES", "5"))
 # A farm's location taken from the phone is kept only when the phone is sure of it to this many metres (HLD 16).
 FARM_LOCATION_MAX_ACCURACY_M = float(os.getenv("FARM_LOCATION_MAX_ACCURACY_M", "50"))
+# Opening a hub (POST /v1/admin/stores). A new hub may not stand this close to another one: it would be the same
+# site entered twice. DEMO_HUBS opens Bhilai's first hubs in the demo data; it is off for the tests, which count
+# the two Bangalore hubs.
+HUB_MIN_GAP_KM = float(os.getenv("HUB_MIN_GAP_KM", "0.5"))
+DEMO_HUBS = os.getenv("DEMO_HUBS", "off") == "on"
 LISTING_MAX_KG = float(os.getenv("LISTING_MAX_KG", "2000"))            # one lot
 LISTING_MAX_DAYS_AHEAD = int(os.getenv("LISTING_MAX_DAYS_AHEAD", "7")) # how long before its harvest a lot may be listed
 # Hubs take produce in a morning window (HLD 11), in the cities' own time, which is this far ahead of UTC.

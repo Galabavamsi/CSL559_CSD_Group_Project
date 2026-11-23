@@ -179,6 +179,7 @@ Resources:
             - {Name: REPLENISHMENT_INTERVAL_MINUTES, Value: "15"}
             - {Name: DEMO_HISTORY_ON_RESET, Value: "on"}
             - {Name: DEMO_PRODUCE, Value: "on"}          # the produce items and their units, for farmers to list
+            - {Name: DEMO_HUBS, Value: "on"}             # Bhilai's first hubs, opened once if the city has none
           Secrets:
             - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecret}
             - {Name: DEMO_PASSWORD, ValueFrom: !Ref StaffPassword}

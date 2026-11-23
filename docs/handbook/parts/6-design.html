@@ -63,6 +63,8 @@
   <li><b>Which hub takes a farm's lot:</b> a nearest-neighbour query on a GiST index over the hubs' points, then
     the capacity checks of section 4.</li>
   <li><b>A farm's own location</b> is kept only if the phone's fix is within 50 m.</li>
+  <li><b>Opening a hub</b> creates the hub, its 18 bins and its logins and recalculates every zone in one
+    transaction: the new hub takes over the cells it is nearest to.</li>
 </ul>
 <h2>Accounts</h2>
 <ul>

@@ -184,6 +184,11 @@ async function pack() {
 
 function start() {
   $("store").value = String(phone.store);
+  // The page ships with hubs 1 and 2; a hub opened since is added here.
+  api("GET", "/v1/stores").then((stores) => {
+    $("store").replaceChildren(...stores.map((s) => el("option", { value: String(s.store_id) }, String(s.store_id))));
+    $("store").value = String(phone.store);
+  }).catch(() => {});
   $("store").onchange = () => {
     phone.store = Number($("store").value);
     phone.jobs = [];

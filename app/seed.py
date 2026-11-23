@@ -1,4 +1,4 @@
-"""Demo data: two stores, 16 products, and a week of sales history.
+"""Demo data: two hubs in Bangalore, 16 products, and a week of sales history. With DEMO_HUBS on, Bhilai gets hubs too.
 
 A few situations are planted on purpose so the demo has something to show:
   * Store 1, milk      - two batches with different expiry dates (shows FEFO picking), and a safety buffer
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .auth import hash_password
 from .db import SessionLocal, recreate_tables
-from .models import SKU, Bin, City, ProduceItem, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
+from .models import SKU, City, ProduceItem, Staff, StockItem, StockLedger, StockLevel, Store, StoreZone, utcnow
 from .modules.serviceability import service as serviceability
 
 # slug, name, tier, centre lat, centre lng, built-up radius (km), service radius of a new hub (km).
@@ -97,22 +97,14 @@ STORE_ROLES = ("picker", "packer", "receiver", "manager")   # one login of each 
 CITY_ROLES = ("ops", "admin")                                 # not tied to a store
 
 
-# Units one bin holds, per zone: room for the stock a busy SKU needs, so orders are cut only when a zone is full.
-BIN_CAPACITY = {"ambient": 200, "chilled": 150, "frozen": 100}
-
-
-def _make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
-    """12 ambient bins (3 racks x 4 shelves), 4 chilled, 2 frozen. walk_seq 1 is nearest the packing desk."""
-    layout = [("ambient", f"A-{rack:02d}-{shelf:02d}") for rack in range(1, 4) for shelf in range(1, 5)]
-    layout += [("chilled", f"C-01-{shelf:02d}") for shelf in range(1, 5)]
-    layout += [("frozen", f"F-01-{shelf:02d}") for shelf in range(1, 3)]
-    bins: dict[str, list[Bin]] = {"ambient": [], "chilled": [], "frozen": []}
-    for seq, (zone, code) in enumerate(layout, start=1):
-        b = Bin(store_id=store_id, code=code, zone=zone, walk_seq=seq, capacity=BIN_CAPACITY[zone])
-        db.add(b)
-        bins[zone].append(b)
-    db.flush()
-    return bins
+# Bhilai's first hubs, opened in the demo data when DEMO_HUBS is on: name, lat, lng. Each gets the city's radius
+# for a new hub (3 km). Civic Centre, Supela, Nehru Nagar, Smriti Nagar and Durg Station Road are then served;
+# Risali and Kumhari are not, which is what the network map is for.
+BHILAI_HUBS = [
+    ("BH-01 Civic Centre", 21.1938, 81.3509),
+    ("BH-02 Nehru Nagar", 21.2090, 81.3260),
+    ("BH-03 Durg", 21.1904, 81.2849),
+]
 
 
 def seed(db: Session) -> None:
@@ -136,7 +128,7 @@ def seed(db: Session) -> None:
         store = Store(name=name, lat=lat, lng=lng, radius_km=3.0, city_id=cities[city].id)
         db.add(store)
         db.flush()
-        bins = _make_bins(db, store.id)
+        bins = serviceability.make_bins(db, store.id)
         next_bin = {"ambient": 0, "chilled": 0, "frozen": 0}
 
         for sku in skus:
@@ -184,6 +176,8 @@ def seed(db: Session) -> None:
         add_produce(db)
     db.commit()
     serviceability.rebuild_zones(db)
+    if config.DEMO_HUBS and add_demo_hubs(db):
+        db.commit()
 
 
 @cache
@@ -213,13 +207,32 @@ def add_produce(db: Session) -> int:
     return len(PRODUCE)
 
 
+def add_demo_hubs(db: Session) -> int:
+    """Open Bhilai's first hubs, with their demo logins, unless the city already has a hub. Returns how many were
+    opened. Does not commit."""
+    bhilai = db.scalar(select(City).where(City.slug == "bhilai"))
+    if bhilai is None or db.scalar(select(func.count()).select_from(Store).where(Store.city_id == bhilai.id)):
+        return 0
+    for name, lat, lng in BHILAI_HUBS:
+        hub = serviceability.open_store(db, name, lat, lng, city="bhilai", actor="seed")
+        add_store_staff(db, hub["store_id"])
+    return len(BHILAI_HUBS)
+
+
+def add_store_staff(db: Session, store_id: int) -> list[str]:
+    """The demo logins of one hub: picker<id>, packer<id>, receiver<id>, manager<id>, all with
+    config.DEMO_PASSWORD. Returns the usernames. Does not commit."""
+    names = [f"{role}{store_id}" for role in STORE_ROLES]
+    for role, username in zip(STORE_ROLES, names):
+        db.add(Staff(username=username, password_hash=_demo_password_hash(), role=role, store_id=store_id))
+    return names
+
+
 def seed_staff(db: Session) -> None:
     """Demo logins: picker1, packer1, receiver1, manager1 (and ...2 for store 2), plus city-wide ops and admin.
     They all share config.DEMO_PASSWORD. Does not commit."""
     for store_id in db.scalars(select(Store.id).order_by(Store.id)).all():
-        for role in STORE_ROLES:
-            db.add(Staff(username=f"{role}{store_id}", password_hash=_demo_password_hash(),
-                         role=role, store_id=store_id))
+        add_store_staff(db, store_id)
     for role in CITY_ROLES:
         db.add(Staff(username=role, password_hash=_demo_password_hash(), role=role, store_id=None))
 
@@ -230,6 +243,8 @@ def seed_if_empty(db: Session) -> bool:
         return True
     if config.DEMO_PRODUCE and add_produce(db):
         db.commit()            # a hosted copy seeded before produce existed
+    if config.DEMO_HUBS and add_demo_hubs(db):
+        db.commit()            # a hosted copy seeded before Bhilai had hubs
     if db.scalar(select(func.count()).select_from(Staff)) == 0:
         # A database from before logins existed: add the demo staff without touching its stock.
         seed_staff(db)
@@ -251,7 +266,7 @@ def reset() -> None:
             from scripts import generate_demand, generate_sales    # demo tooling; imported here, it imports this module
             for store_id in db.scalars(select(Store.id).order_by(Store.id)).all():
                 generate_sales.generate(store_id, db=db)
-            generate_demand.look_up(db, generate_demand.CLUSTERS)
+            generate_demand.look_up(db, generate_demand.clusters_for(db))
 
 
 if __name__ == "__main__":

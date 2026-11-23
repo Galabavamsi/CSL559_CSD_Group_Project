@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useRouter } from 'expo-router';
 import { useState, type ComponentProps } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { HelperText, Text } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -17,6 +17,7 @@ import { Segmented, type SegmentOption } from '@/components/Segmented';
 import { TextField } from '@/components/TextField';
 import { usePendingSignIn } from '@/state/pendingSignIn';
 import { radius, space, useAppTheme } from '@/theme';
+import { KeyboardScroll, KeyboardSpace } from '@/components/KeyboardSpace';
 
 type IconName = ComponentProps<typeof MaterialCommunityIcons>['name'];
 
@@ -73,8 +74,8 @@ export default function Welcome() {
 
   return (
     <Screen padTop>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
+      <KeyboardSpace>
+        <KeyboardScroll
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
           keyboardShouldPersistTaps="handled">
           <View style={styles.brand}>
@@ -141,8 +142,8 @@ export default function Welcome() {
           <View style={styles.demo}>
             <DemoNote>{`Demo data: no email is sent. Any address works, and the code is ${MOCK_OTP_CODE}.`}</DemoNote>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardScroll>
+      </KeyboardSpace>
     </Screen>
   );
 }
