@@ -44,8 +44,11 @@ def hold(client, order_id: str, lines: list[tuple[int, int]], store_id: int = 1)
     return res.json()["reservation_id"]
 
 
-def place(client, hold_id: str, address: dict = MG_ROAD):
-    return client.post("/v1/orders", json={"hold_id": hold_id, "address": address})
+def place(client, hold_id: str, address: dict = MG_ROAD, expected_total=None):
+    body = {"hold_id": hold_id, "address": address}
+    if expected_total is not None:
+        body["expected_total"] = expected_total
+    return client.post("/v1/orders", json=body)
 
 
 def pick_and_pack(client, store_id: int = 1, empty_shelf: bool = False) -> dict:
@@ -306,6 +309,109 @@ def test_a_job_sent_back_to_the_queue_does_not_reprice_the_order(customer, clien
 
     order = customer.get("/v1/orders/F2H-ORDER017").json()
     assert [(line["quantity"], line["unit_price"]) for line in order["lines"]] == [(2, 20.0)]
+
+
+def bill(client, hold_id: str):
+    return client.get(f"/v1/reservations/{hold_id}/bill")
+
+
+def test_the_bill_for_a_hold_is_what_the_order_then_costs(customer, sku, db):
+    """Eight packs of milk: the hub would pick the six that expire tomorrow first, so those are the cheap ones."""
+    milk, rice = sku("Toned milk"), sku("Basmati rice")
+    hold_id = hold(customer, "F2H-BILL001", [(milk, 8), (rice, 1)])
+
+    shown = bill(customer, hold_id)
+
+    assert shown.status_code == 200, shown.text
+    shown = shown.json()
+    assert shown["hold_id"] == hold_id
+    assert sorted((line["product_id"], line["quantity"], line["unit_price"], line["list_price"])
+                  for line in shown["lines"]) == sorted([(milk, 6, 20.0, 28.0), (milk, 2, 28.0, 28.0),
+                                                         (rice, 1, 140.0, 140.0)])
+    assert (shown["item_total"], shown["savings"], shown["delivery_fee"], shown["total"]) == (364.0, 48.0, 0.0, 316.0)
+    assert db.get(Reservation, hold_id).status == "held"            # looking at the bill pays for nothing
+    assert db.scalar(select(func.count()).select_from(FulfilmentJob)) == 0
+
+    order = place(customer, hold_id, expected_total=shown["total"]).json()
+
+    assert sorted((line["product_id"], line["quantity"], line["unit_price"]) for line in order["lines"]) == sorted(
+        (line["product_id"], line["quantity"], line["unit_price"]) for line in shown["lines"])
+    assert (order["item_total"], order["savings"], order["total"]) == (364.0, 48.0, 316.0)
+    paid = bill(customer, hold_id).json()                           # afterwards it is the order's bill
+    assert (paid["total"], len(paid["lines"])) == (316.0, 3)
+
+
+def test_a_price_that_rose_while_paying_is_refused_and_nothing_is_paid(customer, as_user, client, sku, db):
+    """Two customers each hold the six packs at the rescue price. A hold sets units aside, not batches, so both are
+    shown the lower price; whoever pays second would be charged the full one, and is asked first."""
+    milk = sku("Toned milk")
+    other = as_user("customer")
+    mine, theirs = hold(customer, "F2H-MINE", [(milk, 6)]), hold(other, "F2H-THEIRS", [(milk, 6)])
+    assert (bill(customer, mine).json()["total"], bill(other, theirs).json()["total"]) == (120.0, 120.0)
+    assert place(other, theirs, expected_total=120.0).status_code == 201
+    before = atp(customer, 1, milk)
+
+    refused = place(customer, mine, expected_total=120.0)
+
+    assert (refused.status_code, refused.json()["error"]["code"]) == (409, "price_changed")
+    details = refused.json()["error"]["details"]
+    assert (details["expected_total"], details["total"], details["savings"]) == (120.0, 168.0, 0.0)
+    assert [(line["quantity"], line["unit_price"]) for line in details["lines"]] == [(6, 28.0)]
+    assert db.get(Reservation, mine).status == "held"               # still held: the customer can pay or leave
+    assert db.scalar(select(func.count()).select_from(Order)) == 1
+    assert db.scalar(select(func.count()).select_from(FulfilmentJob)) == 1
+    assert atp(customer, 1, milk) == before
+    assert customer.get("/v1/orders").json() == []
+    assert_stock_is_consistent()
+
+    assert bill(customer, mine).json()["total"] == 168.0            # the bill now says what it would cost
+    agreed = place(customer, mine, expected_total=168.0)
+
+    assert (agreed.status_code, agreed.json()["total"], agreed.json()["status"]) == (201, 168.0, "confirmed")
+    assert db.scalar(select(func.count()).select_from(FulfilmentJob)) == 2
+    assert_stock_is_consistent()
+
+
+def test_a_price_that_fell_and_a_payment_that_names_no_total_are_not_refused(customer, sku):
+    milk = sku("Toned milk")
+
+    cheaper = place(customer, hold(customer, "F2H-FELL", [(milk, 2)]), expected_total=56.0)
+    unnamed = place(customer, hold(customer, "F2H-UNNAMED", [(milk, 2)]))
+
+    assert (cheaper.status_code, cheaper.json()["total"]) == (201, 40.0)        # shown 56, charged 40
+    assert (unnamed.status_code, unnamed.json()["total"]) == (201, 40.0)
+
+
+def test_a_total_that_differs_by_less_than_a_paisa_is_not_a_price_change(customer, sku):
+    res = place(customer, hold(customer, "F2H-ROUND", [(sku("Toned milk"), 2)]), expected_total=39.999)
+
+    assert res.status_code == 201, res.text
+
+
+def test_a_bill_is_for_a_hold_that_can_still_be_paid_and_only_for_customers(customer, as_user, client, sku, db):
+    milk = sku("Toned milk")
+    released, expired, paid = (hold(customer, f"F2H-B{n}", [(milk, 1)]) for n in range(3))
+    assert client.delete(f"/v1/reservations/{released}").status_code == 200
+    db.get(Reservation, expired).expires_at = utcnow() - timedelta(seconds=1)
+    db.commit()
+    place(customer, paid)
+
+    assert bill(customer, "no-such-hold").status_code == 404
+    for hold_id, code in ((released, "not_held"), (expired, "hold_expired")):
+        refused = bill(customer, hold_id)
+        assert (refused.status_code, refused.json()["error"]["code"]) == (409, code)
+    assert db.get(Reservation, expired).status == "held"            # reading a bill changes nothing, even then
+    assert bill(as_user("customer"), paid).status_code == 404       # someone else's order does not exist to you
+    assert bill(as_user("farmer"), paid).status_code == 403
+    assert bill(client, paid).status_code == 403                    # a staff token is not a customer's
+    assert bill(TestClient(app), paid).status_code == 401
+
+
+@pytest.mark.parametrize("total", [-1, "a lot", 10_000_001])
+def test_a_malformed_expected_total_is_refused(customer, sku, total):
+    hold_id = hold(customer, "F2H-ORDER018", [(sku("Toned milk"), 1)])
+
+    assert place(customer, hold_id, expected_total=total).status_code == 422
 
 
 def test_the_order_is_written_before_the_hub_starts_on_it():
