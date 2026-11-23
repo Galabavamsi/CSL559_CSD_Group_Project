@@ -519,7 +519,8 @@ class OrderLine(Base):
     name: Mapped[str] = mapped_column(String(120))                    # as shown when it was bought
     unit_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
     qty: Mapped[int] = mapped_column(Integer)
-    unit_price: Mapped[float] = mapped_column(Float)
+    unit_price: Mapped[float] = mapped_column(Float)                  # what was charged for one unit
+    list_price: Mapped[float] = mapped_column(Float)                  # the item's full price then; more if rescued
 
 
 class OrderEvent(Base):

@@ -125,6 +125,12 @@ HUB_SEARCH_KM = float(os.getenv("HUB_SEARCH_KM", "60"))
 HUB_CANDIDATES = int(os.getenv("HUB_CANDIDATES", "5"))
 # A farm's location taken from the phone is kept only when the phone is sure of it to this many metres (HLD 16).
 FARM_LOCATION_MAX_ACCURACY_M = float(os.getenv("FARM_LOCATION_MAX_ACCURACY_M", "50"))
+# Rescue price (docs/DESIGN.md, section 3.2): units of a batch with this many days of shelf life left, or fewer,
+# are sold at this much off, rounded to a whole rupee.
+RESCUE_WITHIN_DAYS = int(os.getenv("RESCUE_WITHIN_DAYS", "1"))
+RESCUE_DISCOUNT = float(os.getenv("RESCUE_DISCOUNT", "0.3"))
+if not 0 <= RESCUE_DISCOUNT < 1:
+    raise ValueError("RESCUE_DISCOUNT must be at least 0 and less than 1")
 # Opening a hub (POST /v1/admin/stores). A new hub may not stand this close to another one: it would be the same
 # site entered twice. DEMO_HUBS opens Bhilai's first hubs in the demo data; it is off for the tests, which count
 # the two Bangalore hubs.

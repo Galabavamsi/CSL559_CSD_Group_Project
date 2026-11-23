@@ -52,6 +52,7 @@ def upgrade() -> None:
         sa.Column('unit_label', sa.String(length=40), nullable=True),
         sa.Column('qty', sa.Integer(), nullable=False),
         sa.Column('unit_price', sa.Float(), nullable=False),
+        sa.Column('list_price', sa.Float(), nullable=False),
         sa.ForeignKeyConstraint(['order_id'], ['orders.id']),
         sa.ForeignKeyConstraint(['sku_id'], ['skus.id']),
         sa.PrimaryKeyConstraint('id'),

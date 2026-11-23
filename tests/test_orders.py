@@ -73,10 +73,13 @@ def test_placing_an_order_pays_the_hold_and_records_who_where_and_at_what_price(
     order = res.json()
     assert (order["id"], order["status"], order["hub_id"], order["hub_name"]) == ("F2H-ORDER001", "confirmed", 1,
                                                                                   "DS-01 Central")
+    # The two packs of milk come from the batch that expires tomorrow (it is picked first), at the rescue price.
     assert order["lines"] == [
-        {"product_id": milk, "name": "Toned milk 500 ml", "unit_label": None, "quantity": 2, "unit_price": 28.0},
-        {"product_id": rice, "name": "Basmati rice 1 kg", "unit_label": None, "quantity": 1, "unit_price": 140.0}]
-    assert (order["item_total"], order["savings"], order["delivery_fee"], order["total"]) == (196.0, 0, 0, 196.0)
+        {"product_id": milk, "name": "Toned milk 500 ml", "unit_label": None, "quantity": 2, "unit_price": 20.0,
+         "list_price": 28.0},
+        {"product_id": rice, "name": "Basmati rice 1 kg", "unit_label": None, "quantity": 1, "unit_price": 140.0,
+         "list_price": 140.0}]
+    assert (order["item_total"], order["savings"], order["delivery_fee"], order["total"]) == (196.0, 16.0, 0, 180.0)
     assert order["address"] == MG_ROAD
     assert [event["status"] for event in order["history"]] == ["placed", "confirmed"]
     assert (order["payment"], order["can_cancel"], order["delivery_code"]) == ("stand_in", True, None)
@@ -261,8 +264,48 @@ def test_a_produce_line_is_named_by_its_item_and_its_unit(customer, client, as_u
     order = place(customer, hold(customer, "F2H-ORDER014", [(pack, 2)])).json()
 
     assert order["lines"] == [{"product_id": pack, "name": "Tomato", "unit_label": "500 g", "quantity": 2,
-                               "unit_price": 24.0}]
+                               "unit_price": 24.0, "list_price": 24.0}]
     assert order["total"] == 48.0
+
+
+def test_units_in_their_last_day_cost_the_rescue_price_and_the_rest_the_full_price(customer, sku):
+    """Six packs of milk expire tomorrow and are picked first; the seventh and eighth come from the fresh batch."""
+    milk = sku("Toned milk")
+
+    order = place(customer, hold(customer, "F2H-ORDER015", [(milk, 8)])).json()
+
+    assert [(line["quantity"], line["unit_price"], line["list_price"]) for line in order["lines"]] == [
+        (6, 20.0, 28.0), (2, 28.0, 28.0)]
+    assert (order["item_total"], order["savings"], order["total"]) == (224.0, 48.0, 176.0)
+    assert_stock_is_consistent()
+
+
+def test_a_unit_that_is_dropped_comes_off_the_dearer_line_first(customer, sku, db):
+    milk = sku("Toned milk")
+    place(customer, hold(customer, "F2H-ORDER016", [(milk, 8)]))
+
+    orders.on_line_dropped(db, 1, {"order_id": "F2H-ORDER016", "sku_id": milk, "qty": 3})
+    db.commit()
+
+    order = customer.get("/v1/orders/F2H-ORDER016").json()
+    assert [(line["quantity"], line["unit_price"]) for line in order["lines"]] == [(5, 20.0)]
+    assert (order["item_total"], order["savings"], order["total"]) == (140.0, 40.0, 100.0)
+
+
+def test_a_job_sent_back_to_the_queue_does_not_reprice_the_order(customer, client, sku, db):
+    milk = sku("Toned milk")
+    place(customer, hold(customer, "F2H-ORDER017", [(milk, 2)]))
+    job = client.get("/v1/pickers/picker1/next-task", params={"store_id": 1}).json()["job"]
+    task = job["tasks"][0]
+    client.post(f"/v1/pick-tasks/{task['task_id']}/scans", json={"barcode": task["barcode"], "qty": 2})
+
+    # what the hub publishes when a stalled order goes back to the queue, with its lines already in a tote
+    orders.on_job_state(db, 1, {"job_id": job["job_id"], "order_id": "F2H-ORDER017", "state": "created",
+                                "reason": "stalled", "picker_id": "picker1"})
+    db.commit()
+
+    order = customer.get("/v1/orders/F2H-ORDER017").json()
+    assert [(line["quantity"], line["unit_price"]) for line in order["lines"]] == [(2, 20.0)]
 
 
 def test_the_order_is_written_before_the_hub_starts_on_it():
