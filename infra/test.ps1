@@ -88,7 +88,9 @@ if ($status -eq "SUCCEEDED") {
     Set-Status "success" $verdict
     exit 0
 }
-if (-not $summary) { $log | Select-Object -Last 25 | ForEach-Object { Write-Host "  $_" } }
+if (-not $summary) {      # it failed before the tests ran: show what it was doing, without CodeBuild's own chatter
+    $log | Where-Object { $_ -notmatch "^\[Container\]" } | Select-Object -Last 15 | ForEach-Object { Write-Host "  $_" }
+}
 if (-not $verdict) { $verdict = "the run ended $status before the tests reported" }
 Write-Host "FAILED ($status): $verdict"
 Set-Status "failure" $verdict
