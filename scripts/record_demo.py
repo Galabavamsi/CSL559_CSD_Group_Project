@@ -45,7 +45,7 @@ DESK = {"viewport": {"width": 1280, "height": 800}, "device_scale_factor": 1.5, 
         "locale": "en-IN", "timezone_id": "Asia/Kolkata"}
 FARM = {"latitude": 21.10, "longitude": 81.45, "accuracy": 18}       # 15 km south-east of Bhilai's Civic Centre hub
 HUB = 3                                                              # BH-01 Civic Centre, the first hub DEMO_HUBS opens
-FARMER, CUSTOMER = "ravi.farmer@example.com", "asha.customer@example.com"
+FARMER, CUSTOMER, AGENT = "ravi.farmer@example.com", "asha.customer@example.com", "kiran.agent@example.com"
 PAUSE = 1.7                                                          # seconds a viewer gets to read a screen
 
 captions: dict[str, list[tuple[float, str]]] = {}                    # clip -> [(seconds into the clip, caption)]
@@ -339,15 +339,80 @@ def customer_sees_packed(browser) -> None:
     see(page, "Progress")
     page.wait_for_timeout(PAUSE * 2500)
     shot(page, "customer-order-packed")
-    say(clip, "Pooling, the delivery agent and the door-step code come next: not built yet")
+    say(clip, "The bag waits at the hub for a delivery agent")
     page.wait_for_timeout(PAUSE * 2000)
+    finish(context, clip)
+
+
+def agent_delivers(browser) -> None:
+    """The agent's phone, and beside it the customer's for the code. The recording's API lets anyone sign up as an
+    agent and sends a lone order out at once (AGENT_SELF_SIGNUP, POOL_MAX_WAIT_MINUTES=0 in record_demo.sh)."""
+    clip = "7-agent-delivers"
+    context, page = new_phone(browser, clip)
+    sign_in(page, clip, APP_URL, AGENT, "Delivery")
+    see(page, "Work from this hub")
+    page.get_by_role("radio", name="Bhilai", exact=True).click()
+    page.get_by_role("radio", name=re.compile(r"^BH-01 Civic Centre")).click()
+    say(clip, "A delivery agent signs in and says which hub they work from")
+    page.wait_for_timeout(PAUSE * 1200)
+    shot(page, "agent-hub")
+    see(page, "Work from this hub").click()
+    see(page, "Go on duty")
+    page.wait_for_timeout(PAUSE * 1000)
+    shot(page, "agent-off-duty")
+    see(page, "Go on duty").click()
+    bag = page.get_by_role("button", name=re.compile(r"^Bag checked")).locator("visible=true").first
+    bag.wait_for()
+    say(clip, "On duty, the agent is given a trip: the bags to collect, each by its crate slot")
+    page.wait_for_timeout(PAUSE * 1500)
+    shot(page, "agent-bags")
+    bag.click()
+    see(page, "Ask the customer for their 4-digit code")
+    say(clip, "Every bag checked out: the trip is on the road, stops in the shortest round")
+    page.wait_for_timeout(PAUSE * 1500)
+    shot(page, "agent-stop")
+
+    customer = browser.new_context(**PHONE, storage_state=str(OUT / "customer-state.json"))
+    theirs = customer.new_page()
+    theirs.goto(APP_URL + "/")
+    theirs.get_by_role("tab", name="Orders").click()
+    theirs.get_by_role("button", name=re.compile(r"^Order ")).first.click()
+    shown = theirs.get_by_label(re.compile(r"^Delivery code \d")).locator("visible=true").first
+    shown.wait_for()
+    code = "".join(re.findall(r"\d", shown.get_attribute("aria-label")))
+    theirs.wait_for_timeout(800)
+    theirs.screenshot(path=str(SHOTS / "customer-order-out.png"))
+    customer.close()
+
+    say(clip, "At the door the customer reads out four digits; only the right ones hand the order over")
+    page.get_by_label("4-digit delivery code").locator("visible=true").first.fill(code)
+    page.wait_for_timeout(PAUSE * 1200)
+    shot(page, "agent-code")
+    see(page, "Hand over").click()
+    see(page, "Trip finished")
+    page.wait_for_timeout(PAUSE * 1500)
+    shot(page, "agent-done")
+    finish(context, clip)
+
+
+def customer_sees_delivered(browser) -> None:
+    clip = "8-customer-delivered"
+    context, page = new_phone(browser, clip, storage_state=str(OUT / "customer-state.json"))
+    page.goto(APP_URL + "/")
+    page.get_by_role("tab", name="Orders").click()
+    page.get_by_role("button", name=re.compile(r"^Order ")).first.click()
+    see(page, "Progress")
+    see(page, "Delivered")
+    say(clip, "The customer's order reads Delivered, with every step and its time")
+    page.wait_for_timeout(PAUSE * 2500)
+    shot(page, "customer-order-delivered")
     finish(context, clip)
 
 
 # --------------------------------------------------------------------------- demo data: what is still to come
 
 def on_demo_data(browser) -> None:
-    clip = "7-demo-data"
+    clip = "9-demo-data"
     context, page = new_phone(browser, clip)
     sign_in(page, clip, MOCK_URL, "demo@example.com", "Customer", real=False)
     see(page, "Delivery location")
@@ -423,7 +488,8 @@ def main() -> None:
     stages, failed = [], []
     if not only or "real" in only:
         stages += [(farmer_lists,), (hub_takes_in, expected_listing), (customer_orders,), (hub_picks,),
-                   (farmer_sees_result,), (customer_sees_packed,), (hub_screens,)]
+                   (farmer_sees_result,), (customer_sees_packed,), (agent_delivers,), (customer_sees_delivered,),
+                   (hub_screens,)]
     if not only or "mock" in only:
         stages += [(on_demo_data,)]
     with sync_playwright() as playwright:
