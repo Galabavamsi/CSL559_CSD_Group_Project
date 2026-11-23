@@ -131,6 +131,19 @@ class ServiceabilityMiss(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class ServiceRequest(Base):
+    """A signed-in customer asking for delivery at a place no hub serves. Stronger evidence for a new hub than a
+    lookup that was turned away, because someone took the trouble to ask. Like a miss it keeps the H3 cell and not
+    the exact point; one per customer and cell, so asking again changes nothing."""
+    __tablename__ = "service_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    h3_cell: Mapped[str] = mapped_column(String(16), index=True)
+    label: Mapped[str | None] = mapped_column(String(120), nullable=True)      # the area's name, as the customer chose it
+    ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    __table_args__ = (UniqueConstraint("user_id", "h3_cell"),)
+
+
 class AuditEntry(Base):
     """One call by a logged-in staff member to a protected endpoint, refused or not (HLD 10).
     shortcut: entries are never pruned and a demo reset wipes them; add retention before running for weeks."""

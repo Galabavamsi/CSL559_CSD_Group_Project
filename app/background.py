@@ -10,7 +10,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-from . import config
+from . import config, demo_supply
 from .db import SessionLocal
 from .modules.fulfilment import service as fulfilment
 from .modules.inventory import service as inventory
@@ -46,6 +46,12 @@ def replenish_once() -> list[dict] | None:
     return changed or None
 
 
+def demo_supply_once() -> list[dict] | None:
+    """Bring demo lots to hubs that are nearly out (app/demo_supply.py). Returns what arrived, or None."""
+    with SessionLocal() as db:
+        return demo_supply.top_up(db) or None
+
+
 async def _repeat(name: str, job: Callable[[], object], seconds: Callable[[], float], first_run_now: bool) -> None:
     """Run `job` every `seconds()` seconds until cancelled. A failed run is logged and retried next time."""
     if not first_run_now:
@@ -79,11 +85,20 @@ def replenish_loop():
                    first_run_now=False)
 
 
+def demo_supply_loop():
+    # Runs at start-up too: a hub opened by this deploy has stock before anyone opens its shop.
+    return _repeat("demo farms delivered", demo_supply_once, lambda: config.DEMO_SUPPLY_INTERVAL_MINUTES * 60,
+                   first_run_now=True)
+
+
 def loops() -> list[Callable]:
-    """The timed jobs to start. Replenishment is left out when REPLENISHMENT_INTERVAL_MINUTES is 0 or less."""
+    """The timed jobs to start. Replenishment is left out when REPLENISHMENT_INTERVAL_MINUTES is 0 or less, and the
+    demo farms unless DEMO_SUPPLY is on."""
     jobs = [sweep_loop, expiry_loop, stall_loop]
     if config.REPLENISHMENT_INTERVAL_MINUTES > 0:
         jobs.append(replenish_loop)
+    if config.DEMO_SUPPLY and config.DEMO_SUPPLY_INTERVAL_MINUTES > 0:
+        jobs.append(demo_supply_loop)
     return jobs
 
 

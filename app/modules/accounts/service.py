@@ -41,7 +41,9 @@ BAD_REFRESH = (401, "bad_refresh_token", "This session has ended. Sign in again.
 
 def normalise_email(email: str) -> str:
     email = email.strip().lower()
-    if len(email) > 254 or not EMAIL.fullmatch(email):
+    # `.invalid` can never receive mail (RFC 2606). Accounts that nobody is meant to sign in to are given such an
+    # address (the demo farms), so no code is ever made for one.
+    if len(email) > 254 or not EMAIL.fullmatch(email) or email.endswith(".invalid"):
         raise DomainError(422, "bad_email", "That does not look like an email address")
     return email
 

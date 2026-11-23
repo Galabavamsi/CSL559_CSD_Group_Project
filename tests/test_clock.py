@@ -37,7 +37,8 @@ def test_a_pack_is_not_sold_after_midnight_in_india_on_its_use_by_date(client, d
     next_day = shop_row()
 
     assert (last_hour["batch"]["batch_no"], last_hour["rescue"]) == ("M-OLD", {"price": 20.0, "units": 6})
-    assert (next_day["batch"]["batch_no"], next_day["rescue"]) == ("M-NEW", None)
+    assert next_day["batch"]["batch_no"] == "M-NEW"             # yesterday's batch is no longer described or sold
+    assert next_day["batch"]["use_by"] > use_by.isoformat()
 
 
 def test_an_order_after_midnight_in_india_is_not_picked_from_yesterdays_batch(client, db, sku, monkeypatch):

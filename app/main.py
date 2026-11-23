@@ -12,9 +12,10 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
-from . import auth, background, config, events, monitoring, rate_limit, seed
-from .db import SessionLocal, init_db
+from . import auth, background, config, demo_supply, events, monitoring, rate_limit, seed
+from .db import SessionLocal, get_db, init_db
 from .errors import DomainError
 from .modules.accounts.router import router as accounts_router
 from .modules.assortment.router import router as assortment_router
@@ -89,6 +90,14 @@ def reset_demo_data():
     """Wipe everything and reload the demo data. For demos and local testing only."""
     seed.reset()
     return {"status": "reset"}
+
+
+@app.post("/v1/admin/demo-supply", tags=["admin"], dependencies=[Depends(auth.require_role("admin"))],
+          summary="Have the demo farms deliver to every hub that is nearly out, now")
+def bring_demo_supply(db: Session = Depends(get_db)):
+    """What the timed job does when DEMO_SUPPLY is on, on request (app/demo_supply.py). Answers with the lots that
+    arrived; an empty list when every hub has enough, or when another top-up is running."""
+    return {"arrived": demo_supply.top_up(db)}
 
 
 # The demo screens. Mounted last so the API routes above take priority.
