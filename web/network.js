@@ -74,7 +74,8 @@ async function load() {
   $("suggestions").replaceChildren(...(sites.length
     ? sites.map((site, i) => el("li", {},
         el("span", {}, `Site ${i + 1} `, el("code", {}, site.h3_cell)),
-        el("strong", {}, customers(site.demand_gained))))
+        el("strong", {}, customers(site.demand_gained)),
+        el("button", { className: "btn btn-small", onclick: () => openHub(site, i + 1) }, "Open a hub here")))
     : [el("li", { className: "empty" }, "No turned-away customers yet, so nothing to suggest.")]));
 
   const sum = (field) => cells.reduce((total, c) => total + c[field], 0);
@@ -90,11 +91,38 @@ async function load() {
   $("network-message").textContent = "";
 }
 
+function say(text, mood) {
+  $("network-message").textContent = text;
+  $("network-message").className = `message is-${mood}`;
+}
+
+/** Open a hub at a suggested site. Looking at the map is the ops lead's job; opening a hub is an admin's, so this
+ *  logs in again as the admin. The server creates the hub, its shelves, its zone and its logins in one change. */
+async function openHub(site, number) {
+  const name = window.prompt(`A name for the hub at site ${number}, for example "BH-04 Risali":`)?.trim();
+  if (!name) return;
+  try {
+    // One key for this click, so a retry after a dropped answer cannot open the hub twice.
+    // (crypto.randomUUID needs HTTPS; getRandomValues also works on a plain-HTTP address.)
+    const key = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
+    const res = await fetch("/v1/admin/stores", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await staffLogin("admin")}`, "Content-Type": "application/json",
+        "Idempotency-Key": `open-hub-${key}` },
+      body: JSON.stringify({ name, lat: site.lat, lng: site.lng }),
+    });
+    const hub = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(hub.error?.message || `The hub was not opened (${res.status})`);
+    await load();
+    say(`${hub.name} is open in ${hub.city}: it serves ${hub.zone_cells} cells within ${hub.radius_km} km and starts `
+      + `empty. Its logins are ${hub.logins.join(", ")}.`, "good");
+  } catch (error) {
+    say(error.message, "bad");
+  }
+}
+
 function refresh() {
-  load().catch((error) => {
-    $("network-message").textContent = error.message;
-    $("network-message").className = "message is-bad";
-  });
+  load().catch((error) => say(error.message, "bad"));
 }
 
 $("refresh").onclick = refresh;

@@ -15,10 +15,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
-from ... import config
-from ...models import City, ServiceabilityMiss, Store, StoreZone
+from ... import config, events
+from ...errors import DomainError
+from ...models import Bin, City, ServiceabilityMiss, Store, StoreZone
 
 log = logging.getLogger(__name__)
+
+# Units one bin holds, per zone: room for the stock a busy SKU needs, so orders are cut only when a zone is full.
+BIN_CAPACITY = {"ambient": 200, "chilled": 150, "frozen": 100}
 
 
 def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -74,8 +78,9 @@ def eta_minutes(store: Store, km: float) -> int:
     return math.ceil(eta)
 
 
-def rebuild_zones(db: Session) -> int:
-    """Recalculate which store serves each H3 cell and return the number of cells. Commits.
+def rebuild_zones(db: Session, commit: bool = True) -> int:
+    """Recalculate which store serves each H3 cell and return the number of cells. Commits, unless it is one step
+    of a larger change (`commit=False`).
 
     A store claims every cell whose centre is within its radius; where two stores claim the same
     cell, the nearer one wins. Run it again after adding a store or changing a location or radius.
@@ -92,8 +97,83 @@ def rebuild_zones(db: Session) -> int:
     db.execute(delete(StoreZone))
     db.add_all(StoreZone(h3_cell=cell, store_id=store_id, distance_km=km)
                for cell, (km, store_id) in nearest.items())
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return len(nearest)
+
+
+def make_bins(db: Session, store_id: int) -> dict[str, list[Bin]]:
+    """The shelves every hub starts with: 12 ambient bins (3 racks x 4 shelves), 4 chilled, 2 frozen. walk_seq 1 is
+    nearest the packing desk. Does not commit."""
+    layout = [("ambient", f"A-{rack:02d}-{shelf:02d}") for rack in range(1, 4) for shelf in range(1, 5)]
+    layout += [("chilled", f"C-01-{shelf:02d}") for shelf in range(1, 5)]
+    layout += [("frozen", f"F-01-{shelf:02d}") for shelf in range(1, 3)]
+    bins: dict[str, list[Bin]] = {"ambient": [], "chilled": [], "frozen": []}
+    for seq, (zone, code) in enumerate(layout, start=1):
+        b = Bin(store_id=store_id, code=code, zone=zone, walk_seq=seq, capacity=BIN_CAPACITY[zone])
+        db.add(b)
+        bins[zone].append(b)
+    db.flush()
+    return bins
+
+
+def city_at(db: Session, lat: float, lng: float) -> tuple[City, float] | None:
+    """The city whose centre is nearest to a point, and the distance to that centre in km. None with no cities."""
+    point = as_point(lat, lng)
+    row = db.execute(select(City, func.ST_Distance(City.location, point, False))
+                     .order_by(City.location.op("<->")(point)).limit(1)).first()
+    return (row[0], row[1] / 1000) if row else None
+
+
+def open_store(db: Session, name: str, lat: float, lng: float, city: str | None = None,
+               radius_km: float | None = None, capacity_kg: int | None = None, actor: str = "system") -> dict:
+    """Open a hub at a site: the hub, its shelves and its delivery zone, in one change. Does not commit.
+
+    The hub belongs to the city named, or else to the city whose centre is nearest; either way the site must lie
+    inside that city's built-up area (422 outside_city). Its radius is the city's radius for a new hub unless one is
+    given. A site within HUB_MIN_GAP_KM of an existing hub is the same site entered twice (409 hub_too_close), and
+    two hubs cannot share a name (409 name_taken). Every delivery zone is recalculated, because the new hub takes
+    over the cells it is nearest to. The hub starts empty: stock arrives from farms."""
+    name = " ".join(name.split())
+    if city is not None:
+        home = db.scalar(select(City).where(City.slug == city))
+        if home is None:
+            raise DomainError(422, "unknown_city", f"There is no city {city!r}.", {"city": city})
+        km = distance_km(home.lat, home.lng, lat, lng)
+    else:
+        found = city_at(db, lat, lng)
+        if found is None:
+            raise DomainError(422, "outside_city", "There is no city to open a hub in.")
+        home, km = found
+    if km > home.radius_km:
+        raise DomainError(422, "outside_city",
+                          f"This site is {km:.1f} km from the centre of {home.name}, outside its {home.radius_km:g} km.",
+                          {"city": home.slug, "distance_km": round(km, 1), "city_radius_km": home.radius_km})
+    if db.scalar(select(Store.id).where(func.lower(Store.name) == name.lower())) is not None:
+        raise DomainError(409, "name_taken", f"There is already a hub called {name}.", {"name": name})
+    neighbour = nearest_store(db, lat, lng, include_closed=True)
+    if neighbour is not None and neighbour[1] < config.HUB_MIN_GAP_KM:
+        raise DomainError(409, "hub_too_close",
+                          f"{neighbour[0].name} is {neighbour[1] * 1000:.0f} m from this site: the same site twice?",
+                          {"store_id": neighbour[0].id, "name": neighbour[0].name,
+                           "distance_m": round(neighbour[1] * 1000)})
+
+    store = Store(name=name, lat=lat, lng=lng, city_id=home.id,
+                  radius_km=home.hub_radius_km if radius_km is None else radius_km)
+    if capacity_kg is not None:
+        store.capacity_kg = capacity_kg
+    db.add(store)
+    db.flush()
+    bins = make_bins(db, store.id)
+    rebuild_zones(db, commit=False)
+    cells = db.scalar(select(func.count()).select_from(StoreZone).where(StoreZone.store_id == store.id))
+    events.publish(db, "store.opened", store.id, {"name": store.name, "city": home.slug, "lat": lat, "lng": lng,
+                                                  "radius_km": store.radius_km, "by": actor})
+    return {"store_id": store.id, "name": store.name, "city": home.slug, "lat": store.lat, "lng": store.lng,
+            "radius_km": store.radius_km, "status": store.status, "capacity_kg": store.capacity_kg,
+            "bins": sum(len(zone) for zone in bins.values()), "zone_cells": cells}
 
 
 def check(db: Session, lat: float, lng: float) -> dict:
