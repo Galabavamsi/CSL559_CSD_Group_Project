@@ -43,7 +43,7 @@ DESK = {"viewport": {"width": 1280, "height": 800}, "device_scale_factor": 1.5, 
         "locale": "en-IN", "timezone_id": "Asia/Kolkata"}
 FARM = {"latitude": 12.80, "longitude": 77.59, "accuracy": 18}       # 19 km south of the Central hub
 FARMER, CUSTOMER = "ravi.farmer@example.com", "asha.customer@example.com"
-PAUSE = 1.2                                                          # seconds a viewer gets to read a screen
+PAUSE = 1.7                                                          # seconds a viewer gets to read a screen
 
 captions: dict[str, list[tuple[float, str]]] = {}                    # clip -> [(seconds into the clip, caption)]
 started: dict[str, float] = {}
@@ -258,7 +258,7 @@ def hub_screens(browser) -> None:
                              ("hub-desk", "/", 2500), ("api-docs", "/docs", 3000)):
         page.goto(API_URL + path)
         page.wait_for_timeout(wait)
-        page.screenshot(path=str(SHOTS / f"{name}.png"), full_page=name != "hub-network-map")
+        page.screenshot(path=str(SHOTS / f"{name}.png"), full_page=name in ("hub-ops-dashboard", "hub-desk"))
     context.close()
 
 
@@ -282,7 +282,12 @@ def customer_orders(browser) -> None:
     page.wait_for_timeout(1500)
     shot(page, "customer-home-real")
     say(clip, "The shop shows only what that hub can deliver now, including the farmer's tomatoes")
-    add = page.get_by_label(re.compile(r"^Add Tomato")).first
+    page.wait_for_timeout(PAUSE * 1000)
+    page.get_by_role("tab", name="Vegetables").click()                  # the hub's demo data still has groceries
+    page.wait_for_timeout(1000)
+    if not page.get_by_label(re.compile(r"^Add Tomato")).locator("visible=true").count():
+        page.get_by_role("tab", name="All").click()
+    add = page.get_by_label(re.compile(r"^Add Tomato")).locator("visible=true").first
     add.scroll_into_view_if_needed()
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-home-tomato")
@@ -304,7 +309,7 @@ def customer_orders(browser) -> None:
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-checkout")
     say(clip, "Paying confirms the order; an unpaid hold expires and gives the stock back")
-    see(page, re.compile(r"^Pay ")).click()
+    page.get_by_role("button", name=re.compile(r"^Pay ")).click()
     see(page, "Progress")
     page.wait_for_timeout(PAUSE * 2000)
     shot(page, "customer-order-confirmed")
@@ -358,7 +363,7 @@ def on_demo_data(browser) -> None:
     see(page, "Your items are held")
     page.locator("input >> visible=true").first.fill("12 Lake Road")
     shot(page, "mock-checkout")
-    see(page, re.compile(r"^Pay ")).click()
+    page.get_by_role("button", name=re.compile(r"^Pay ")).click()
     see(page, "Delivery code")
     say(clip, "Order tracking, with the code the customer reads to the delivery agent at the door")
     page.wait_for_timeout(PAUSE * 2000)
