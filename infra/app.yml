@@ -1,0 +1,360 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  farm2home app, one stack per environment. The API container on ECS Fargate in private subnets, behind an
+  HTTPS load balancer with a web application firewall, at <env>.<domain> (or the domain itself for prod).
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [staging, prod]
+  ImageTag:
+    Type: String
+    Description: Tag of the image in the registry to run. A tag is the first 12 characters of a commit.
+  BaseDomain:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /farm2home/domain
+    Description: Parameter Store name holding the domain delegated to Route 53.
+  HostedZoneId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /farm2home/hosted-zone-id
+  CertificateArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /farm2home/certificate-arn
+    Description: Parameter Store name holding the ARN of the certificate for the domain and its wildcard, in this region.
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: >-
+      Keep at 1 for now. The timed jobs and the live event feed run inside the API process, so a second copy would
+      run the jobs twice and each browser would see only the events its own copy relayed.
+  Cpu:
+    Type: String
+    Default: "512"
+  Memory:
+    Type: String
+    Default: "1024"
+  RequestsPerFiveMinutes:
+    Type: Number
+    Default: 3000
+    Description: The firewall blocks an address that sends more requests than this in five minutes.
+
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+
+Resources:
+  # ------------------------------------------------------------------ secrets the app needs, made here, typed nowhere
+  JwtSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub farm2home/${Env}/jwt-secret
+      Description: Signs staff login tokens
+      GenerateSecretString: {PasswordLength: 64, ExcludePunctuation: true}
+  StaffPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub farm2home/${Env}/staff-password
+      Description: Password of the seeded demo staff accounts on this site (the built-in one is public)
+      GenerateSecretString: {PasswordLength: 20, ExcludePunctuation: true}
+
+  # ------------------------------------------------------------------ container
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub farm2home-${Env}
+      ClusterSettings: [{Name: containerInsights, Value: enabled}]
+
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /farm2home/${Env}/api
+      RetentionInDays: 30
+
+  # Used by ECS itself to start the container: pull the image, write logs, read the two secrets it hands over.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub farm2home-${Env}-api-start
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-this-environments-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref JwtSecret
+                  - !Ref StaffPassword
+
+  # What the app's own code may do in AWS: read the database login, which it does whenever it opens a connection
+  # (RDS changes the password every seven days), and let an administrator open a shell in the container (ECS Exec)
+  # to look at a problem.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub farm2home-${Env}-api
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read-the-database-login
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: "*"
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub farm2home-${Env}-api
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Sub
+            - "${Registry}:${ImageTag}"
+            - Registry: !ImportValue farm2home-RegistryUri
+          Essential: true
+          StopTimeout: 30
+          PortMappings: [{ContainerPort: 8000, Protocol: tcp}]
+          Environment:
+            - Name: DB_HOST
+              Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbHost"}
+            - Name: DB_PORT
+              Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbPort"}
+            - Name: DB_NAME
+              Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbName"}
+            # Not the password, only where it is kept: the app reads the login when it opens a connection.
+            - Name: DB_SECRET_ARN
+              Value: {"Fn::ImportValue": !Sub "farm2home-${Env}-DbSecretArn"}
+            # The load balancer is the only thing that can reach the container, and it appends the caller's real
+            # address to X-Forwarded-For. Trusting exactly the VPC makes the server use that address, not one a
+            # caller wrote into the header itself (docs/journal/2026-11-23-staging-on-aws.md).
+            - Name: FORWARDED_ALLOW_IPS
+              Value: !ImportValue farm2home-VpcCidr
+            - {Name: BACKGROUND_JOBS, Value: "on"}
+            - {Name: REPLENISHMENT_INTERVAL_MINUTES, Value: "15"}
+            - {Name: DEMO_HISTORY_ON_RESET, Value: "on"}
+          Secrets:
+            - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecret}
+            - {Name: DEMO_PASSWORD, ValueFrom: !Ref StaffPassword}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref Logs
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: api
+
+  # ------------------------------------------------------------------ load balancer
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub farm2home ${Env} load balancer, open to the internet on 80 and 443
+      VpcId: !ImportValue farm2home-VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}     # only to redirect to HTTPS
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          DestinationSecurityGroupId: {"Fn::ImportValue": !Sub "farm2home-${Env}-AppSecurityGroupId"}
+      Tags: [{Key: Name, Value: !Sub "farm2home-${Env}-lb"}]
+
+  AppFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: The load balancer, and nothing else, may call the containers
+      GroupId: {"Fn::ImportValue": !Sub "farm2home-${Env}-AppSecurityGroupId"}
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 8000
+      SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub farm2home-${Env}
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Split [",", !ImportValue farm2home-PublicSubnets]
+      SecurityGroups: [!Ref LoadBalancerSecurityGroup]
+      LoadBalancerAttributes:
+        - {Key: idle_timeout.timeout_seconds, Value: "300"}        # the live feed is a WebSocket; the app pings it every 20 s
+        - {Key: routing.http.drop_invalid_header_fields.enabled, Value: "true"}
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub farm2home-${Env}-api
+      VpcId: !ImportValue farm2home-VpcId
+      TargetType: ip
+      Protocol: HTTP
+      Port: 8000
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - {Key: deregistration_delay.timeout_seconds, Value: "30"}
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates: [{CertificateArn: !Ref CertificateArn}]
+      DefaultActions:
+        - {Type: forward, TargetGroupArn: !Ref TargetGroup}
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig: {Protocol: HTTPS, Port: "443", StatusCode: HTTP_301}
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: [HttpsListener, AppFromLoadBalancer]
+    Properties:
+      ServiceName: api
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      EnableExecuteCommand: true
+      PropagateTags: SERVICE
+      HealthCheckGracePeriodSeconds: 180       # the first start creates the tables and loads the demo data
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100             # the new copy must be healthy before the old one is stopped
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}    # a version that never gets healthy is rolled back
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [",", !ImportValue farm2home-AppSubnets]
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "farm2home-${Env}-AppSecurityGroupId"
+      LoadBalancers:
+        - {ContainerName: api, ContainerPort: 8000, TargetGroupArn: !Ref TargetGroup}
+
+  # ------------------------------------------------------------------ firewall
+  Firewall:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub farm2home-${Env}
+      Scope: REGIONAL
+      DefaultAction: {Allow: {}}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub farm2home-${Env}
+      Rules:
+        - Name: too-many-requests-from-one-address
+          Priority: 0
+          Action: {Block: {}}
+          Statement:
+            RateBasedStatement: {Limit: !Ref RequestsPerFiveMinutes, AggregateKeyType: IP}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub farm2home-${Env}-rate
+        - Name: addresses-aws-knows-as-bad
+          Priority: 1
+          OverrideAction: {None: {}}
+          Statement:
+            ManagedRuleGroupStatement: {VendorName: AWS, Name: AWSManagedRulesAmazonIpReputationList}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub farm2home-${Env}-reputation
+        - Name: common-web-attacks
+          Priority: 2
+          OverrideAction: {None: {}}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:
+                # This rule blocks any request body over 8 KB. A goods receipt or a stock count with many lines is
+                # larger than that, so it is counted here, not blocked.
+                - {Name: SizeRestrictions_BODY, ActionToUse: {Count: {}}}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub farm2home-${Env}-common
+        - Name: known-bad-inputs
+          Priority: 3
+          OverrideAction: {None: {}}
+          Statement:
+            ManagedRuleGroupStatement: {VendorName: AWS, Name: AWSManagedRulesKnownBadInputsRuleSet}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub farm2home-${Env}-bad-inputs
+
+  FirewallOnLoadBalancer:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref LoadBalancer
+      WebACLArn: !GetAtt Firewall.Arn
+
+  # ------------------------------------------------------------------ name
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !If [IsProd, !Ref BaseDomain, !Sub "${Env}.${BaseDomain}"]
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt LoadBalancer.DNSName
+        HostedZoneId: !GetAtt LoadBalancer.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+Outputs:
+  Url:
+    Value: !If [IsProd, !Sub "https://${BaseDomain}", !Sub "https://${Env}.${BaseDomain}"]
+  Cluster:
+    Value: !Ref Cluster
+  Service:
+    Value: !GetAtt Service.Name
+  LogGroup:
+    Value: !Ref Logs
+  StaffPasswordSecret:
+    Description: Name of the secret holding this site's staff password
+    Value: !Sub farm2home/${Env}/staff-password

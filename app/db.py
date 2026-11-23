@@ -1,8 +1,12 @@
 """Database engine (PostgreSQL + PostGIS), session handling, and bringing the tables up to date (migrations)."""
+import json
+import logging
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from . import config
@@ -12,19 +16,81 @@ class Base(DeclarativeBase):
     pass
 
 
+log = logging.getLogger("darkstore.db")
 LOCK_WAIT_SECONDS = 15       # a statement blocked by another transaction for this long fails instead of hanging
 
 
-def make_engine(url: str | None = None):
-    """PostgreSQL through psycopg 3. `url` is for tools that need a second database (tests, scratch runs)."""
+# A login is (username, password). A provider returns the current one; called with refresh=True it must fetch it
+# again, not answer from memory.
+Login = tuple[str, str]
+LoginProvider = Callable[[bool], Login]
+
+_secret_lock = threading.Lock()
+_secret_login: tuple[Login, float] | None = None        # the last login fetched, and when (time.monotonic)
+
+
+def _fetch_secret(arn: str) -> dict:
+    """Read the secret from AWS Secrets Manager. The only place this module talks to AWS."""
+    import boto3      # imported here: a laptop or a test that sets no DB_SECRET_ARN needs no AWS at all
+
+    region = arn.split(":")[3]        # arn:aws:secretsmanager:<region>:<account>:secret:<name>
+    client = boto3.client("secretsmanager", region_name=region)
+    return json.loads(client.get_secret_value(SecretId=arn)["SecretString"])
+
+
+def secret_login(refresh: bool = False) -> Login:
+    """The database login kept in the secret DB_SECRET_ARN names, fetched at most once in DB_SECRET_CACHE_SECONDS
+    unless `refresh` asks for the newest."""
+    global _secret_login
+    with _secret_lock:
+        now = time.monotonic()
+        if refresh or _secret_login is None or now - _secret_login[1] > config.DB_SECRET_CACHE_SECONDS:
+            secret = _fetch_secret(config.DB_SECRET_ARN)
+            _secret_login = ((secret["username"], secret["password"]), now)
+        return _secret_login[0]
+
+
+def _refused_password(error: Exception) -> bool:
+    """PostgreSQL's answer to a wrong password (SQLSTATE 28P01), as psycopg reports it when connecting."""
+    return getattr(error, "sqlstate", None) == "28P01" or "password authentication failed" in str(error)
+
+
+def _log_in_with(engine, login: LoginProvider) -> None:
+    """Make every new connection of `engine` log in with what `login` returns at that moment.
+
+    RDS changes a managed password on a schedule. Connections already open stay open, but a login remembered from
+    before the change is refused. So a refused password is fetched again, once, and the connection retried: the
+    change costs one extra round trip, not an outage."""
+    @event.listens_for(engine, "do_connect")
+    def _connect(dialect, _record, cargs, cparams):
+        for refresh in (False, True):
+            cparams["user"], cparams["password"] = login(refresh)
+            try:
+                return dialect.connect(*cargs, **cparams)
+            except Exception as error:
+                if refresh or not _refused_password(error):
+                    raise
+                # Worth a line in the log: it marks the moment a password change reached this process.
+                log.warning("The database refused the remembered password; fetching the login again")
+
+
+def make_engine(url: str | None = None, login: LoginProvider | None = None):
+    """PostgreSQL through psycopg 3. `url` is for tools that need a second database (tests, scratch runs); `login`
+    supplies the username and password for each new connection instead of the URL. The app's own engine takes its
+    login from Secrets Manager when DB_SECRET_ARN is set."""
+    if url is None and login is None and config.DB_SECRET_ARN:
+        login = secret_login
     url = config._database_url(url) if url else config.DATABASE_URL
-    return create_engine(
+    engine = create_engine(
         url, pool_size=config.DB_POOL_SIZE, max_overflow=config.DB_POOL_OVERFLOW,    # see config.py for why
         pool_pre_ping=True,       # a connection the server dropped (restart, idle cut-off) is replaced, not used
         # search_path: only our own schema. The postgis Docker image also installs a US address geocoder and puts
-        # its `tiger` schema on the database's search path; its ~35 tables then looked like ours to Alembic and to
+        # its `tiger` schema on the database's search path; its 34 tables then looked like ours to Alembic and to
         # the "is this database empty?" check below.
         connect_args={"options": f"-c lock_timeout={LOCK_WAIT_SECONDS * 1000} -c search_path=public"})
+    if login is not None:
+        _log_in_with(engine, login)
+    return engine
 
 
 engine = make_engine()

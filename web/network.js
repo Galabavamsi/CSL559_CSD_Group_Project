@@ -1,7 +1,6 @@
 // Network planning map (task 4.4): store zones, demand by H3 cell, and suggested new sites.
 // Plain JavaScript, no build step. Logs in as the seeded ops user, like the stations in app.js.
 
-const DEMO_PASSWORD = "demo"; // same as DEMO_PASSWORD in app/config.py; demo accounts only
 const $ = (id) => document.getElementById(id);
 // Map colours come from .network in styles.css: fixed values, because the map tiles are light in either theme.
 const colour = (name) => getComputedStyle($("map")).getPropertyValue(name).trim();
@@ -23,12 +22,7 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 async function api(path, isRetry = false) {
-  token ??= await fetch("/v1/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "ops", password: DEMO_PASSWORD }),
-  }).then((res) => (res.ok ? res.json() : Promise.reject(new Error("Could not log in as ops"))))
-    .then((session) => session.access_token);
+  token ??= await staffLogin("ops"); // staff-login.js
   const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 401 && !isRetry) {
     token = null; // the token expired: log in again and retry once

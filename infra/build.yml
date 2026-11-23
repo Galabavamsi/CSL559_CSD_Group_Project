@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  farm2home build. One container registry and one CodeBuild project that clones the public repository at a chosen
+  commit, builds the image and pushes it, tagged with the commit. Shared by every environment.
+
+# Why builds are started from AWS and not by a push to GitHub: the repository is public and other people can push
+# to it, so nothing that happens in GitHub is allowed to start a build or a deployment in this account. Someone with
+# AWS access starts the build for a commit they have chosen (infra/deploy.ps1). The build itself can only push
+# images to this one registry.
+
+Parameters:
+  RepositoryUrl:
+    Type: String
+    Default: https://github.com/Galabavamsi/CSL559_CSD_Group_Project.git
+    Description: Public Git repository to build from.
+
+Resources:
+  Registry:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: farm2home/api
+      ImageTagMutability: IMMUTABLE          # a tag is a commit; it can never come to mean a different image
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EncryptionConfiguration: {EncryptionType: AES256}
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules": [{"rulePriority": 1, "description": "Keep the newest 30 images",
+                      "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 30},
+                      "action": {"type": "expire"}}]}
+
+  BuildLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /farm2home/build
+      RetentionInDays: 30
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: farm2home-build
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codebuild.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: build
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteItsOwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${BuildLogs.Arn}:*"
+              - Sid: LogInToTheRegistry
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"                # this action cannot be limited to one repository
+              - Sid: PushToThisRepositoryOnly
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:DescribeImages
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt Registry.Arn
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: farm2home-build
+      Description: Build the farm2home image from one commit of the public repository and push it to ECR
+      ServiceRole: !GetAtt BuildRole.Arn
+      TimeoutInMinutes: 20
+      Artifacts: {Type: NO_ARTIFACTS}
+      LogsConfig:
+        CloudWatchLogs: {Status: ENABLED, GroupName: !Ref BuildLogs}
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true                 # needed to run Docker inside the build
+        EnvironmentVariables:
+          - {Name: REPO_URL, Value: !Ref RepositoryUrl}
+          - {Name: GIT_REF, Value: main}      # overridden for each build with the commit to build
+          - {Name: ECR_REPO, Value: !Ref Registry}
+          - {Name: ECR_URI, Value: !GetAtt Registry.RepositoryUri}
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - git clone --quiet "$REPO_URL" src
+                - cd src
+                - git checkout --quiet "$GIT_REF"
+                - export IMAGE_TAG=$(git rev-parse --short=12 HEAD)
+                - echo "Building $GIT_REF as $ECR_URI:$IMAGE_TAG"
+                - aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_URI%%/*}"
+            build:
+              commands:
+                - |
+                  if aws ecr describe-images --repository-name "$ECR_REPO" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+                    echo "Image $IMAGE_TAG is already in the registry: nothing to build"
+                  else
+                    docker build --tag "$ECR_URI:$IMAGE_TAG" .
+                    docker push "$ECR_URI:$IMAGE_TAG"
+                  fi
+            post_build:
+              commands:
+                - echo "IMAGE_TAG=$IMAGE_TAG"
+
+Outputs:
+  RegistryUri:
+    Value: !GetAtt Registry.RepositoryUri
+    Export: {Name: farm2home-RegistryUri}
+  BuildProject:
+    Value: !Ref BuildProject

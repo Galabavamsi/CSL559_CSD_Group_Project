@@ -1,7 +1,6 @@
 // Ops dashboard (task 4.6): problems first, then each HLD 12 KPI beside its target, orders per hour, the
 // live event feed, and a row per store. Plain JavaScript, no build step. Logs in as the city-wide ops user.
 
-const DEMO_PASSWORD = "demo"; // same as DEMO_PASSWORD in app/config.py; demo accounts only
 const REFRESH_MS = 15000;     // numbers like minutes waiting change without an event, so refresh now and then
 const EVENTS_SHOWN = 15;
 const $ = (id) => document.getElementById(id);
@@ -11,13 +10,7 @@ let store = 1;
 const live = { socket: null, generation: 0, refreshTimer: null };
 
 function opsToken() {
-  token ??= fetch("/v1/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "ops", password: DEMO_PASSWORD }),
-  }).then((res) => (res.ok ? res.json() : Promise.reject(new Error("Could not log in as ops"))))
-    .then((session) => session.access_token)
-    .catch((error) => { token = null; throw error; });
+  token ??= staffLogin("ops").catch((error) => { token = null; throw error; }); // staff-login.js
   return token;
 }
 

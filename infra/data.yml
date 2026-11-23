@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  farm2home data, one stack per environment. PostgreSQL 16 (PostGIS is created by the app at first start) on Amazon
+  RDS, with a standby in a second availability zone, and the security groups that let only this environment's
+  containers reach it.
+
+Parameters:
+  Env:
+    Type: String
+    AllowedValues: [staging, prod]
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.medium
+  DbStorageGb:
+    Type: Number
+    Default: 50
+  DbEngineVersion:
+    Type: String
+    Default: "16.15"
+    Description: >-
+      Exact PostgreSQL version. Minor upgrades are applied by changing this, not automatically, so the template
+      and the database never disagree.
+  MultiAz:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Keep a standby copy in a second availability zone and fail over to it automatically.
+  DeletionProtection:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+
+Resources:
+  # Worn by this environment's containers. It has no inbound rule here: the app stack lets its load balancer in.
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub farm2home ${Env} app containers
+      VpcId: !ImportValue farm2home-VpcId
+      Tags: [{Key: Name, Value: !Sub "farm2home-${Env}-app"}]
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub farm2home ${Env} database, reachable only from the app containers
+      VpcId: !ImportValue farm2home-VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AppSecurityGroup}
+      Tags: [{Key: Name, Value: !Sub "farm2home-${Env}-db"}]
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub farm2home ${Env} database subnets (no internet route)
+      SubnetIds: !Split [",", !ImportValue farm2home-DataSubnets]
+
+  # The master password is created and kept by RDS in Secrets Manager; nobody types it and no template holds it.
+  # Deleting the stack takes a final snapshot instead of deleting the data.
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub farm2home-${Env}
+      Engine: postgres
+      EngineVersion: !Ref DbEngineVersion
+      AutoMinorVersionUpgrade: false
+      DBInstanceClass: !Ref DbInstanceClass
+      StorageType: gp3
+      AllocatedStorage: !Ref DbStorageGb
+      StorageEncrypted: true
+      MultiAZ: !Ref MultiAz
+      DBName: farm2home
+      MasterUsername: farm2home
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      DeletionProtection: !Ref DeletionProtection
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      EnableCloudwatchLogsExports: [postgresql]
+
+Outputs:
+  AppSecurityGroupId:
+    Value: !Ref AppSecurityGroup
+    Export: {Name: !Sub "farm2home-${Env}-AppSecurityGroupId"}
+  DbHost:
+    Value: !GetAtt Database.Endpoint.Address
+    Export: {Name: !Sub "farm2home-${Env}-DbHost"}
+  DbPort:
+    Value: !GetAtt Database.Endpoint.Port
+    Export: {Name: !Sub "farm2home-${Env}-DbPort"}
+  DbName:
+    Value: farm2home
+    Export: {Name: !Sub "farm2home-${Env}-DbName"}
+  DbSecretArn:
+    Description: Secrets Manager secret with the database's username and password, as JSON
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+    Export: {Name: !Sub "farm2home-${Env}-DbSecretArn"}
