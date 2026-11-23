@@ -3,7 +3,7 @@
  *
  * Used as the backend has them today: accounts (email codes, sessions, profile), cities, hubs, serviceability,
  * the shop's list per hub, reservations (hold, release), the bill for a hold, customer orders (place, list, read,
- * cancel) and farm supply (produce items, farms, listings).
+ * cancel), farm supply (produce items, farms, listings) and delivery (the agent's hub, duty and trip).
  */
 import { useSession } from '@/state/session';
 
@@ -12,9 +12,12 @@ import { aisleOf } from '@/features/catalogue/categories';
 import type { ApiClient } from './client';
 import { ApiError } from './errors';
 import type {
+  AgentHub,
+  AgentState,
   AuthSession,
   Bill,
   City,
+  DeliveryFailReason,
   Farm,
   Grade,
   Hold,
@@ -29,6 +32,9 @@ import type {
   QualityGrade,
   Role,
   Serviceability,
+  Trip,
+  TripStatus,
+  TripStopStatus,
   User,
 } from './types';
 
@@ -197,6 +203,46 @@ interface RawListing {
     remarks: string | null;
     checked_at: string;
   } | null;
+}
+
+interface RawAgentHub {
+  store_id: number;
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+interface RawTripStop {
+  order_id: string;
+  seq: number;
+  status: TripStopStatus;
+  crate_slot: string | null;
+  units: number;
+  address: { label: string; line: string; landmark: string | null; lat: number; lng: number };
+  customer: { name: string | null; phone: string | null };
+  failed_reason: DeliveryFailReason | null;
+  tries_left: number;
+}
+
+interface RawTrip {
+  trip_id: number;
+  status: TripStatus;
+  km: number;
+  created_at: string;
+  left_at: string | null;
+  done_at: string | null;
+  hub: RawAgentHub;
+  stops: RawTripStop[];
+}
+
+/** GET /v1/agent, and the answer to choosing a hub or changing duty. */
+interface RawAgentState {
+  user_id: number;
+  name: string | null;
+  hub: RawAgentHub | null;
+  on_duty: boolean;
+  trip: RawTrip | null;
+  waiting_at_hub: number;
 }
 
 // ---------------------------------------------------------------------- mapping
@@ -395,6 +441,44 @@ function toListing(raw: RawListing): Listing {
       remarks: raw.quality_check.remarks,
       checkedAt: raw.quality_check.checked_at,
     },
+  };
+}
+
+function toAgentHub(raw: RawAgentHub): AgentHub {
+  return { id: raw.store_id, name: raw.name, lat: raw.lat, lng: raw.lng };
+}
+
+function toTrip(raw: RawTrip): Trip {
+  return {
+    id: raw.trip_id,
+    status: raw.status,
+    km: raw.km,
+    createdAt: raw.created_at,
+    leftAt: raw.left_at,
+    doneAt: raw.done_at,
+    hub: toAgentHub(raw.hub),
+    stops: raw.stops.map((stop) => ({
+      orderId: stop.order_id,
+      seq: stop.seq,
+      status: stop.status,
+      crateSlot: stop.crate_slot,
+      units: stop.units,
+      address: stop.address,
+      customer: { name: stop.customer.name, phone: stop.customer.phone },
+      failedReason: stop.failed_reason,
+      triesLeft: stop.tries_left,
+    })),
+  };
+}
+
+function toAgentState(raw: RawAgentState): AgentState {
+  return {
+    userId: raw.user_id,
+    name: raw.name,
+    hub: raw.hub && toAgentHub(raw.hub),
+    onDuty: raw.on_duty,
+    trip: raw.trip && toTrip(raw.trip),
+    waitingAtHub: raw.waiting_at_hub,
   };
 }
 
@@ -638,5 +722,30 @@ export function createHttpClient(baseUrl: string): ApiClient {
 
     cancelListing: async (listingId) =>
       toListing(await request<RawListing>('POST', `/v1/listings/${listingId}/cancel`)),
+
+    getAgent: async () => toAgentState(await request<RawAgentState>('GET', '/v1/agent')),
+
+    chooseAgentHub: async (hubId) =>
+      toAgentState(await request<RawAgentState>('POST', '/v1/agent/hub', { body: { store_id: hubId } })),
+
+    setAgentDuty: async (onDuty) =>
+      toAgentState(await request<RawAgentState>('POST', '/v1/agent/duty', { body: { on_duty: onDuty } })),
+
+    loadBag: async (orderId) =>
+      toTrip(await request<RawTrip>('POST', `/v1/agent/trip/bags/${encodeURIComponent(orderId)}/load`)),
+
+    deliverOrder: async (orderId, code) =>
+      toTrip(
+        await request<RawTrip>('POST', `/v1/agent/trip/stops/${encodeURIComponent(orderId)}/deliver`, {
+          body: { code },
+        }),
+      ),
+
+    failDelivery: async (orderId, reason) =>
+      toTrip(
+        await request<RawTrip>('POST', `/v1/agent/trip/stops/${encodeURIComponent(orderId)}/fail`, {
+          body: { reason },
+        }),
+      ),
   };
 }

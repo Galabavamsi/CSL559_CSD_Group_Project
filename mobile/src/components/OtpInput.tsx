@@ -10,13 +10,28 @@ interface OtpInputProps {
   length?: number;
   hasError?: boolean;
   disabled?: boolean;
+  /** Open the keyboard as soon as the field shows. Right for a screen that is only about the code. */
+  autoFocus?: boolean;
+  /** Let the keyboard offer a code from a message that just arrived. Off for a code someone reads out. */
+  fromMessages?: boolean;
+  /** What the code is, for screen readers. */
+  accessibilityLabel?: string;
 }
 
 /**
  * A code field drawn as one box per digit. A single invisible text input sits on top of the boxes, so typing,
  * pasting and the keyboard's "code from your messages" suggestion all behave like a normal field.
  */
-export function OtpInput({ value, onChange, length = 6, hasError = false, disabled = false }: OtpInputProps) {
+export function OtpInput({
+  value,
+  onChange,
+  length = 6,
+  hasError = false,
+  disabled = false,
+  autoFocus = true,
+  fromMessages = true,
+  accessibilityLabel = `${length}-digit sign-in code`,
+}: OtpInputProps) {
   const { colors } = useAppTheme();
   const [focused, setFocused] = useState(false);
 
@@ -42,14 +57,14 @@ export function OtpInput({ value, onChange, length = 6, hasError = false, disabl
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         editable={!disabled}
-        autoFocus
+        autoFocus={autoFocus}
         keyboardType="number-pad"
         inputMode="numeric"
-        autoComplete="one-time-code"
-        textContentType="oneTimeCode"
+        autoComplete={fromMessages ? 'one-time-code' : 'off'}
+        textContentType={fromMessages ? 'oneTimeCode' : 'none'}
         maxLength={length}
         caretHidden
-        accessibilityLabel={`${length}-digit sign-in code`}
+        accessibilityLabel={accessibilityLabel}
         style={[StyleSheet.absoluteFill, styles.input]}
       />
     </View>

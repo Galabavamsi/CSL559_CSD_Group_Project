@@ -19,3 +19,13 @@ export function formatRupees(amount: number): string {
 export function formatKg(kilograms: number): string {
   return `${Math.round(kilograms * 10) / 10} kg`;
 }
+
+/** "6.4 km" or "12 km": at most one decimal, and none when it would be zero. */
+export function formatKm(kilometres: number): string {
+  return `${Math.round(kilometres * 10) / 10} km`;
+}
+
+/** A number with its noun: "1 bag", "3 bags", "1 try", "4 tries". */
+export function countOf(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`;
+}

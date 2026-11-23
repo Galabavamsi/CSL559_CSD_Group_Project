@@ -1,7 +1,9 @@
 import type {
+  AgentState,
   AuthSession,
   Bill,
   City,
+  DeliveryFailReason,
   Farm,
   Hold,
   HoldRequest,
@@ -19,6 +21,7 @@ import type {
   Role,
   Serviceability,
   ServiceRequestResult,
+  Trip,
   User,
 } from './types';
 
@@ -68,4 +71,16 @@ export interface ApiClient {
   /** `idempotencyKey`: any unique string per form; a retry with the same key lists the lot once. */
   createListing(listing: NewListing, idempotencyKey: string): Promise<Listing>;
   cancelListing(listingId: number): Promise<Listing>;
+
+  // Delivery (agents only)
+  getAgent(): Promise<AgentState>;
+  /** Only while off duty (`on_duty`). */
+  chooseAgentHub(hubId: number): Promise<AgentState>;
+  /** Going on duty needs a hub (`no_hub`); going off duty is refused during a trip (`on_a_trip`). */
+  setAgentDuty(onDuty: boolean): Promise<AgentState>;
+  /** Confirm one bag at the hub. The trip is "out" once every bag is confirmed. Safe to repeat. */
+  loadBag(orderId: string): Promise<Trip>;
+  /** Hand an order over against the four digits the customer reads out (`wrong_code`, `code_locked`). */
+  deliverOrder(orderId: string, code: string): Promise<Trip>;
+  failDelivery(orderId: string, reason: DeliveryFailReason): Promise<Trip>;
 }

@@ -3,7 +3,8 @@
  *
  * It keeps the rules of the real backend that the screens depend on: a cart is held whole or not at all, a hold
  * runs out and gives its stock back, paying takes the stock for good, and an order moves through its states as
- * time passes. Everything is forgotten when the app reloads.
+ * time passes. Farm supply and delivery have their own files (farms.ts, delivery.ts). Everything is forgotten
+ * when the app reloads.
  */
 import { MOCK_HOLD_SECONDS, MOCK_ORDER_STEP_SECONDS } from '@/config';
 import { computeBill } from '@/lib/bill';
@@ -39,6 +40,7 @@ import {
   MARKDOWN_FACTOR,
   MOCK_OTP_CODE,
 } from './data';
+import { createDeliveryMock } from './delivery';
 import { createFarmSupplyMock } from './farms';
 
 const OTP_TTL_SECONDS = 600;
@@ -566,5 +568,6 @@ export function createMockClient(): ApiClient {
       }),
 
     ...createFarmSupplyMock(currentUser, delay),
+    ...createDeliveryMock(currentUser, delay),
   };
 }
