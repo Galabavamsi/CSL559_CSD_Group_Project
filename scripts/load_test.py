@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     worst = max(r["p99_ms"] for r in rows if r["endpoint"] in READS)
     verdict = "meets" if worst < READ_TARGET_MS else "misses"
     print(f"\nRead p99 {worst} ms {verdict} the HLD target of {READ_TARGET_MS} ms. "
-          "This is one laptop and SQLite, not the HLD's cluster.")
+          "This is one machine, not the HLD's cluster.")
     return 0
 
 

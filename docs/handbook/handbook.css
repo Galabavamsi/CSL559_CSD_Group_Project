@@ -1,0 +1,101 @@
+/* Print stylesheet for the handbook. Rendered to PDF with a Chromium browser (see build.ps1). */
+:root {
+  --green: #2e7d32; --green-dark: #1b5e20; --green-bg: #e3f1e3;
+  --paper: #fbf7f0; --ink: #1f2a1f; --muted: #62665e; --line: #ddd7ca;
+  --amber: #8a5300; --amber-bg: #fdebc8; --grey-bg: #efece5; --red: #b3261e;
+}
+@page {
+  size: A4; margin: 16mm 14mm 17mm;
+  @bottom-left { content: "JustInTimeFarm2Home handbook, 23 November 2026"; font: 7.5pt "Segoe UI", sans-serif; color: #62665e; }
+  @bottom-right { content: counter(page); font: 8pt "Segoe UI", sans-serif; color: #62665e; }
+}
+@page :first { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html { font: 9.6pt/1.46 "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+body { margin: 0; }
+p { margin: 0 0 2.4mm; }
+a { color: var(--green-dark); text-decoration: none; }
+code { font: 8.4pt Consolas, monospace; background: var(--grey-bg); padding: 0 1mm; border-radius: 1mm; }
+pre { font: 8.2pt/1.45 Consolas, monospace; background: var(--grey-bg); padding: 2.5mm 3mm; border-radius: 2mm; margin: 0 0 3mm;
+      white-space: pre-wrap; break-inside: avoid; }
+pre code { background: none; padding: 0; }
+
+h1 { font-size: 21pt; line-height: 1.15; margin: 0 0 1.5mm; color: var(--green-dark); break-before: page; }
+h1 small { display: block; font-size: 8.5pt; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+           margin-bottom: 1.5mm; }
+.lede { font-size: 11pt; color: var(--muted); margin: 0 0 5mm; max-width: 160mm; }
+h2 { font-size: 12.5pt; margin: 6mm 0 2mm; break-after: avoid; }
+h3 { font-size: 10pt; margin: 4mm 0 1.2mm; break-after: avoid; }
+ul, ol { margin: 0 0 2.4mm; padding-left: 5mm; }
+li { margin-bottom: .9mm; }
+
+/* cover */
+.cover { height: 297mm; padding: 34mm 20mm 20mm; background: var(--paper); display: flex; flex-direction: column; break-after: page; }
+.cover .kicker { font-size: 9pt; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.cover .name { font-size: 40pt; font-weight: 800; line-height: 1.05; margin: 4mm 0 3mm; color: var(--ink); }
+.cover .name span { color: var(--green); }
+.cover .sub { font-size: 14pt; color: var(--muted); max-width: 150mm; }
+.cover .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; margin-top: 16mm; }
+.tile { background: #fff; border: .3mm solid var(--line); border-radius: 3mm; padding: 4mm; }
+.tile b { display: block; font-size: 19pt; line-height: 1.1; color: var(--green-dark); }
+.tile span { font-size: 8.3pt; color: var(--muted); }
+.cover .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5mm; margin-top: 12mm; }
+.cover .strip img { width: 100%; border-radius: 3.5mm; border: .3mm solid var(--line); aspect-ratio: 390 / 660; object-fit: cover; object-position: top; }
+.cover .foot span:first-child { white-space: nowrap; }
+.cover .foot { margin-top: auto; font-size: 8.5pt; color: var(--muted); display: flex; justify-content: space-between; gap: 12mm; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; margin: 0 0 4mm; font-size: 8.7pt; }
+th { text-align: left; font-weight: 600; color: var(--muted); border-bottom: .4mm solid var(--line); padding: 1.2mm 2mm 1.2mm 0; font-size: 8.2pt; }
+td { border-bottom: .2mm solid var(--line); padding: 1.3mm 2mm 1.3mm 0; vertical-align: top; }
+tr, table.keep { break-inside: avoid; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td b { font-weight: 600; }
+
+.tag { display: inline-block; font-size: 6.6pt; letter-spacing: .05em; text-transform: uppercase; padding: .3mm 1.7mm; border-radius: 2mm;
+       font-weight: 700; white-space: nowrap; }
+.tag.real { background: var(--green-bg); color: var(--green-dark); }
+.tag.demo { background: var(--amber-bg); color: var(--amber); }
+.tag.none { background: var(--grey-bg); color: var(--muted); }
+.tag.api { background: #dfe9f5; color: #1c4a80; }
+
+.box { border: .3mm solid var(--line); border-left: 1.2mm solid var(--green); border-radius: 2mm; padding: 3mm 4mm; margin: 0 0 4mm;
+       background: #fff; break-inside: avoid; }
+.box.warn { border-left-color: #c98a00; background: #fffaf0; }
+.box p:last-child, .box ul:last-child { margin-bottom: 0; }
+.box h3 { margin-top: 0; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+.two > * { min-width: 0; overflow-wrap: anywhere; }
+
+/* figures */
+figure { margin: 0; break-inside: avoid; }
+figcaption { font-size: 7.9pt; line-height: 1.35; color: var(--muted); margin-top: 1.5mm; }
+figcaption b { display: block; color: var(--ink); font-size: 8.4pt; font-weight: 600; }
+.phones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5mm; margin: 2mm 0 5mm; break-inside: avoid; }
+.phones.three { grid-template-columns: repeat(3, 1fr); padding: 0 22mm; }
+.phones img { width: 100%; display: block; border: .3mm solid var(--line); border-radius: 3.5mm; }
+.phones.short img { aspect-ratio: 390 / 512; object-fit: cover; object-position: top; }
+.wide { margin: 2mm 0 5mm; }
+.wide img { width: 100%; display: block; border: .3mm solid var(--line); border-radius: 2mm; }
+.wide.clip img { aspect-ratio: 16 / 9; object-fit: cover; object-position: top; }
+.diagram { margin: 2mm 0 4mm; break-inside: avoid; }
+.diagram svg { width: 100%; height: auto; display: block; }
+.step { display: grid; grid-template-columns: 9mm 1fr; gap: 0 3mm; margin: 5mm 0 1mm; break-after: avoid; }
+.step .n { width: 8mm; height: 8mm; border-radius: 50%; background: var(--green); color: #fff; font-weight: 700; font-size: 10.5pt;
+           display: flex; align-items: center; justify-content: center; }
+.step h2 { margin: .6mm 0 0; }
+.step p { grid-column: 2; margin: 1mm 0 0; }
+
+/* SVG text */
+svg text { font-family: "Segoe UI", system-ui, sans-serif; fill: #1f2a1f; }
+svg .t { font-size: 12px; font-weight: 600; }
+svg .s { font-size: 10.2px; fill: #62665e; }
+svg .k { font-size: 8.6px; font-weight: 700; letter-spacing: .06em; fill: #1b5e20; }
+svg .kn { font-size: 8.6px; font-weight: 700; letter-spacing: .06em; fill: #62665e; }
+svg .lane { font-size: 9px; font-weight: 700; letter-spacing: .1em; fill: #62665e; }
+svg .b { fill: #fff; stroke: #cfc8b8; stroke-width: 1; }
+svg .g { fill: #e3f1e3; stroke: #2e7d32; stroke-width: 1; }
+svg .d { fill: #f6f3ec; stroke: #9a968b; stroke-width: 1; stroke-dasharray: 4 3; }
+svg .zone { fill: #fbf7f0; stroke: #cfc8b8; stroke-width: 1; }
+svg .a { stroke: #62665e; stroke-width: 1.2; fill: none; marker-end: url(#arrow); }
+svg .w { fill: #fff; }

@@ -20,7 +20,7 @@ infra\test.ps1 -Ref f2h/some-branch
 ```
 
 Runs `infra/ci-test.sh` for that commit in CodeBuild: PostgreSQL with PostGIS in a container, the migration check,
-a syntax check of the demo pages' scripts, and the whole test suite. It takes about four minutes, prints the result,
+a syntax check of the demo pages' scripts, a type-check of the phone app, and the whole test suite. It takes about four minutes, prints the result,
 and sets a commit status in GitHub (through the `gh` CLI you are signed in to), so the commit's pull request shows
 a check named "tests (AWS CodeBuild)". A commit that already passed is not run again unless you add `-Rerun`.
 

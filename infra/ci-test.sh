@@ -57,5 +57,13 @@ else
   echo "node is not installed here: skipped"
 fi
 
-echo "=== 5. the test suite"
+echo "=== 5. the phone app type-checks"
+if [ -f mobile/package.json ]; then
+  (cd mobile && npm ci --no-audit --no-fund --loglevel=error && npx tsc --noEmit)
+  echo "type-check clean"
+else
+  echo "no phone app in this commit: skipped"
+fi
+
+echo "=== 6. the test suite"
 python -m pytest -q
