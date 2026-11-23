@@ -12,6 +12,7 @@ export interface PresetArea {
  */
 const AREAS_BY_CITY: Record<string, PresetArea[]> = {
   bhilai: [
+    { name: 'IIT Bhilai', lat: 21.2444, lng: 81.3176 },
     { name: 'Civic Centre', lat: 21.1938, lng: 81.3509 },
     { name: 'Supela', lat: 21.207, lng: 81.344 },
     { name: 'Nehru Nagar', lat: 21.209, lng: 81.326 },

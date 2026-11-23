@@ -561,6 +561,13 @@ export function createHttpClient(baseUrl: string): ApiClient {
     checkServiceability: async ({ lat, lng }) =>
       toServiceability(await request<RawServiceability>('GET', `/v1/serviceability?lat=${lat}&lng=${lng}`)),
 
+    requestService: async ({ lat, lng }, label) => {
+      const raw = await request<{ new: boolean; others_nearby: number }>('POST', '/v1/service-requests', {
+        body: { lat, lng, ...(label && { label }) },
+      });
+      return { isNew: raw.new, othersNearby: raw.others_nearby };
+    },
+
     listProducts: async (hubId) =>
       (await request<RawShopRow[]>('GET', `/v1/stores/${hubId}/shop`)).map(toProduct),
 

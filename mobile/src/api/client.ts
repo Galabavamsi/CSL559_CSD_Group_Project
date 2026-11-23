@@ -18,6 +18,7 @@ import type {
   ProfileChanges,
   Role,
   Serviceability,
+  ServiceRequestResult,
   User,
 } from './types';
 
@@ -39,6 +40,8 @@ export interface ApiClient {
   listCities(): Promise<City[]>;
   listHubs(citySlug?: string): Promise<Hub[]>;
   checkServiceability(point: LatLng): Promise<Serviceability>;
+  /** Ask for delivery at a place no hub serves. `label` is the area's name. Safe to repeat. */
+  requestService(point: LatLng, label: string | null): Promise<ServiceRequestResult>;
 
   // What a hub can deliver right now
   listProducts(hubId: number): Promise<Product[]>;

@@ -10,6 +10,7 @@ export const HUBS: Hub[] = [
   { id: 1, name: 'Civic Centre Hub', lat: 21.1938, lng: 81.3509, radiusKm: 4, status: 'open', city: 'bhilai' },
   { id: 2, name: 'Nehru Nagar Hub', lat: 21.209, lng: 81.326, radiusKm: 3, status: 'open', city: 'bhilai' },
   { id: 3, name: 'Durg Hub', lat: 21.1904, lng: 81.2849, radiusKm: 3, status: 'open', city: 'bhilai' },
+  { id: 8, name: 'IIT Bhilai Hub', lat: 21.24, lng: 81.317, radiusKm: 3, status: 'open', city: 'bhilai' },
   { id: 4, name: 'MG Road Hub', lat: 12.9716, lng: 77.5946, radiusKm: 3.5, status: 'open', city: 'bangalore' },
   { id: 5, name: 'Indiranagar Hub', lat: 12.9719, lng: 77.6412, radiusKm: 3, status: 'open', city: 'bangalore' },
   { id: 6, name: 'Koramangala Hub', lat: 12.9352, lng: 77.6245, radiusKm: 4, status: 'open', city: 'bangalore' },

@@ -158,6 +158,29 @@ An agent's position is not read when they are off a trip, and a customer sees it
 it is out for delivery. Reading location in the background needs a native build and a stronger permission; the
 agent keeps the app open instead, and the screen says so.
 
+### 1.5 Decision: where nobody delivers, the customer can ask, and the asking is counted
+
+**What.** An address no hub serves used to end the conversation: "not in our delivery area yet". Now the same
+screen offers "Request delivery here". The request (`POST /v1/service-requests`) is kept as the customer and the
+H3 cell, never the exact point, and one customer asking twice from the same cell is one request. The answer says
+how many neighbours within about a kilometre have asked too.
+
+**Why.** Planning already counts every lookup that was turned away, and suggests new hubs where those pile up. A
+lookup is weak evidence: someone was curious. A person who then taps a button is saying they would order. So a
+request counts as five turned-away lookups (`SERVICE_REQUEST_WEIGHT`) in the same calculation, and the planning
+map shows requests beside lookups. The owner asked for this on 24 November: a customer outside every zone should
+be able to say so.
+
+**Why the cell and not the address.** The same rule as for a turned-away lookup (section 1.4): planning needs to
+know which neighbourhood, and nothing here needs the door.
+
+**Considered and not taken.** Promising a date, or telling the customer when a hub opens. Nothing in the system
+knows that, and a notification system does not exist. The screen says only what is true: the request is counted.
+
+**Costs.** The weight of five is a guess; nothing measures how many requesters go on to order. The count of
+neighbours leaks a little: someone who asks from many places learns where others asked. It is a count within a
+kilometre, with no names, and asking needs a sign-in.
+
 ## 2. Orders as records on the server
 
 ### 2.1 What exists
@@ -493,6 +516,47 @@ would test the model. The scripted pickers that exist already do it this way.
 
 **Costs.** Compressed time hides real picking and driving speeds, so those are inputs to the run, stated beside
 the results.
+
+### 8.1 Decision: demo farms keep a hosted demo's shelves stocked, through the ordinary intake
+
+**What.** With `DEMO_SUPPLY` on, a job looks every half hour at each hub in a city that has demo farms. For each
+produce item the hub has fewer than six units of, one lot arrives from a demo farm: a listing, the hub's weighing
+and grading, packing into units, and putaway bin by bin, by the same functions a receiver's phone calls. An admin
+can ask for it at once (`POST /v1/admin/demo-supply`). It is off for the tests and for the recorded demo.
+
+**Why.** A hub sells only what a farm has brought, so the hubs opened for Bhilai showed an empty shop to the first
+person who looked, which was the owner, on a phone, on 24 November. Asking every visitor to play farmer and
+receiver before they may see a product is not a demo.
+
+**Why through the intake and not written onto the shelf.** Stock written straight into the tables would have no
+listing, no quality check and no farm, so the shop could not say where a pack came from, and that sentence is the
+product. It would also be a second way for stock to appear, which is a second thing to keep honest. Going through
+the intake costs nothing extra and the audit of stock treats these lots like any other.
+
+**Why spinach comes a day old.** It keeps two days, so a day-old lot is in its last day tomorrow and the shop
+always has one item at the rescue price to show.
+
+**The farms are not real** and say so: one account, `demo-farms@farm2home.invalid`, owns them. `.invalid` can
+never receive mail, and the sign-in now refuses to make a code for such an address, so nobody can become that
+farmer.
+
+**Costs.** A real farmer's lot now arrives at a hub that already has that item, so the story "the shop was empty
+until the farmer listed" is no longer what staging shows; the recorded demo still shows it. Two app instances
+could both top up, so one runs at a time, by a database lock.
+
+### 8.2 Decision: a hub at IIT Bhilai
+
+**What.** A fourth demo hub, BH-04 IIT Bhilai, about half a kilometre from the permanent campus at Kutelabhata
+(found with Amazon Location: 21.2444 N, 81.3176 E). "IIT Bhilai" is the first area offered in the app for the
+city.
+
+**Why.** The campus is 4 km from the nearest hub, Nehru Nagar, and a hub serves 3 km, so the place the demo will
+be given from was outside every zone. **Why a new hub and not a wider radius.** The radius is the promise of a
+short ride; widening one hub's to reach one more address would quietly break it for everyone at the edge.
+
+**How it reaches a copy that is already running.** The demo hubs used to be opened only when the city had none.
+Each is now opened if it is missing, so staging, which has three, gets the fourth when it next starts, and the
+other three keep every place that is nearer to them.
 
 ## 9. Order of work
 

@@ -92,6 +92,13 @@ export function useServiceability(point: LatLng | null) {
   });
 }
 
+/** Ask for delivery at a place no hub serves. */
+export function useRequestService() {
+  return useMutation({
+    mutationFn: ({ point, label }: { point: LatLng; label: string | null }) => api.requestService(point, label),
+  });
+}
+
 // ---------------------------------------------------------------------- catalogue
 
 export function useProducts(hubId: number | null) {
