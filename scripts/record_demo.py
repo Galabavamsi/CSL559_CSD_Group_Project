@@ -60,6 +60,14 @@ def shot(page: Page, name: str) -> None:
     page.screenshot(path=str(SHOTS / f"{name}.png"))
 
 
+def see(page: Page, text, exact: bool = False):
+    """Wait until this text is on screen and return it. The app keeps the screens it has left in the page, hidden,
+    so a text can be there more than once: only what is visible counts."""
+    target = page.get_by_text(text, exact=exact).locator("visible=true").first
+    target.wait_for()
+    return target
+
+
 def api(method: str, path: str, body: dict | None = None, token: str | None = None) -> dict | list:
     request = urllib.request.Request(API_URL + path, method=method,
                                      data=json.dumps(body).encode() if body is not None else None,
@@ -82,7 +90,7 @@ def code_for(email: str, after: int) -> str:
 
 def sign_in(page: Page, clip: str, base: str, email: str, role: str, real: bool = True) -> None:
     page.goto(base + "/")
-    page.get_by_text("Send sign-in code").wait_for()
+    see(page, "Send sign-in code")
     page.wait_for_timeout(1000)
     if role != "Customer":
         page.get_by_role("radio", name=role).click()
@@ -90,8 +98,8 @@ def sign_in(page: Page, clip: str, base: str, email: str, role: str, real: bool 
     page.locator("input").first.fill(email)
     page.wait_for_timeout(PAUSE * 1000)
     mark = len(pathlib.Path(API_LOG).read_text(errors="ignore")) if real else 0
-    page.get_by_text("Send sign-in code").click()
-    page.get_by_text("Enter your code").wait_for()
+    see(page, "Send sign-in code").click()
+    see(page, "Enter your code")
     code = code_for(email, mark) if real else "123456"
     say(clip, "A six-digit code arrives by email and is typed in" if real else "On demo data the code is 123456")
     page.wait_for_timeout(PAUSE * 1000)
@@ -119,59 +127,56 @@ def finish(context, clip: str) -> None:
 
 # --------------------------------------------------------------------------- the farmer
 
-def farmer_lists(browser) -> int:
+def farmer_lists(browser) -> None:
     clip = "1-farmer"
     context, page = new_phone(browser, clip, geolocation=FARM, permissions=["geolocation"])
     sign_in(page, clip, APP_URL, FARMER, "Farmer")
-    page.get_by_text("Add your farm first").wait_for()
+    see(page, "Add your farm first")
     shot(page, "farmer-home-empty")
     say(clip, "A new farmer has no farm yet")
     page.wait_for_timeout(PAUSE * 1000)
 
-    page.get_by_text("Add farm").first.click()
-    page.get_by_text("Farm name").wait_for()
+    see(page, "Add farm").click()
+    see(page, "Farm name")
     page.locator("input").first.fill("Green Acres")
     say(clip, "The farm is registered where the farmer stands; a rough GPS fix is refused")
-    page.get_by_text("Read my location").click()
-    page.get_by_text("Read my location again").wait_for()
+    see(page, "Read my location").click()
+    see(page, "Read my location again")
     shot(page, "farmer-add-farm")
     page.wait_for_timeout(PAUSE * 1000)
-    page.get_by_text("Save farm").click()
-    page.get_by_text("Green Acres").first.wait_for()
+    see(page, "Save farm").click()
+    see(page, "Green Acres")
     page.wait_for_timeout(PAUSE * 1000)
     shot(page, "farmer-home-farm")
 
     say(clip, "Listing produce: 40 kg of tomatoes, harvested today")
-    page.get_by_role("button", name="List produce").first.click()
-    page.get_by_text("What are you listing?").wait_for()
-    page.get_by_text("Tomato", exact=True).first.click()
-    inputs = page.locator("input")
+    page.get_by_role("button", name="List produce").locator("visible=true").first.click()
+    see(page, "What are you listing?")
+    page.get_by_role("radio", name="Tomato", exact=True).locator("visible=true").first.click()
+    inputs = page.locator("input >> visible=true")
     inputs.nth(0).fill("40")
     inputs.nth(1).fill("18")
     page.wait_for_timeout(PAUSE * 1000)
     shot(page, "farmer-list-produce")
-    page.get_by_role("button", name="List produce").last.click()
-    page.get_by_text("Where and when to drop it").wait_for()
+    page.get_by_role("button", name="List produce").locator("visible=true").last.click()
+    see(page, "Where and when to drop it")
     say(clip, "The nearest hub with room is chosen (PostGIS), with a morning drop slot")
     shot(page, "farmer-listing-made")
     page.wait_for_timeout(PAUSE * 2500)
-    page.get_by_text("Back to my listings").click()
-    page.get_by_text("My listings").wait_for()
+    see(page, "Back to my listings").click()
+    page.get_by_role("heading", name="My listings").locator("visible=true").first.wait_for()
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "farmer-listings")
     finish(context, clip)
-    staff = api("POST", "/v1/auth/login", {"username": "receiver1", "password": "demo"})["access_token"]
-    return api("GET", "/v1/stores/1/expected-drops", token=staff)[0]["listing_id"]
 
 
 def farmer_sees_result(browser) -> None:
     clip = "5-farmer-result"
     context, page = new_phone(browser, clip)
     sign_in(page, clip, APP_URL, FARMER, "Farmer")
-    page.get_by_text("My listings").wait_for()
+    page.get_by_role("heading", name="My listings").locator("visible=true").first.wait_for()
     say(clip, "Back on the farmer's phone: the hub's grade, and the kilograms accepted and rejected")
-    page.get_by_text("Accepted").first.wait_for()
-    page.get_by_text("Accepted").first.scroll_into_view_if_needed()
+    see(page, "Accepted").scroll_into_view_if_needed()
     page.wait_for_timeout(PAUSE * 2500)
     shot(page, "farmer-listing-graded")
     finish(context, clip)
@@ -185,7 +190,7 @@ def hub_takes_in(browser, listing_id: int) -> None:
     started[clip] = time.monotonic()
     page = context.new_page()
     page.goto(API_URL + "/")
-    page.get_by_text("Check delivery").first.wait_for()
+    page.locator("#check-location").wait_for()
     page.wait_for_timeout(1500)
     say(clip, "The hub's desk before the lot arrives: no tomatoes in stock")
     shot(page, "hub-desk-before")
@@ -263,15 +268,15 @@ def customer_orders(browser) -> None:
     clip = "3-customer"
     context, page = new_phone(browser, clip)
     sign_in(page, clip, APP_URL, CUSTOMER, "Customer")
-    page.get_by_text("Delivery location").first.wait_for()
-    shot(page, "customer-verify-done")
+    see(page, "Delivery location")
+    shot(page, "customer-location-empty")
     say(clip, "Where to deliver: the hub whose zone covers the address serves it")
     page.get_by_role("radio", name="Bangalore").click()
-    page.get_by_text("MG Road").first.click()
-    page.get_by_text("Deliver here").wait_for()
+    page.get_by_role("radio", name="MG Road, Bangalore").click()
+    see(page, "Deliver here")
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-location")
-    page.get_by_text("Deliver here").click()
+    see(page, "Deliver here").click()
 
     page.get_by_label(re.compile(r"^Add Tomato")).first.wait_for()
     page.wait_for_timeout(1500)
@@ -283,24 +288,24 @@ def customer_orders(browser) -> None:
     shot(page, "customer-home-tomato")
     add.click()
     page.wait_for_timeout(700)
-    more = page.get_by_label(re.compile(r"(one more|Add one|Increase|more Tomato)", re.I))
+    more = page.get_by_label(re.compile(r"^Add one more Tomato"))
     if more.count():
         more.first.click()
     page.wait_for_timeout(PAUSE * 1000)
     shot(page, "customer-home-added")
     page.get_by_label(re.compile(r"^View cart")).click()
-    page.get_by_text(re.compile(r"^Hold my items")).wait_for()
+    see(page, re.compile(r"^Hold my items"))
     say(clip, "Holding the cart sets the items aside at the hub for 10 minutes: whole cart or nothing")
     shot(page, "customer-cart")
     page.wait_for_timeout(PAUSE * 1500)
-    page.get_by_text(re.compile(r"^Hold my items")).click()
-    page.get_by_text("Your items are held").wait_for()
-    page.locator("input").first.fill("12 Lake Road, MG Road")
+    see(page, re.compile(r"^Hold my items")).click()
+    see(page, "Your items are held")
+    page.locator("input >> visible=true").first.fill("12 Lake Road, MG Road")
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-checkout")
     say(clip, "Paying confirms the order; an unpaid hold expires and gives the stock back")
-    page.get_by_text(re.compile(r"^Pay ")).click()
-    page.get_by_text("Progress").wait_for()
+    see(page, re.compile(r"^Pay ")).click()
+    see(page, "Progress")
     page.wait_for_timeout(PAUSE * 2000)
     shot(page, "customer-order-confirmed")
     say(clip, "The order is confirmed and waits for a picker at the hub")
@@ -313,13 +318,12 @@ def customer_sees_packed(browser) -> None:
     clip = "6-customer-packed"
     context, page = new_phone(browser, clip, storage_state=str(OUT / "customer-state.json"))
     page.goto(APP_URL + "/")
-    page.get_by_text("Orders").first.wait_for()
-    page.get_by_text("Orders").first.click()
+    page.get_by_role("tab", name="Orders").click()
     page.wait_for_timeout(1500)
     say(clip, "Back on the customer's phone, the order now reads Packed")
     shot(page, "customer-orders")
-    page.get_by_text(re.compile(r"^Order ")).first.click()
-    page.get_by_text("Progress").wait_for()
+    page.get_by_role("button", name=re.compile(r"^Order ")).first.click()
+    see(page, "Progress")
     page.wait_for_timeout(PAUSE * 2500)
     shot(page, "customer-order-packed")
     say(clip, "Pooling, the delivery agent and the door-step code come next: not built yet")
@@ -333,10 +337,11 @@ def on_demo_data(browser) -> None:
     clip = "7-demo-data"
     context, page = new_phone(browser, clip)
     sign_in(page, clip, MOCK_URL, "demo@example.com", "Customer", real=False)
-    page.get_by_text("Delivery location").first.wait_for()
-    page.get_by_text("Supela").first.click()
-    page.get_by_text("Deliver here").click()
-    page.get_by_text("Rescue deals").wait_for()
+    see(page, "Delivery location")
+    page.get_by_role("radio", name="Bhilai").click()
+    page.get_by_role("radio", name="Supela, Bhilai").click()
+    see(page, "Deliver here").click()
+    see(page, "Rescue deals")
     page.wait_for_timeout(1500)
     say(clip, "DEMO DATA from here: the screens for what the backend does not have yet")
     shot(page, "mock-home")
@@ -344,21 +349,21 @@ def on_demo_data(browser) -> None:
     page.get_by_label(re.compile(r"^Add Brinjal")).first.click()
     page.get_by_label(re.compile(r"^Add Sweet corn")).first.click()
     page.wait_for_timeout(PAUSE * 800)
-    page.get_by_text("Tomato", exact=True).first.click()
+    page.get_by_role("button", name=re.compile(r"^Tomato")).first.click()
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "mock-product")
     page.go_back()
     page.get_by_label(re.compile(r"^View cart")).click()
-    page.get_by_text(re.compile(r"^Hold my items")).click()
-    page.get_by_text("Your items are held").wait_for()
-    page.locator("input").first.fill("12 Lake Road")
+    see(page, re.compile(r"^Hold my items")).click()
+    see(page, "Your items are held")
+    page.locator("input >> visible=true").first.fill("12 Lake Road")
     shot(page, "mock-checkout")
-    page.get_by_text(re.compile(r"^Pay ")).click()
-    page.get_by_text("Delivery code").wait_for()
+    see(page, re.compile(r"^Pay ")).click()
+    see(page, "Delivery code")
     say(clip, "Order tracking, with the code the customer reads to the delivery agent at the door")
     page.wait_for_timeout(PAUSE * 2000)
     shot(page, "mock-order-placed")
-    page.get_by_text("Out for delivery").first.wait_for()
+    see(page, "Out for delivery")
     page.wait_for_timeout(28_000)                                       # the mock moves an order on every few seconds
     shot(page, "mock-order-moving")
     page.wait_for_timeout(PAUSE * 1500)
@@ -372,27 +377,64 @@ def on_demo_data(browser) -> None:
     context.close()
 
 
+def expected_listing() -> int:
+    staff = api("POST", "/v1/auth/login", {"username": "receiver1", "password": "demo"})["access_token"]
+    return api("GET", "/v1/stores/1/expected-drops", token=staff)[0]["listing_id"]
+
+
+def run(browser, stage, *args) -> bool:
+    """Run one stage. If it fails, keep a picture and the words of the screen it failed on, and say so; the stages
+    after it still run, so one run shows every fault and not only the first."""
+    try:
+        stage(browser, *args)
+        return True
+    except Exception as error:                                          # noqa: BLE001 (a recorder, not the app)
+        print(f"FAILED {stage.__name__}: {str(error).splitlines()[0][:300]}", flush=True)
+        for context in browser.contexts:
+            for page in context.pages:
+                try:
+                    page.screenshot(path=str(SHOTS / f"FAILED-{stage.__name__}.png"))
+                    (OUT / f"FAILED-{stage.__name__}.txt").write_text(
+                        f"{error}\n\n{page.url}\n\n" + page.locator("body").inner_text(timeout=3000))
+                except Exception:                                       # noqa: BLE001
+                    pass
+            context.close()
+        return False
+
+
 def main() -> None:
     SHOTS.mkdir(parents=True, exist_ok=True)
     VIDEO.mkdir(parents=True, exist_ok=True)
     started["x"] = time.monotonic()
     only = set(sys.argv[2:])
+    stages, failed = [], []
+    if not only or "real" in only:
+        stages += [(farmer_lists,), (hub_takes_in, expected_listing), (customer_orders,), (hub_picks,),
+                   (farmer_sees_result,), (customer_sees_packed,), (hub_screens,)]
+    if not only or "mock" in only:
+        stages += [(on_demo_data,)]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(args=["--disable-web-security", "--use-fake-ui-for-media-stream"])
-        if not only or "real" in only:
-            listing_id = farmer_lists(browser)
-            hub_takes_in(browser, listing_id)
-            customer_orders(browser)
-            hub_picks(browser)
-            farmer_sees_result(browser)
-            customer_sees_packed(browser)
-            hub_screens(browser)
-        if not only or "mock" in only:
-            on_demo_data(browser)
+        for stage, *needs in stages:
+            try:
+                args = [need() for need in needs]
+            except Exception as error:                                  # noqa: BLE001
+                print(f"FAILED before {stage.__name__}: {error}", flush=True)
+                failed.append(stage.__name__)
+                continue
+            if not run(browser, stage, *args):
+                failed.append(stage.__name__)
         browser.close()
+    for leftover in VIDEO.iterdir():                                    # a failed stage's half-recorded clip
+        if leftover.is_dir():
+            for part in leftover.iterdir():
+                part.unlink()
+            leftover.rmdir()
     (OUT / "captions.json").write_text(json.dumps(captions, indent=1))
     print("clips:", sorted(p.name for p in VIDEO.glob("*.webm")))
     print("shots:", len(list(SHOTS.glob("*.png"))))
+    if failed:
+        raise SystemExit(f"failed stages: {', '.join(failed)}")
 
 
 if __name__ == "__main__":

@@ -24,17 +24,19 @@ if [ "${1:-}" != "mock" ]; then
   DARKSTORE_DB=$DB $PY scripts/generate_sales.py 2>&1 | tail -1
   DARKSTORE_DB=$DB $PY scripts/generate_demand.py 2>&1 | tail -1
   echo "=== the phone app's web builds"
-  (cd mobile && npm ci --no-audit --no-fund --loglevel=error >/dev/null 2>&1
-   npx expo export --platform web --output-dir dist-mock 2>&1 | tail -1
-   EXPO_PUBLIC_API_URL=http://127.0.0.1:8000 npx expo export --platform web --output-dir dist-real 2>&1 | tail -1)
+  if [ "${BUILD:-1}" = 1 ]; then      # BUILD=0 keeps the builds from the last run
+    (cd mobile && npm ci --no-audit --no-fund --loglevel=error >/dev/null 2>&1
+     npx expo export --platform web --output-dir dist-mock 2>&1 | tail -1
+     EXPO_PUBLIC_API_URL=http://127.0.0.1:8000 npx expo export --platform web --output-dir dist-real 2>&1 | tail -1)
+  fi
   nohup python3 -m http.server 8090 --directory mobile/dist-real >/dev/null 2>&1 &
   nohup python3 -m http.server 8091 --directory mobile/dist-mock >/dev/null 2>&1 &
   sleep 2
 fi
 
 echo "=== recording"
-$PY scripts/record_demo.py $OUT ${1:+$1} 2>&1 | tail -40
-status=$?
+$PY scripts/record_demo.py $OUT ${1:+$1} 2>&1 | tail -60
+status=${PIPESTATUS[0]}
 echo "=== composing"
 $PY scripts/compose_demo.py $OUT 2>&1 | tail -5
 if [ -n "${ARTIFACTS:-}" ]; then
