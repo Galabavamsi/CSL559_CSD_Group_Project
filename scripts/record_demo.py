@@ -309,7 +309,7 @@ def customer_orders(browser) -> None:
     page.wait_for_timeout(PAUSE * 1500)
     shot(page, "customer-checkout")
     say(clip, "Paying confirms the order; an unpaid hold expires and gives the stock back")
-    page.get_by_role("button", name=re.compile(r"^Pay ")).click()
+    see(page, re.compile(r"^Pay\s*₹")).click()                  # not "Pay before the clock runs out"
     see(page, "Progress")
     page.wait_for_timeout(PAUSE * 2000)
     shot(page, "customer-order-confirmed")
@@ -363,7 +363,7 @@ def on_demo_data(browser) -> None:
     see(page, "Your items are held")
     page.locator("input >> visible=true").first.fill("12 Lake Road")
     shot(page, "mock-checkout")
-    page.get_by_role("button", name=re.compile(r"^Pay ")).click()
+    see(page, re.compile(r"^Pay\s*₹")).click()                  # not "Pay before the clock runs out"
     see(page, "Delivery code")
     say(clip, "Order tracking, with the code the customer reads to the delivery agent at the door")
     page.wait_for_timeout(PAUSE * 2000)
