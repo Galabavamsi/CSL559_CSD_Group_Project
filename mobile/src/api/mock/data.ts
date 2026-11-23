@@ -2,7 +2,7 @@
 import type { City, Grade, Hub } from '../types';
 
 export const CITIES: City[] = [
-  { slug: 'bhilai', name: 'Bhilai', tier: 2, lat: 21.1938, lng: 81.3509, radiusKm: 8, hubRadiusKm: 3, hubs: 3 },
+  { slug: 'bhilai', name: 'Bhilai', tier: 2, lat: 21.1938, lng: 81.3509, radiusKm: 8, hubRadiusKm: 3, hubs: 4 },
   { slug: 'bangalore', name: 'Bangalore', tier: 1, lat: 12.9716, lng: 77.5946, radiusKm: 18, hubRadiusKm: 2, hubs: 4 },
 ];
 

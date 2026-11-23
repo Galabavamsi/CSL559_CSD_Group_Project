@@ -20,7 +20,37 @@ const KNOWN: Category[] = [
   { slug: 'leafy-greens', label: 'Leafy greens', icon: 'leaf', tile: 'leafyGreens' },
   { slug: 'fruits', label: 'Fruits', icon: 'food-apple', tile: 'fruits' },
   { slug: 'herbs', label: 'Herbs', icon: 'sprout', tile: 'herbs' },
+  { slug: 'dairy', label: 'Dairy', icon: 'cow', tile: 'other' },
+  { slug: 'bakery-eggs', label: 'Bread and eggs', icon: 'bread-slice-outline', tile: 'other' },
+  { slug: 'staples', label: 'Rice, flour and oil', icon: 'rice', tile: 'other' },
+  { slug: 'snacks-tea', label: 'Snacks and tea', icon: 'cookie-outline', tile: 'other' },
+  { slug: 'frozen', label: 'Frozen', icon: 'snowflake', tile: 'other' },
+  { slug: 'personal-care', label: 'Personal care', icon: 'hand-wash-outline', tile: 'other' },
 ];
+
+/**
+ * The hub files packaged goods under what can stand in for what (milk, curd, rice...), which is finer than a
+ * shop's aisles. This puts each of those under the aisle a customer would look in.
+ */
+const AISLE_OF: Record<string, string> = {
+  milk: 'dairy',
+  curd: 'dairy',
+  paneer: 'dairy',
+  bakery: 'bakery-eggs',
+  eggs: 'bakery-eggs',
+  rice: 'staples',
+  flour: 'staples',
+  sugar: 'staples',
+  oil: 'staples',
+  beverages: 'snacks-tea',
+  noodles: 'snacks-tea',
+  chips: 'snacks-tea',
+};
+
+/** The shop category for a category slug as the API files it. */
+export function aisleOf(slug: string): string {
+  return AISLE_OF[slug] ?? slug;
+}
 
 function titleCase(slug: string): string {
   const words = slug.replace(/-/g, ' ').trim();

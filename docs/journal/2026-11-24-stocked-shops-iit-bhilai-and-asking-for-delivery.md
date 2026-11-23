@@ -3,7 +3,7 @@
 *24 November 2026. The owner signed in on a phone against staging, chose Bhilai, and found a shop with nothing in
 it. The same hour: IIT Bhilai, where the demo will be given, was outside every hub's zone; a customer outside a
 zone had no way to say so; and some items showed an icon where a photograph should be. This entry covers what was
-built for the first three, and a fault in what the server takes "today" to be. The photographs follow.*
+built for each, and a fault in what the server takes "today" to be.*
 
 ## Context
 
@@ -22,6 +22,7 @@ does with the app is open the shop.
 | Planning | A request counts as five turned-away lookups; the map and its totals show requests |
 | The app's location screen | "Request delivery here" where nobody serves, then how many neighbours asked; IIT Bhilai is the first area |
 | `app/clock.py` | The one place that answers "what is the date": India's date, not the server's |
+| Photographs and aisles | One photograph for each of the 15 packaged items; those items sit under six shop aisles instead of fifteen one-item groups |
 
 ## Decisions, and why
 
@@ -66,9 +67,9 @@ the tests, which run in UTC, testing something else.
 
 - **Delivery itself.** An order still stops at Packed. Agents, trips and the door-step code (design section 4)
   are the next thing to build.
-- **Photographs for the 15 packaged items** (milk, rice, bread and so on), which still show an icon. They are
-  being chosen from Wikimedia Commons, by licence and by eye, and follow as a change of their own. Every kind of
-  produce already has one.
+- The photograph for sunflower oil is of olive oil in a plain bottle: no unbranded sunflower oil picture under
+  an open licence was good enough. Eight of the new photographs are CC BY, so the credits in `mobile/ASSETS.md`
+  have to be shown in the app before any public release, as that file already says.
 - Staging's shops show demo farms' lots, so the story "empty until the farmer lists" is now only in the recorded
   demo.
 - The weight of five for a request is a guess.
@@ -78,4 +79,7 @@ the tests, which run in UTC, testing something else.
 
 - Amazon Location Service, place search for "IIT Bhilai" (run on 24 November 2026 with the project's login): the
   permanent campus at Kutelabhata, 21.2444 N, 81.3176 E.
+- Wikimedia Commons, for the photographs: public domain, CC0 or CC BY only, chosen by eye from the 500 px
+  renditions; each one's author, licence and page is in `mobile/ASSETS.md`. Five of the fifteen licences were read
+  again from the Commons API after the choice was made.
 - IETF, RFC 2606, "Reserved Top Level DNS Names" (`.invalid`): https://www.rfc-editor.org/rfc/rfc2606
