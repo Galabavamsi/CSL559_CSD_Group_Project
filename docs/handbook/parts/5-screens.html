@@ -1,0 +1,51 @@
+<h1><small>5 · The other screens</small>What else there is to look at</h1>
+<p class="lede">First the hub manager's pages, which are real. Then the phone screens that are finished but still
+  run on data built into the app, marked as such.</p>
+
+<h2>The hub manager's pages <span class="tag real">Real backend</span></h2>
+<figure class="wide"><img src="shots/hub-ops-dashboard.png" alt="" style="aspect-ratio: 1920 / 1330; object-fit: cover; object-position: top">
+  <figcaption><b>Ops dashboard.</b> What needs action now comes first, then every KPI beside its target, then a live
+    feed of the hub's events. A KPI with nothing to measure yet says so and is not shown as met. The picking numbers here come from the one
+    recorded order, scanned by a script in seconds: they show the page working, not a real picker's pace.</figcaption></figure>
+<div class="two">
+  <figure class="wide"><img src="shots/hub-network-map.png" alt="" style="aspect-ratio: 16 / 10; object-fit: cover; object-position: top left">
+    <figcaption><b>Network map.</b> Blue rings are the two hubs' delivery zones. Red cells are addresses nobody
+      could serve. The dashed rings are where a new hub would win back the most of them. Map © OpenStreetMap
+      contributors.</figcaption></figure>
+  <figure class="wide"><img src="shots/api-docs.png" alt="" style="aspect-ratio: 16 / 10; object-fit: cover; object-position: top left">
+    <figcaption><b>API reference.</b> Every endpoint, generated from the code, with its inputs and its refusals.
+      The phone app and the hub's pages use nothing else.</figcaption></figure>
+</div>
+
+<h2 style="break-before: page">The phone app on demo data <span class="tag demo">Demo data</span></h2>
+<p>These screens are finished and wait for the backend. What they show comes from data built into the app: a hold
+  that expires, orders that move through their stages by the clock, lots that get graded after a while. None of it
+  reaches a server.</p>
+<div class="phones">
+  <figure><img src="shots/mock-home.png" alt=""><figcaption><b>Shop, with rescue deals</b>Produce on its last day of freshness at a lower price. Grade and harvest day on every tile.</figcaption></figure>
+  <figure><img src="shots/mock-product.png" alt=""><figcaption><b>Where a pack came from</b>The farm, the hub that graded it, and what the grade means.</figcaption></figure>
+  <figure><img src="shots/mock-order-placed.png" alt=""><figcaption><b>An order with its door-step code</b>The customer reads the code to the agent at hand-over.</figcaption></figure>
+  <figure><img src="shots/mock-order-moving.png" alt=""><figcaption><b>Pooled with the neighbours</b>A stage after Packed, which the backend does not have.</figcaption></figure>
+</div>
+<div class="two">
+  <div>
+    <h2>The delivery agent <span class="tag none">Not built</span></h2>
+    <p>An agent can sign in, and that is all. An agent's account is created by the platform team and never by
+      signing up, because an agent sees customers' addresses. The trips, the route, the hand-over against the
+      customer's code and live location are the next large piece of work.</p>
+    <h2>How the app is made</h2>
+    <ul>
+      <li><b>One app, three roles.</b> The account's role decides the home screen.</li>
+      <li><b>One interface, two back ends.</b> Every screen talks to one typed client. Given the server's address it
+        is the real API; without one it is the built-in demo data. That is why unfinished parts of the backend
+        already have screens.</li>
+      <li><b>Material Design 3</b>, light and dark, one open-licence typeface, an original logo, and a real
+        photograph for each kind of produce, all openly licensed.</li>
+      <li><b>The session is kept in the phone's secure store</b> and renewed before it runs out.</li>
+    </ul>
+  </div>
+  <div class="phones" style="grid-template-columns: 1fr 1fr; margin-top: 4mm">
+    <figure><img src="shots/agent-placeholder.png" alt=""><figcaption><b>The agent's screen today</b>It explains a delivery run. No batch ever arrives.</figcaption></figure>
+    <figure><img src="shots/mock-checkout.png" alt=""><figcaption><b>Checkout on demo data</b>The same hold and clock as the real one.</figcaption></figure>
+  </div>
+</div>

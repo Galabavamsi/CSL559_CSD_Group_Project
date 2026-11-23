@@ -1,0 +1,69 @@
+<h1><small>2 · Status</small>What works today</h1>
+<p class="lede">Three states, and nothing in between. "Real" runs on the backend with tests. "Demo data" is a finished
+  screen fed by data built into the app. "Not built" is not built.</p>
+
+<table>
+  <tr><th style="width:36%">Part</th><th style="width:14%">State</th><th>What that means today</th></tr>
+  <tr><td><b>Accounts</b>: sign-in with a six-digit code sent by email; roles; sessions that renew</td><td><span class="tag real">Real</span></td>
+      <td>32 tests. Email goes out through Amazon SES, which can send to any address. No passwords. Agents cannot register themselves.</td></tr>
+  <tr><td><b>Cities, hubs, delivery zones</b></td><td><span class="tag real">Real</span></td>
+      <td>Hub locations are PostGIS points; "which hub serves this address" is an H3 cell lookup; "which hub is nearest" is an indexed nearest-neighbour query.</td></tr>
+  <tr><td><b>Farmer</b>: register a farm, list a lot, get a hub and a drop slot, see the quality check</td><td><span class="tag real">Real</span></td>
+      <td>30 tests, and in the phone app. A GPS fix rougher than 50 m is refused. Produce too old to be accepted is refused at listing, before the trip.</td></tr>
+  <tr><td><b>Hub intake</b>: weigh, grade, kilograms into units, put away</td><td><span class="tag api">Real, API only</span></td>
+      <td>Works and is tested, but has no screen. The demo calls it with <code>scripts/hub_intake.py</code>.</td></tr>
+  <tr><td><b>Shop</b>: what this hub can deliver now</td><td><span class="tag real">Real</span></td>
+      <td>Available = on the shelf, minus held for other carts, minus a small safety margin on some items.</td></tr>
+  <tr><td><b>Cart hold, payment, cancel</b></td><td><span class="tag real">Real</span></td>
+      <td>The hold is real and cannot oversell. Payment is a stand-in: tapping Pay confirms the order and no money moves.</td></tr>
+  <tr><td><b>Picking and packing</b>: route, scan, empty shelf, substitute, pack</td><td><span class="tag real">Real</span></td>
+      <td>On the picker page. Carried over from the dark-store prototype with its tests.</td></tr>
+  <tr><td><b>The customer's orders</b></td><td><span class="tag demo">Bridged</span></td>
+      <td>There is no orders API yet. The app remembers its own orders on the phone and reads their progress from the hold and the pick job. Progress stops at Packed.</td></tr>
+  <tr><td><b>Hub dashboards</b>: KPIs against targets, live events, network map</td><td><span class="tag real">Real</span></td>
+      <td>From the prototype. The demo data behind them is still the dark store's groceries, beside the new produce.</td></tr>
+  <tr><td><b>Forecast, reorder points, slotting, stock counts, expiry</b></td><td><span class="tag real">Real</span></td>
+      <td>From the prototype, working on whole units. They do not yet drive requests to farms.</td></tr>
+  <tr><td><b>Staging on AWS, tests and deploys on AWS</b></td><td><span class="tag real">Real</span></td>
+      <td>Section 6. Survived a forced database failover and a password change with the app running.</td></tr>
+  <tr><td><b>Grade, harvest date, farm and photo on a product; rescue deals on produce near its date</b></td><td><span class="tag demo">Demo data</span></td>
+      <td>The screens exist in the app. The backend stores the grade and the dates and raises a near-expiry event, but does not send them in the catalogue or change a price.</td></tr>
+  <tr><td><b>Order tracking after Packed; the door-step code</b></td><td><span class="tag demo">Demo data</span></td>
+      <td>Screens exist; nothing behind them.</td></tr>
+  <tr><td><b>Delivery</b>: pooling orders into trips, the agent's app, live location, hand-over</td><td><span class="tag none">Not built</span></td>
+      <td>The agent's side of the app is one placeholder screen.</td></tr>
+  <tr><td><b>Hubs in Bhilai</b></td><td><span class="tag none">Not built</span></td>
+      <td>Bhilai exists as a city with its tier and radius, but no hub is there on the real backend and nothing can open one. A Bhilai address is not serviceable and a lot listed from a Bhilai farm is refused. Only the app's demo data has Bhilai hubs.</td></tr>
+  <tr><td><b>Stock requests to farms</b> (the hub asks for what it expects to sell)</td><td><span class="tag none">Not built</span></td><td>Today the farmer offers; the hub does not ask.</td></tr>
+  <tr><td><b>Photographs</b> from the farm and the quality check; <b>paying the farmer</b>; a <b>map pin</b> for addresses</td><td><span class="tag none">Not built</span></td><td>Accepted weight and asking price are recorded; no payment is. Location is the phone's GPS or a list of areas.</td></tr>
+  <tr><td><b>A production environment; an installable Android build; a city-scale simulator</b></td><td><span class="tag none">Not built</span></td><td>Staging only. The app runs inside Expo Go. Load has been measured on one machine only.</td></tr>
+</table>
+
+<div class="box warn">
+  <h3>Three things a viewer should be told</h3>
+  <ul>
+    <li><b>The phone app has not run on a phone yet.</b> Every screenshot here is the same app's web build at phone
+      size. The keyboard, the safe areas, secure storage and the location prompt are unseen on Android.</li>
+    <li><b>The recording ran on the project's development server</b>, with the real backend code and a real
+      PostgreSQL, not on staging. Sign-in codes were read from that server's log, where the development email
+      backend writes them. On AWS the code goes by email and the log never holds it.</li>
+    <li><b>The hub's desk and dashboards still carry the dark store's groceries</b> (milk, bread, rice) beside the
+      new produce. They are demo data from the prototype and will be replaced by produce only.</li>
+  </ul>
+</div>
+
+<h2>Known limits of what is built</h2>
+<div class="two">
+<ul>
+  <li>The bill follows the pack, not the actual weight. A pack promises its weight; tolerance is not modelled.</li>
+  <li>Every lot gets the next morning window; the number of lots a hub can check in one window is not limited.</li>
+  <li>The hub's bins know ambient, chilled and frozen; the design's "cool" and "cold" share chilled.</li>
+  <li>One copy of the app runs. The timed jobs and the live feed live inside it, so a second copy needs those moved out first.</li>
+</ul>
+<ul>
+  <li>Email is a weaker second channel than a phone number: whoever reads the inbox can sign in.</li>
+  <li>On the web build the session is kept in the browser's local storage; on a phone it is in the secure store.</li>
+  <li>The staff logins are shared demo accounts behind one generated password per environment.</li>
+  <li>Push-triggered test runs wait for the GitHub connection to be authorised in the AWS console.</li>
+</ul>
+</div>

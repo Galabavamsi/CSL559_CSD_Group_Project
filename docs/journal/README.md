@@ -23,5 +23,6 @@ from. They are raw material for the report, the documentation and blog posts, so
 | 2026-11-23 | [Accounts: signing in with a code sent by email](2026-11-23-accounts-and-email-codes.md) | No passwords; the rules each code follows and where they come from; a hole it closed |
 | 2026-11-23 | [Farm supply: from a farmer's listing to units on a shelf](2026-11-23-farm-supply.md) | HLD flow A: hub choice, drop slot, weighing and grading, kg into units; a fault the tests caught |
 | 2026-11-23 | [The phone app, first cut](2026-11-23-the-phone-app.md) | One Expo app for three roles; a mock and the real API behind one interface; what was and was not checked |
+| 2026-11-23 | [Recording the demo, and what the recording found](2026-11-23-recording-the-demo.md) | A script records the real backend end to end; the handbook and video come from it; Bhilai turns out to have no hub |
 | 2026-11-23 | [The tests move to AWS](2026-11-23-ci-moves-to-aws.md) | GitHub stopped running checks; CodeBuild runs them; a deploy waits for them; a flaw the checking found |
 | 2026-11-23 | [Staging on AWS](2026-11-23-staging-on-aws.md) | First run on AWS; a password that would have expired before the demo; a forced failover; real prices |

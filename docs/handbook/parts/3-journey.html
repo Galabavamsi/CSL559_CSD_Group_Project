@@ -1,0 +1,71 @@
+<h1><small>3 · One lot, start to finish</small>Forty kilograms of tomatoes</h1>
+<p class="lede">Every picture on these pages is the real backend: the phone app and the hub's pages driving one
+  PostgreSQL database, recorded on 23 November 2026. The video shows the same run.</p>
+
+<div class="step"><div class="n">1</div><h2>The farmer lists a lot</h2>
+  <p>Ravi signs in with a code sent to his email, registers his farm where he stands, and lists what he picked
+    this morning. The backend looks for the nearest hub that has shelves of the right temperature and room for the
+    weight, and gives him a slot.</p></div>
+<div class="phones">
+  <figure><img src="shots/farmer-home-empty.png" alt=""><figcaption><b>Signed in, no farm yet</b>The first sign-in of an address creates the account.</figcaption></figure>
+  <figure><img src="shots/farmer-add-farm.png" alt=""><figcaption><b>The farm is where he stands</b>The phone is sure of this spot to 18 m. Over 50 m is refused.</figcaption></figure>
+  <figure><img src="shots/farmer-list-produce.png" alt=""><figcaption><b>Tomato, 40 kg, ₹18 a kg</b>The app says how long it keeps and how customers buy it.</figcaption></figure>
+  <figure><img src="shots/farmer-listing-made.png" alt=""><figcaption><b>A hub and a slot</b>DS-01 Central, 19.1 km away. Tomorrow, 6 to 9 am.</figcaption></figure>
+</div>
+
+<div class="step"><div class="n">2</div><h2>The hub weighs it, grades it and shelves it</h2>
+  <p>At the dock the receiver records what arrived and what is turned away, and gives a grade. The accepted weight
+    is packed into the item's smallest unit and put away. This step has no screen yet; the recording calls the
+    API, and the hub's desk shows the result.</p></div>
+<div class="two">
+  <figure class="wide clip"><img src="shots/hub-desk-before.png" alt=""><figcaption><b>Before:</b> the hub's desk. No tomatoes on the shelves.</figcaption></figure>
+  <figure class="wide clip"><img src="shots/hub-desk-after.png" alt=""><figcaption><b>After:</b> "Tomato, 500 g: 76 left", and the events that put it there.</figcaption></figure>
+</div>
+<table class="keep">
+  <tr><th>Listed</th><th>Arrived</th><th>Turned away</th><th>Accepted</th><th>Packed</th><th>Trim</th><th>Batch</th><th>Use by</th></tr>
+  <tr><td>40 kg</td><td>39.5 kg</td><td>1.5 kg</td><td><b>38 kg</b></td><td><b>76 packs of 500 g</b></td><td>0 kg</td><td>L1</td><td>28 Nov (harvest + 5 days)</td></tr>
+</table>
+
+<div class="step"><div class="n">3</div><h2>The customer orders</h2>
+  <p>Asha signs in the same way and says where she lives. The hub whose zone covers the address serves her, and
+    the shop lists what that hub can deliver now. Holding the cart sets two packs aside at the hub; paying
+    confirms the order.</p></div>
+<div class="phones">
+  <figure><img src="shots/customer-location.png" alt=""><figcaption><b>Where to deliver</b>MG Road is in DS-01 Central's zone.</figcaption></figure>
+  <figure><img src="shots/customer-home-tomato.png" alt=""><figcaption><b>The farmer's tomatoes, on sale</b>The same packs the hub put away a moment ago.</figcaption></figure>
+  <figure><img src="shots/customer-cart.png" alt=""><figcaption><b>Cart and bill</b>Two packs, ₹48. Delivery is pooled and free.</figcaption></figure>
+  <figure><img src="shots/customer-checkout.png" alt=""><figcaption><b>Held for ten minutes</b>The clock is the hub's hold. Payment is a stand-in.</figcaption></figure>
+</div>
+
+<div class="step"><div class="n">4</div><h2>The hub picks and packs</h2>
+  <p>A picker's phone hands out the next paid order, one line at a time: which bin, which batch, how many. Every
+    unit is scanned. Stock on hand goes down only when the order is packed.</p></div>
+<div class="phones short">
+  <figure><img src="shots/hub-picker-idle.png" alt=""><figcaption><b>Ready</b>The picker asks for the next order.</figcaption></figure>
+  <figure><img src="shots/hub-picker-line.png" alt=""><figcaption><b>One line at a time</b>Bin C-01-01, two packs: the bin holding the oldest batch.</figcaption></figure>
+  <figure><img src="shots/hub-picker-pack.png" alt=""><figcaption><b>All scanned</b>A wrong barcode would have been refused.</figcaption></figure>
+  <figure><img src="shots/hub-picker-packed.png" alt=""><figcaption><b>Packed into slot S-01</b>The sale is counted; the bag waits for its rider.</figcaption></figure>
+</div>
+
+<div class="step"><div class="n">5</div><h2>Both phones see the result</h2>
+  <p>The farmer sees the hub's verdict on his lot. The customer sees her order reach Packed, which is as far as the
+    backend goes today.</p></div>
+<div class="phones">
+  <figure><img src="shots/farmer-listing-graded.png" alt=""><figcaption><b>The quality check</b>Grade A; 38 kg accepted, 1.5 kg turned away, and his 30-day record.</figcaption></figure>
+  <figure><img src="shots/customer-order-confirmed.png" alt=""><figcaption><b>Order confirmed</b>Straight after paying: waiting for a picker.</figcaption></figure>
+  <figure><img src="shots/customer-orders.png" alt=""><figcaption><b>My orders</b>Kept on the phone until the backend has an orders API.</figcaption></figure>
+  <figure><img src="shots/customer-order-packed.png" alt=""><figcaption><b>Packed</b>No door-step code: the stages after this need delivery.</figcaption></figure>
+</div>
+
+<div class="box">
+  <h3>The recording: <code>docs/handbook/farm2home-demo.mp4</code>, 3 minutes 29 seconds</h3>
+  <table style="margin-bottom:0">
+    <tr><th style="width:5%"></th><th style="width:33%">Part</th><th>What is real in it</th></tr>
+    <tr><td>1</td><td>The farmer lists produce</td><td>Real backend. The sign-in code is read from the server's log.</td></tr>
+    <tr><td>2</td><td>The hub takes the lot in</td><td>Real backend. Intake has no screen, so it is called directly while the hub's desk is on screen.</td></tr>
+    <tr><td>3</td><td>The customer orders</td><td>Real backend. Payment is a stand-in: no money moves.</td></tr>
+    <tr><td>4</td><td>The hub picks and packs</td><td>Real backend, on the picker's page.</td></tr>
+    <tr><td>5, 6</td><td>The farmer sees the grade; the customer's order is packed</td><td>Real backend. Delivery is not built and is not shown.</td></tr>
+    <tr><td>7</td><td>What is still to come</td><td>Demo data, and labelled so on screen: rescue deals, tracking, the door-step code.</td></tr>
+  </table>
+</div>

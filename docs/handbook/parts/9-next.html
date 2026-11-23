@@ -1,0 +1,73 @@
+<h1><small>9 · What is left</small>Not built yet, in the order to build it</h1>
+<p class="lede">Ten days remain before the demo. The order below puts first what a live demo in Bhilai needs.</p>
+
+<table>
+  <tr><th style="width:4%"></th><th style="width:27%">Piece</th><th>Why it is here in the order</th><th style="width:24%">Done when</th></tr>
+  <tr><td>1</td><td><b>Hubs in Bhilai</b>, and a way to open a hub at a site</td>
+      <td>Without it nothing live can start from Bhilai. The network map already suggests sites; opening one should create the hub, its bins and its zone.</td>
+      <td>A Bhilai farm's lot is given a Bhilai hub; a Bhilai address is serviceable on staging.</td></tr>
+  <tr><td>2</td><td><b>A hub intake screen</b></td>
+      <td>The receiver's step is the heart of the hub and today it is a command line.</td>
+      <td>Expected drops listed; weigh, grade and put away on a phone.</td></tr>
+  <tr><td>3</td><td><b>Customer orders in the backend</b>; the catalogue carries grade, harvest date, farm and batch price</td>
+      <td>Replaces the bridge in the app and turns the demo-data screens of section 5 real.</td>
+      <td>An order is a record on the server; the shop shows a lot's grade and date.</td></tr>
+  <tr><td>4</td><td><b>Delivery</b>: pooling orders into trips, the agent's screens, the door-step code</td>
+      <td>The last leg of the journey, and the part that makes it "pooled".</td>
+      <td>Two orders for one area leave in one trip and are handed over against their codes.</td></tr>
+  <tr><td>5</td><td><b>Produce only</b> in the hub's demo data; rescue prices near the use-by date</td>
+      <td>The shelves still carry the dark store's groceries.</td>
+      <td>The shop shows only produce; a batch near its date is cheaper.</td></tr>
+  <tr><td>6</td><td><b>Stock requests to farms</b></td>
+      <td>Closes the loop: the forecast asks farms for tomorrow's produce.</td>
+      <td>A hub's shortfall becomes a request a farmer can accept.</td></tr>
+  <tr><td>7</td><td><b>An installable Android build</b>, rehearsed on a phone</td>
+      <td>Expo Go is enough to demo; an APK is what a user installs.</td>
+      <td>The app is installed from a file and runs against staging.</td></tr>
+  <tr><td>8</td><td><b>A simulator and load at city scale</b>; a production environment</td>
+      <td>The numbers in section 7 come from one machine and scripted pickers.</td>
+      <td>A simulated day of orders for both cities, with the KPIs it produced.</td></tr>
+</table>
+
+<h1 style="break-before: auto; margin-top: 10mm"><small>10 · Sources and credits</small>Where the facts and the pictures come from</h1>
+<div class="two">
+<div>
+<h2>Sources</h2>
+<p>The engineering journal in <code>docs/journal/</code> holds the reasoning behind each decision with its sources.
+  The ones this handbook leans on:</p>
+<ul>
+  <li>The project's own high-level design (sections 3, 5, 6, 10, 12, 13, 15, 16).</li>
+  <li>OWASP Cheat Sheet Series, "Multifactor Authentication" and "Forgot Password": the rules a one-time code
+    follows. cheatsheetseries.owasp.org</li>
+  <li>AWS, "Password management with Amazon RDS and AWS Secrets Manager": the seven-day rotation.
+    docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html</li>
+  <li>AWS, "HTTP headers and Application Load Balancers": which end of <code>X-Forwarded-For</code> to trust.
+    docs.aws.amazon.com/elasticloadbalancing/latest/application/x-forwarded-headers.html</li>
+  <li>AWS, "How the Amazon ECS deployment circuit breaker detects failures".
+    docs.aws.amazon.com/AmazonECS/latest/developerguide/deployment-circuit-breaker.html</li>
+  <li>H3, "Tables of cell statistics across resolutions": the size of a resolution 9 cell.
+    h3geo.org/docs/core-library/restable</li>
+  <li>Swiggy Instamart's fresh vegetable listings: packs, pieces with weight ranges, bunches.
+    swiggy.com/instamart</li>
+  <li>The AWS Price List API, read on 23 November 2026: every price in section 6.</li>
+</ul>
+<p>Measured by us: every number in section 7, each with how it was measured.</p>
+</div>
+<div>
+<h2>Credits</h2>
+<ul>
+  <li><b>Produce photographs:</b> 25 photographs from Wikimedia Commons, 22 in the public domain or under CC0. Three
+    need credit: okra by Paul Lowry (CC BY 4.0), lemons by ASADAL, Inc. (CC BY 2.0 KR), watermelon by liz west
+    (CC BY 2.0). Every file, author, licence and link is in <code>mobile/ASSETS.md</code>.</li>
+  <li><b>Map:</b> © OpenStreetMap contributors, on the network map.</li>
+  <li><b>Typeface:</b> Plus Jakarta Sans, SIL Open Font License 1.1.</li>
+  <li><b>Icons:</b> Material Design Icons, Apache License 2.0.</li>
+  <li><b>Logo, icon set and colours:</b> made for this project. No logo, artwork, name or screen of another
+    company is used.</li>
+</ul>
+<h2>How this document was made</h2>
+<p>The screenshots and the video are produced by <code>scripts/record_demo.sh</code>, which starts the backend on an
+  empty database, drives the app and the hub's pages in a browser, and records what happens. Running it again
+  remakes them. The pages are HTML in <code>docs/handbook/</code>, printed to PDF by <code>build.ps1</code>.</p>
+</div>
+</div>
