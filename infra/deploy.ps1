@@ -63,8 +63,16 @@ else {
     }
 }
 
-# 4. Run it.
-aws cloudformation deploy --stack-name "farm2home-app-$Env" --template-file "$here\app.yml" `
+# 4. Run it, with the template of the commit being deployed and not the one in this folder. The folder may hold an
+# edit that is still in progress, and that edit's settings must not ship with another commit's code (it nearly
+# happened on 24 November). Written by cmd so the bytes are git's own: PowerShell 5.1 would re-encode them.
+git -C $here fetch --quiet $repo $sha
+$template = Join-Path ([IO.Path]::GetTempPath()) "farm2home-app-$tag.yml"
+cmd /c "git -C `"$here`" show ${sha}:infra/app.yml > `"$template`""
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $template) -or (Get-Item $template).Length -eq 0) {
+    throw "Could not read infra/app.yml of commit $tag"
+}
+aws cloudformation deploy --stack-name "farm2home-app-$Env" --template-file $template `
     --parameter-overrides "Env=$Env" "ImageTag=$tag" --capabilities CAPABILITY_NAMED_IAM `
     --tags Project=farm2home "Env=$Env" --no-fail-on-empty-changeset
 if ($LASTEXITCODE -ne 0) {
