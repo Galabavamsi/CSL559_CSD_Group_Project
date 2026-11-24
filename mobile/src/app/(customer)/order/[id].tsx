@@ -217,10 +217,14 @@ function StatusHero({ order }: { order: Order }) {
 /** Why the order may wait a little before leaving the hub: it shares its ride. */
 function PooledNote({ order }: { order: Order }) {
   const { colors } = useAppTheme();
-  const text =
-    order.pooledWith !== null
-      ? `Your bag rides with ${order.pooledWith} other ${order.pooledWith === 1 ? 'order' : 'orders'} from your neighbourhood. One trip instead of ${order.pooledWith + 1} keeps delivery free.`
-      : "Once packed, your bag is grouped with your neighbours' orders into one delivery run. One trip for many homes keeps delivery free.";
+  let text =
+    "Once packed, your bag is grouped with your neighbours' orders into one delivery run. One trip for many homes keeps delivery free.";
+  if (order.pooledWith === 0) {
+    // Nobody nearby ordered in time: the bag went on its own rather than keep the customer waiting.
+    text = 'No neighbour ordered in the same few minutes, so your bag has a trip to itself this time.';
+  } else if (order.pooledWith !== null) {
+    text = `Your bag rides with ${order.pooledWith} other ${order.pooledWith === 1 ? 'order' : 'orders'} from your neighbourhood. One trip instead of ${order.pooledWith + 1} keeps delivery free.`;
+  }
   return (
     <View style={[styles.note, { backgroundColor: colors.secondaryContainer }]}>
       <MaterialCommunityIcons name="account-group-outline" size={24} color={colors.onSecondaryContainer} />
