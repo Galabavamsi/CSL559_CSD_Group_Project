@@ -8,6 +8,7 @@
     "scheme": "farm2home",
     "userInterfaceStyle": "automatic",
     "android": {
+      "package": "com.galabavamsi.farm2home",
       "adaptiveIcon": {
         "backgroundColor": "#2A8540",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
