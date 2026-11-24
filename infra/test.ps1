@@ -5,7 +5,7 @@
 .DESCRIPTION
   1. Finds the commit a branch, tag or commit id names in the public repository.
   2. Unless -Rerun is given, looks for a run of exactly that commit that already passed, and uses it.
-  3. Otherwise starts the farm2home-test CodeBuild project for it and waits (about four minutes).
+  3. Otherwise starts the farm2home-test CodeBuild project for it and waits (about five minutes).
   4. Prints the end of the run's log, and sets a commit status in GitHub with the `gh` CLI you are signed in to,
      so the commit's pull request shows a check. -NoStatus skips that.
 
