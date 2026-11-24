@@ -1,0 +1,128 @@
+<h1><small>4 · Metrics</small>What was measured, when, and how</h1>
+<p class="lede">Each number names its date and its method. Numbers from one order, one machine, light traffic or
+  compressed time say so, and are not claims about a city's traffic.</p>
+
+<div class="box warn">
+  <p><b>One target is missed.</b> Under load, the shop's read ("what can this hub deliver now?") took 130 ms at the
+    99th percentile: 99 reads in 100 were faster than that. The design's target is 100 ms. Measured on 23 November
+    on one machine (the load test, later in this section). It has not been measured again, so the miss stands.</p>
+</div>
+
+<h2>Measured on 24 November 2026</h2>
+<table>
+  <tr><th style="width:21%">What</th><th style="width:24%">Result</th><th>How it was measured</th></tr>
+  <tr><td>Automated tests</td><td><b>800 passed</b>, in about 5 minutes</td><td>The whole suite on AWS CodeBuild, on the commit staging runs, against PostgreSQL 16 with PostGIS, with a check that the migrations build exactly the tables in the models.</td></tr>
+  <tr><td>The whole journey, end to end</td><td><b>9 recorded passes</b>, none failed</td><td>The app's real web build against the API on an empty database, driven by a script (Playwright) on the development server: a farmer lists 40 kg of tomatoes, the hub takes them in, a customer orders, the hub picks and packs, an agent delivers with the customer's code.</td></tr>
+  <tr><td>The order in that run</td><td>Six states, placed to delivered. <b>One trip, one stop, planned at 5.55 km</b></td><td>Read from the run's database. The kilometres are straight lines times 1.7, so an estimate.</td></tr>
+  <tr><td>An order packed with nobody at the hub</td><td><b>50 seconds</b> from payment to packed</td><td>One test order on staging after the deploy. The setting waits 45 seconds for a picker and is checked every 10, so this is the setting at work, not a picker's speed.</td></tr>
+  <tr><td>Demo farms, first delivery</td><td><b>71 lots across 6 hubs</b>; asked again, none</td><td>The demo farms were asked to deliver at once, on the end-to-end run's database. A hub gets a lot only for an item it has fewer than six units of. The audit of stock was consistent afterwards.</td></tr>
+  <tr><td>The installable Android app</td><td><b>36.8 MB</b>; built in 11 minutes 24 seconds</td><td>Built with Gradle, the Android build tool, on the development server (4 virtual CPUs). A first build, which includes downloading the Android SDK.</td></tr>
+  <tr><td>IIT Bhilai to its hub</td><td><b>0.66 km</b></td><td>"Which hub serves this address" asked of staging: from BH-04 to the centre of the customer's H3 cell.</td></tr>
+  <tr><td>The site from outside</td><td><b>The smoke test passes</b></td><td><code>infra/smoke.sh</code>, run from outside the network after the deploy. Among its checks: a verified certificate, TLS 1.1 refused, a hold made and released, a script tag in a query refused by the firewall.</td></tr>
+</table>
+
+<h2>The maps service, tried on real places in Bhilai <span style="font-weight:400; font-size:8.5pt; color:var(--muted)">&nbsp;24 November, Amazon Location Service</span></h2>
+<table class="keep">
+  <tr><th style="width:37%">Asked</th><th>Answer</th><th style="width:19%">Verdict</th></tr>
+  <tr><td>Find "Supela, Bhilai" and "Risali, Bhilai"</td><td>Both found within about 1 km of the hand-picked point</td><td>Good</td></tr>
+  <tr><td>Find "Street 12, Sector 6, Bhilai"</td><td>A crossing in Sector 4</td><td>Not to the street</td></tr>
+  <tr><td>Road against the straight line, five points</td><td><b>1.6 to 1.9 times</b>; 3.1 km straight is 5.8 km by road</td><td>Why trips use 1.7</td></tr>
+  <tr><td>Travel times, a hub and four areas (5 by 5)</td><td>All 25 answered</td><td>Good</td></tr>
+  <tr><td>Best order for four stops and back</td><td>21.9 km, 47 minutes</td><td>Plausible</td></tr>
+</table>
+
+<h2 style="break-before: page; margin-top: 0">Staging over 24 hours <span style="font-weight:400; font-size:8.5pt; color:var(--muted)">&nbsp;Amazon CloudWatch, 23 Nov 05:24 UTC to 24 Nov 05:24 UTC (10:54 to 10:54 in India)</span></h2>
+<table class="keep">
+  <tr><th style="width:28%">What</th><th>Number</th></tr>
+  <tr><td>Requests through the load balancer</td><td><b>428</b></td></tr>
+  <tr><td>Answers</td><td>364 successful (2xx); 56 refused (4xx: no login, a wrong code, a firewall rule); <b>no server errors</b> (5xx)</td></tr>
+  <tr><td>Response time at the load balancer</td><td>median <b>7.5 ms</b>; 90th percentile 270 ms; 99th percentile 706 ms</td></tr>
+  <tr><td>App containers</td><td>1 running. CPU average 1.8%, peak 33%. Memory average 12.5%, peak 14%</td></tr>
+  <tr><td>Database</td><td>PostgreSQL 16.15, <code>db.t4g.medium</code>, two availability zones. CPU average 5%, peak 9%. Connections average 6, peak 17</td></tr>
+</table>
+<div class="two">
+<div>
+  <p><b>This is a demo's light traffic, not a load test.</b> It says that in a day of light use, with several
+    deploys, the load balancer recorded no server error. It says nothing about capacity. The capacity numbers
+    are the load test's, below.</p>
+  <p class="note">The two counts of answers add to 420. The figures read from CloudWatch do not say what the other
+    8 requests were.</p>
+</div>
+<div>
+  <p>With 428 requests, the 90th and 99th percentiles rest on a handful of requests: the slowest 1 in 100 is four
+    or five of them. The first requests to a newly started container are slow, and staging was deployed several
+    times in this window. That is the likely cause of the slow tail. It was not measured.</p>
+</div>
+</div>
+
+<div class="box">
+  <p><b>From here on: measured on 23 November 2026.</b> These numbers were in the last build of this report. The
+    system has changed since: orders, the shop's list and delivery were added. No repeat of these runs on the new
+    code is recorded.</p>
+</div>
+
+<h2>One hub under load, on one machine <span style="font-weight:400; font-size:8.5pt; color:var(--muted)">&nbsp;23 November</span></h2>
+<p>The development server (4 virtual CPUs, 16 GB) ran everything at once: the app as a single process, PostgreSQL in
+  a container, and the load generator. 8 clients for 60 seconds; about nine calls in ten are reads, one in ten holds
+  a cart, and one hold in five is paid. Measured with <code>scripts/load_test.py</code>.</p>
+<table class="keep">
+  <tr><th style="width:36%">Call</th><th class="num">Per second</th><th class="num">Median</th><th class="num">99th percentile</th><th style="padding-left:6mm">Refused</th></tr>
+  <tr><td>What can this hub deliver now?</td><td class="num">83</td><td class="num">24 ms</td><td class="num"><b style="color:var(--red)">130 ms</b></td><td style="padding-left:6mm">none</td></tr>
+  <tr><td>Which hub serves this address?</td><td class="num">85</td><td class="num">24 ms</td><td class="num">56 ms</td><td style="padding-left:6mm">none</td></tr>
+  <tr><td>Hold a cart</td><td class="num">18.5</td><td class="num">45 ms</td><td class="num">73 ms</td><td style="padding-left:6mm">78 of 1,110, for lack of stock: the hold doing its job</td></tr>
+  <tr><td>Pay</td><td class="num">2.9</td><td class="num">80 ms</td><td class="num">140 ms</td><td style="padding-left:6mm">none</td></tr>
+  <tr><td>Release a hold</td><td class="num">14.3</td><td class="num">44 ms</td><td class="num">77 ms</td><td style="padding-left:6mm">none</td></tr>
+</table>
+<p>About 200 calls a second in all, with no server error. <b>The shop's read misses the design's target</b> of 100 ms
+  at the 99th percentile on this set-up: 130 ms. This test did not call the new shop list, the order endpoints or
+  delivery, which did not exist then.</p>
+
+<h2 style="break-before: page; margin-top: 0">Shipping and surviving <span style="font-weight:400; font-size:8.5pt; color:var(--muted)">&nbsp;23 November, on staging</span></h2>
+<table class="keep">
+  <tr><th style="width:27%">What</th><th style="width:22%">Result</th><th>How it was measured</th></tr>
+  <tr><td>From a chosen commit to running on staging</td><td><b>9 minutes</b></td><td>A commit not tested before: tests (3 min 40 s then), image build, rolling update, then the smoke test. Not timed again; the suite has grown and now takes about 5 minutes.</td></tr>
+  <tr><td>Database failover</td><td><b>2 failed calls in 14 s</b></td><td>The database was forced over to its standby while a probe called a database-backed endpoint about once a second. Failures at 20:20:35 and 20:20:44 UTC, success again from 20:20:49. The container was not restarted.</td></tr>
+  <tr><td>Database password change</td><td><b>80 of 80 calls succeeded</b></td><td>AWS changes the master password every seven days. A change was forced (74 s), then 80 calls sent in parallel. The app reads the login when it opens a connection, so it needs no restart.</td></tr>
+</table>
+
+<h2>Experiments on a throwaway copy of the demo hub <span style="font-weight:400; font-size:8.5pt; color:var(--muted)">&nbsp;23 November</span></h2>
+<table class="keep">
+  <tr><th style="width:27%">Question</th><th style="width:22%">Result</th><th>How it was measured</th></tr>
+  <tr><td>Does batch picking save walking at peak?</td><td><b>48% less walking</b></td><td>30 paid orders, all waiting. One at a time: 30 walks, 622 bin-steps. In batches of up to 3: 12 walks, 322 steps. A walk costs twice the furthest bin it visits.</td></tr>
+  <tr><td>Does slotting by sales save walking?</td><td><b>1% overall</b>; 8% for orders of ambient items only</td><td>200 random orders drawn by 14 days of sales, before and after the plan. Chilled and frozen bins sit at the far end of the walk whatever the plan, so most orders gain nothing.</td></tr>
+  <tr><td>What does the short cache on a hub's list of available items buy?</td><td><b>Median read 10.8 ms to 2.7 ms</b></td><td>2,000 whole-hub reads in process, with a hold every 13 reads, which clears the cache: 92% of reads hit it. The 99th percentile barely moves (15.3 to 13.3 ms).</td></tr>
+  <tr><td>Do the counts survive a rush?</td><td><b>100 of 100 packed</b>, fill rate 100%, stock audit clean</td><td>100 paid orders cleared by 3 scripted pickers through the real API, batch picking. Time is compressed (0.05 s per bin-step, scanning instant), so its speeds are not a real floor's and are not quoted.</td></tr>
+</table>
+
+<div class="two">
+<div>
+<h2>What the system measures about itself</h2>
+<p>The ops dashboard shows each key figure of the design beside its target, per hub. So far the figures come
+  from scripted and test orders.</p>
+<table class="keep">
+  <tr><th>Key figure</th><th>Target</th></tr>
+  <tr><td>Order to packed (90th percentile)</td><td>≤ 120 s</td></tr>
+  <tr><td>Fill rate</td><td>≥ 99% of units ordered</td></tr>
+  <tr><td>Picker productivity</td><td>≥ 100 items per picker-hour</td></tr>
+  <tr><td>Inventory accuracy</td><td>≥ 99.5% of counted lines</td></tr>
+  <tr><td>Stock-out rate</td><td>≤ 2% of carried items</td></tr>
+  <tr><td>Wastage</td><td>≤ 1% of sales value</td></tr>
+  <tr><td>Forecast error</td><td>≤ 30%</td></tr>
+  <tr><td>Event relay lag</td><td>≤ 30 s</td></tr>
+</table>
+</div>
+<div>
+<h2>Not measured</h2>
+<ul>
+  <li><b>Anything about pooling at volume:</b> orders per trip, kilometres per order with and without pooling,
+    minutes from order to door. These need a day of many orders, which is not built (section 5).</li>
+  <li><b>A trip of several stops, end to end.</b> Tests cover it; the end-to-end run has one order.</li>
+  <li><b>Load on the new code,</b> and load beyond one machine.</li>
+  <li><b>The app's speed on a phone,</b> and an order placed from the installed app.</li>
+  <li><b>Real picking and riding speeds.</b> Every measured run is scripted.</li>
+  <li><b>Trim and rejection on real lots.</b> Every lot weighed so far is a script's or a demo farm's: the tomatoes
+    pictured in section 3, and 20 kg of onions on 23 November (20.4 kg arrived, 0.3 kg turned away, 20 packs of
+    1 kg, 0.1 kg trim).</li>
+</ul>
+</div>
+</div>

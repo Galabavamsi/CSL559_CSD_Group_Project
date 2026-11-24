@@ -1,6 +1,7 @@
-# Build the handbook: join parts\*.html into handbook.html and print it to PDF with Edge or Chrome.
-#     powershell -ExecutionPolicy Bypass -File docs\handbook\build.ps1
-# The pictures in shots\ and the video come from scripts/record_demo.sh (see section 10 of the handbook).
+# Build the report: join parts\*.html, in the order of their names, into handbook.html and print it to PDF with
+# Edge or Chrome.
+#     powershell -NoProfile -ExecutionPolicy Bypass -File docs\handbook\build.ps1
+# Most pictures in shots\ come from scripts/record_demo.sh ("How this document was made", on the report's last page).
 param([switch]$Draft)        # -Draft: build even if some pictures are missing
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -8,7 +9,7 @@ $utf8 = New-Object Text.UTF8Encoding $false
 $parts = Get-ChildItem (Join-Path $here "parts") -Filter *.html | Sort-Object Name |
     ForEach-Object { [IO.File]::ReadAllText($_.FullName, $utf8) }
 $html = "<!doctype html>`n<html lang=`"en`"><head><meta charset=`"utf-8`">" +
-    "<title>JustInTimeFarm2Home handbook</title><link rel=`"stylesheet`" href=`"handbook.css`"></head><body>`n" +
+    "<title>JustInTimeFarm2Home: system design report</title><link rel=`"stylesheet`" href=`"handbook.css`"></head><body>`n" +
     ($parts -join "`n") + "`n</body></html>`n"
 $page = Join-Path $here "handbook.html"
 [IO.File]::WriteAllText($page, $html, $utf8)

@@ -1,0 +1,94 @@
+<h1><small>6 · How to try it</small>The app on an Android phone, against staging</h1>
+<p class="lede">The app installs from a file and talks to the staging copy on AWS. No laptop is needed. The run below
+  takes about eight minutes; the full run sheet is <code style="font-size:9.5pt">docs/DEMO_ON_A_PHONE.md</code>.</p>
+
+<div style="display:grid; grid-template-columns: 1fr 38mm; gap: 7mm; margin-bottom: 1mm">
+<div>
+<h2 style="margin-top:0">Get the app</h2>
+<div class="box">
+  <p><b>Download for Android:</b><br>
+    <a href="https://github.com/Galabavamsi/CSL559_CSD_Group_Project/releases/tag/app-staging-2026-11-24">https://github.com/Galabavamsi/CSL559_CSD_Group_Project/releases/tag/app-staging-2026-11-24</a></p>
+  <p>The file is <code>Farm2Home-staging.apk</code>: 36.8 MB, version 1.0.0, for 64-bit ARM phones.</p>
+</div>
+<ul>
+  <li><b>Android will warn you.</b> The app comes from outside the Play Store and is signed with a debug key. Allow
+    your browser to install it, once, then open <b>Farm2Home</b>.</li>
+  <li><b>Use mobile data.</b> Some networks block the staging address; a campus Wi-Fi did. The app then says "No
+    connection".</li>
+  <li><b>Have two email addresses,</b> one for the customer and one for the delivery agent. Sign-in is a six-digit
+    code sent by email. A Gmail address with <code>+agent</code> before the <code>@</code> is a second address
+    that arrives in the same inbox.</li>
+  <li><b>Two phones if you can.</b> With one, you sign out and in between customer and agent, and each sign-in is
+    one more code. The agent stays on duty while signed out.</li>
+</ul>
+</div>
+<figure><img src="shots/phone-installed-app.png" alt="" style="width:100%; display:block; border:.3mm solid var(--line); border-radius:3.5mm">
+  <figcaption><b>The installed app on a phone</b>A Samsung Galaxy M34, 24 November. The sign-in screen came up
+    with no laptop behind it. Signing in and ordering from the installed app had not been done when this was
+    written.</figcaption></figure>
+</div>
+
+<h2>The run</h2>
+<table class="keep">
+  <tr><th style="width:3%"></th><th style="width:10%">Who</th><th style="width:43%">Do</th><th>What it shows</th></tr>
+  <tr><td>1</td><td>Agent</td><td>Sign in, choosing <b>Delivery</b>. Pick <b>Bhilai</b>, the hub <b>BH-04 IIT Bhilai</b>, then <b>Go on duty</b>.</td>
+      <td>Agents belong to a hub. The one free longest gets the next trip.</td></tr>
+  <tr><td>2</td><td>Customer</td><td>Sign in. Choose Bhilai, then <b>Kumhari</b>, and tap <b>Request delivery here</b>. Then choose <b>IIT Bhilai</b>.</td>
+      <td>Kumhari is in no zone; the request is counted when the next hub is chosen. IIT Bhilai is served by BH-04.</td></tr>
+  <tr><td>3</td><td>Customer</td><td>Look at the shop.</td>
+      <td>A photograph, a grade, the day it was picked and a use-by date on every card. Spinach is marked down.</td></tr>
+  <tr><td>4</td><td>Customer</td><td>Add three or four items, spinach among them. <b>View cart</b>, <b>Hold my items</b>, type an address, <b>Pay</b>.</td>
+      <td>The units are off sale for everyone else for ten minutes. The total is the hub's own bill. No money moves.</td></tr>
+  <tr><td>5</td><td>Customer</td><td>Stay on the order's screen.</td>
+      <td>By staging's settings it should read Packed, then Pooled, within about a minute and a half, with four digits.</td></tr>
+  <tr><td>6</td><td>Agent</td><td><b>Collect 1 bag</b>: tap <b>Bag checked</b>. On the stop, type the customer's four digits and tap <b>Hand over</b>.</td>
+      <td>The customer's order turns Out for delivery. A wrong code is counted, and five lock the hand-over.</td></tr>
+  <tr><td>7</td><td>Customer</td><td>Open the order.</td><td>Delivered, with the time of every step.</td></tr>
+</table>
+
+<h2 style="break-before: page; margin-top: 0">What staging does for you</h2>
+<table class="keep">
+  <tr><th style="width:15%">Setting</th><th>What it does</th><th style="width:31%">What you would otherwise need</th></tr>
+  <tr><td><b>Demo farms</b></td><td>Every half hour, a hub nearly out of an item gets a lot from a demo farm, through the ordinary intake</td><td>A farmer listing and a receiver weighing</td></tr>
+  <tr><td><b>Demo hub</b></td><td>An order no picker starts within 45 seconds is picked and packed by the server, as a picker would</td><td>Someone at the picker's page</td></tr>
+  <tr><td><b>Short wait</b></td><td>A lone packed order leaves after half a minute, not ten</td><td>Three more orders, or ten minutes</td></tr>
+  <tr><td><b>Agents sign up</b></td><td>Anyone may sign in as a delivery agent and choose a hub</td><td>The platform team making the account</td></tr>
+</table>
+<p>The lots, the picking and the trip on staging are real records made by the real code. What these four settings
+  simulate is the people. Staging keeps what earlier runs did; nothing needs resetting.</p>
+
+<h2>If something goes wrong</h2>
+<table class="keep">
+  <tr><th style="width:21%">You see</th><th style="width:36%">Likely cause</th><th>Do</th></tr>
+  <tr><td>"No connection"</td><td>The phone is on a Wi-Fi that blocks staging</td><td>Switch to mobile data</td></tr>
+  <tr><td>No code arrives</td><td>More than one a minute, or too many in an hour</td><td>Wait a minute; check spam</td></tr>
+  <tr><td>The shop is empty</td><td>The hub ran out between two rounds of the demo farms</td><td>Wait for the half hour, or choose another area</td></tr>
+  <tr><td>The order stays at Packed</td><td>No agent is on duty at that hub</td><td>Go on duty as the agent, at the order's hub</td></tr>
+  <tr><td>The agent sees no trip</td><td>The order is from another hub</td><td>Choose the hub the customer's screen names</td></tr>
+</table>
+
+<div class="two">
+<div>
+<h2>What to say is not built</h2>
+<ul>
+  <li>A map, the agent's position, and a time of arrival. Distances are straight lines times 1.7 for now.</li>
+  <li>Real payment.</li>
+  <li>What the hub does with a bag that comes back.</li>
+  <li>Hubs asking farms for what they expect to sell.</li>
+</ul>
+<p>To see two stops on one trip, place two orders from different areas of one hub before the agent goes on
+  duty.</p>
+</div>
+<div>
+<h2>What else there is to look at</h2>
+<ul>
+  <li><b>The hub's pages</b> (intake, picker, ops dashboard, network map) are web pages on the same address. They
+    ask for a staff password, which is kept in AWS Secrets Manager and is not printed here.
+    <code>docs/DEMO_SCRIPT.md</code> is the older script for them.</li>
+  <li><b>The design, with every argument:</b> <code>docs/DESIGN.md</code>. What was built each day, and what went
+    wrong: <code>docs/journal/</code>.</li>
+  <li><b>The recording</b> <code>farm2home-demo.mp4</code> is from 23 November and its real part stops at Packed.
+    It predates delivery and has not been recorded again.</li>
+</ul>
+</div>
+</div>

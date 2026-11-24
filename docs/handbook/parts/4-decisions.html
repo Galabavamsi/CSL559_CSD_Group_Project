@@ -1,0 +1,260 @@
+<h1><small>2 · System design</small>Decisions: stock, the shop, the order</h1>
+<p class="lede">Each decision in a few lines: what is done, why, and what it costs. The longer argument is in
+  <code style="font-size:9.5pt">docs/DESIGN.md</code>. Settings such as 4 orders, 10 minutes and 30% are starting
+  values chosen by the team, not measurements.</p>
+
+<div class="two">
+<div>
+<div class="dec"><h3>Stock is held while the customer pays</h3>
+  <p><b>What.</b> The shop shows what is available: units on hand minus units held for other carts. Checkout does
+    not remove stock. It holds it, with one statement per line of the cart that carries its own check:</p>
+<pre>UPDATE stock_levels
+   SET qty_reserved = qty_reserved + :qty
+ WHERE store_id = :hub AND sku_id = :item
+   AND qty_on_hand - qty_reserved >= :qty
+-- 0 rows changed: not enough stock</pre>
+  <p>A hold is the whole cart or nothing and lasts ten minutes. A sweep every 30 seconds gives back what ran
+    out.</p>
+  <p><b>Why.</b> The database runs these statements one at a time for a given row, so two carts cannot both take
+    the last pack. A test has twenty buyers race for one unit: one wins.</p>
+  <p><b>Cost.</b> Units sit off sale for up to ten minutes behind carts that may never be paid for.</p></div>
+
+<div class="dec"><h3>The oldest batch is picked first</h3>
+  <p><b>What.</b> Paying creates the pick job, and its bins are chosen then: the batch with the earliest use-by
+    date first. Warehouses call this first expiry, first out (FEFO). Stock on hand goes down only when the order
+    is packed.</p>
+  <p><b>Why.</b> What is not sold by its use-by date is written off. Picking the oldest batch first gives every
+    batch its best chance of selling in time.</p></div>
+
+<div class="dec"><h3>The shop describes the batch that would be picked next</h3>
+  <p><b>What.</b> For each item the shop adds the facts of the batch the next order would be picked from: grade,
+    harvest date, use-by date and farm. They are read from the farmer's listing and the hub's quality check.</p>
+  <p><b>Why one batch.</b> Stock is picked oldest first and a customer cannot choose a batch. Listing several
+    would offer a choice the hub does not honour.</p>
+  <p><b>Cost.</b> A large order may get some units from a newer batch: never older than shown, but the grade may
+    differ.</p></div>
+</div>
+
+<div>
+<div class="dec"><h3>A batch in its last day is sold cheaper</h3>
+  <p><b>What.</b> When the batch to be picked first has a day of shelf life left or less, its units cost 30%
+    less, in whole rupees. This is the rescue price. An order is priced by the batches actually picked: eight
+    packs of milk with six in their last day are six at ₹20 and two at ₹28.</p>
+  <p><b>Why.</b> Produce a day from its date is still good to eat today, and what is not sold is wasted. Pricing
+    by the batches picked keeps it honest: otherwise a customer could order ten at the lower price when three
+    such packs exist.</p>
+  <p><b>Not taken.</b> A price that falls gradually, or follows demand. Neither can be explained in one sentence
+    or checked in one test.</p></div>
+
+<div class="dec"><h3>The checkout shows the hub's bill, and a price that rose is refused</h3>
+  <p><b>What.</b> The checkout asks the hub what the held cart would cost if paid this moment, and asks again
+    every 20 seconds. The payment carries the total the customer was shown. If the order would cost more,
+    nothing is paid, the cart stays held, and the app shows the new total (<code>409 price_changed</code>). If
+    it would cost less, it is placed.</p>
+  <p><b>Why.</b> A hold sets units aside, not batches, so the last cheaper units go to whoever pays first (the
+    second story at the end of this section). The bill comes from the function that later chooses the bins, so
+    no second copy of the rule can drift.</p>
+  <p><b>Why refuse, and not keep the price.</b> Keeping it means holding batches for ten minutes, which takes
+    last-day units off sale when they most need to sell.</p></div>
+
+<div class="dec"><h3>An order is written inside the payment</h3>
+  <p><b>What.</b> Paying confirms the hold, and the order is written in the same database transaction: who,
+    which hub, the address, each line at the price charged.</p>
+  <p><b>Why at payment.</b> A hold is a cart that may never be paid. An order for every hold would fill a
+    customer's history with abandoned carts.</p>
+  <p><b>Why inside.</b> Written before, an order would be left behind when a payment is refused. Written after,
+    a paid cart would have no order if the server stopped in between.</p>
+  <p><b>Cost.</b> Two ids for one purchase: the hold's and the order's.</p></div>
+</div>
+</div>
+
+<h1><small>2 · System design</small>Decisions: zones and delivery</h1>
+<p class="lede">Delivery has to answer five questions: when does a trip leave, which orders are on it, in what order
+  are they dropped, who takes it, and how is the hand-over proved.</p>
+
+<div class="two">
+<div>
+<div class="dec"><h3>A delivery zone is a set of H3 cells</h3>
+  <p><b>What.</b> H3 is an open grid that covers the earth in hexagons; at resolution 9 a cell is about a tenth of
+    a square kilometre. Each hub serves the cells nearer to it than to any other hub, within its radius. "Which
+    hub serves this address" finds the address's cell and reads one indexed row.</p>
+  <p><b>Why.</b> Zones are worked out when a hub opens, not when a customer asks. Opening a hub writes the hub,
+    its bins, its logins and every recalculated zone in one transaction. The same cells are what planning counts
+    in.</p></div>
+
+<div class="dec"><h3>A trip leaves when enough orders wait, or one has waited long enough</h3>
+  <p><b>What.</b> Packed orders wait at the hub. A trip is formed when an agent is free and either 4 orders wait
+    or the oldest has waited 10 minutes. A trip takes at most 6.</p>
+  <p><b>Why.</b> This is pooling in one rule: waiting buys fuller trips, and the deadline caps what waiting costs
+    the customer. The hub already picks by the same rule.</p>
+  <p><b>Not taken.</b> Fixed slots: the app promises minutes, and a slot would promise "by 6 pm". An optimiser:
+    at a few orders an hour it would choose what the rule chooses.</p>
+  <p><b>Cost.</b> With one order an hour, every trip carries one order and pooling saves nothing. The order rate
+    at which pooling starts to pay has not been measured.</p></div>
+
+<div class="dec"><h3>Which orders go: the longest wait, and its neighbours by direction</h3>
+  <p><b>What.</b> When more orders wait than a trip takes, the trip is the order that has waited longest and the
+    orders nearest to it in compass direction from the hub.</p>
+  <p><b>Why.</b> A trip that goes north and then south drives past the hub in between. The order that made the
+    trip due is always on it.</p>
+  <p><b>Cost.</b> Direction ignores railway lines: in Bhilai two areas in one direction can lie on opposite sides
+    of the railway. The first version of this rule was wrong (the first story at the end of this
+    section).</p></div>
+</div>
+
+<div>
+<div class="dec"><h3>The order of stops is the best one, found by trying them all</h3>
+  <p><b>What.</b> Every order of a trip's stops is tried, and the shortest round from the hub and back is kept.
+    Six stops have 720 orders.</p>
+  <p><b>Why.</b> For trips this small an exact answer is cheap, and the same answer every time can be tested
+    exactly.</p>
+  <p><b>Distances.</b> A leg is the straight line times 1.7: roads measured in Bhilai on 24 November were 1.6 to
+    1.9 times it. The order of stops comes out right for a few addresses in one direction; the kilometres are an
+    estimate.</p>
+  <p><b>Not taken.</b> A maps service's optimiser: the order of stops would then depend on a network call at the
+    moment a trip is formed.</p></div>
+
+<div class="dec"><h3>The agent free longest takes the trip, and checks each bag out</h3>
+  <p><b>What.</b> An agent belongs to one hub and goes on duty in the app. A trip goes to the agent on duty
+    there who has been free longest. The agent checks each bag out by its crate slot; when all are out, the
+    orders are out for delivery.</p>
+  <p><b>Why.</b> First come, first served is fair and needs no tuning. The moment a bag leaves the hub is the
+    moment responsibility for it changes hands.</p>
+  <p><b>Kept safe by the database.</b> Forming a trip takes a lock per hub, and claiming an agent is a guarded
+    update: a trip cannot have two agents, nor an agent two trips.</p></div>
+
+<div class="dec"><h3>The door code is worked out, and stored nowhere</h3>
+  <p><b>What.</b> Each order has a four-digit code, shown to the customer once the order is on a trip. The
+    customer reads it out at the door and the agent types it in. The server works it out as an HMAC of the
+    order's id: a hash that needs the server's secret key, cut down to four digits.</p>
+  <p><b>Why not stored.</b> The customer's app must show the code at any time, so a one-way hash would not do,
+    and the other choice is a readable code in a table. Worked out on request, a copy of the database holds no
+    codes. The agent's screen is never sent it.</p>
+  <p><b>Why four digits are enough.</b> A guess is right one time in ten thousand, and five wrong tries lock the
+    hand-over.</p>
+  <p><b>Cost.</b> A new server secret changes every outstanding code. A locked code cannot yet be
+    released.</p></div>
+</div>
+</div>
+
+<h1><small>2 · System design</small>Decisions: places, time, staging, maps, payment</h1>
+<p class="lede">Two decisions about who is served, one about time, and three about what the system simulates or
+  leaves out on purpose.</p>
+
+<div class="two">
+<div>
+<div class="dec"><h3>Where nobody delivers, a customer can ask, and it is counted</h3>
+  <p><b>What.</b> An address no hub serves used to end at "not in our delivery area yet". The screen now offers
+    "Request delivery here". The request is kept as the customer and the H3 cell, never the exact point.</p>
+  <p><b>Why.</b> Planning suggests new hubs where turned-away lookups pile up. A lookup is weak evidence. A
+    person who taps a button is saying they would order, so a request counts as five lookups.</p>
+  <p><b>Cost.</b> The weight of five is a guess.</p></div>
+
+<div class="dec"><h3>A hub at IIT Bhilai, not a wider radius</h3>
+  <p><b>What.</b> A fourth hub in Bhilai, BH-04, about half a kilometre from the campus at Kutelabhata.</p>
+  <p><b>Why.</b> The campus is 4 km from the nearest hub and a hub in Bhilai serves 3 km. The place the demo will
+    be given from was outside every zone.</p>
+  <p><b>Why not a wider radius.</b> The radius is the promise of a short ride. Widening it for one address would
+    quietly break it for everyone at the hub's edge.</p>
+  <p><b>Checked on staging.</b> BH-04 serves the IIT Bhilai area, 0.66 km from the centre of the customer's H3
+    cell.</p></div>
+
+<div class="dec"><h3>A calendar date is India's date</h3>
+  <p><b>What.</b> Everything that asks "what is the date today" asks one place, which answers with India's date:
+    UTC plus 330 minutes. Stored times stay in UTC.</p>
+  <p><b>Why.</b> The server's clock is UTC, so for the first five and a half hours of every Indian day the
+    server was on yesterday (the third story). A use-by date ends at midnight where the pack is.</p>
+  <p><b>Not taken.</b> Setting the container's time zone to India. It would have moved every log line, and the
+    tests, which run in UTC, would not be testing what runs.</p>
+  <p><b>Cost.</b> Sales statistics still count a day from midnight UTC.</p></div>
+
+<div class="dec"><h3>Payment stays a stand-in</h3>
+  <p><b>What.</b> Placing an order takes no payment details. <b>Why.</b> A payment gateway needs a merchant
+    account, callbacks and refunds, and proves nothing about micro-warehousing. It is one function, so a gateway
+    can replace it. <b>Cost.</b> Every demonstration has to say that no money moves.</p></div>
+</div>
+
+<div>
+<div class="dec"><h3>On staging the people are simulated, and the code paths are not</h3>
+  <p><b>What.</b> Two settings, on for staging and off by default. <b>Demo farms:</b> every half hour, a hub
+    with fewer than six units of a produce item gets a lot from a demo farm. <b>Demo hub:</b> an order no picker
+    has claimed after 45 seconds is claimed, scanned and packed by the server.</p>
+  <p><b>Why.</b> A hub sells only what a farm has brought, so Bhilai's new hubs showed an empty shop to the first
+    person who looked. And one person has to show an order from a phone, with nobody at the hub.</p>
+  <p><b>Why through the ordinary intake and pick.</b> Stock written straight onto a shelf would have no listing,
+    no quality check and no farm, and that is what the shop exists to show. An order merely marked as packed
+    would leave the stock records describing a hub nobody had touched.</p>
+  <p><b>Cost.</b> Staging no longer shows "the shop was empty until the farmer listed".</p></div>
+
+<div class="dec"><h3>Maps: one provider on AWS, and a map is never required</h3>
+  <p><b>What.</b> Decided on 24 November and not yet in the app: map tiles, place search and road times from
+    Amazon Location Service, drawn with MapLibre, an open-source map renderer. Every flow keeps working with no
+    map at all: an area from a list or a GPS fix, and straight-line distances.</p>
+  <p><b>Why this provider.</b> It runs in Mumbai beside the rest, on the account and credits the project has, and
+    the design takes the service on AWS where two are equal. Google's terms do not allow its routing or places
+    with someone else's map; it stays the fallback if Amazon's data proves poor.</p>
+  <p><b>Why never required.</b> The demo runs on a network the project does not control, which has already
+    blocked the project's own address once.</p>
+  <p><b>Tested in Bhilai.</b> Areas were found within about 1 km of points chosen by hand; a street address came
+    back in the wrong sector. So a search finds the area, and the customer will move a pin to the door.</p>
+  <p><b>The key</b> for map tiles can do nothing else, because it travels to every phone that draws the map and
+    can be copied. It ends on 31 March 2027.</p></div>
+</div>
+</div>
+
+<h1><small>2 · System design</small>Three rules that were wrong</h1>
+<p class="lede">All three were found on 24 November: one by a test, one by reading code, one by looking at the
+  running system at an hour nobody had looked before.</p>
+
+<div class="story">
+  <h2>1. The sweep that sent an agent out with one bag</h2>
+  <table>
+    <tr><td>The rule</td><td>When more orders wait than a trip can take, the design cut the circle around the hub into fixed wedges
+      and sent the wedge holding the oldest order. This is the textbook "sweep" method for planning vehicle rounds
+      (Gillett and Miller, 1974).</td></tr>
+    <tr><td>What happened</td><td>With three orders waiting for one building and room for two, the cut fell so that the oldest order
+      was alone in the last wedge. An agent left with one bag while two that could have gone stayed behind.</td></tr>
+    <tr><td>How it was found</td><td>By the plainest test written for the new code: "a trip takes no more than its most".</td></tr>
+    <tr><td>What changed</td><td>The sweep divides all the orders at once. Here a trip is formed one at a time, as an agent comes
+      free, and that difference was missed when the design was written. The trip is now the longest-waiting order
+      and its nearest neighbours by direction, which always fills the trip.</td></tr>
+  </table>
+</div>
+
+<div class="story">
+  <h2>2. The price that rose unseen</h2>
+  <table>
+    <tr><td>The rule</td><td>The checkout's total was a sum made on the phone from the shop's list. Nothing compared it with what
+      the order then cost.</td></tr>
+    <tr><td>What could happen</td><td>A hold sets units aside, not batches. Two customers could each hold six packs while six remained at
+      the rescue price, and both were rightly shown the lower price, because either might pay first. Whoever paid
+      second was charged the full price, on a screen that had said otherwise.</td></tr>
+    <tr><td>How it was found</td><td>By reading the app's checkout code, while the app was being moved onto the server's orders.</td></tr>
+    <tr><td>What changed</td><td>The checkout shows the hub's own bill. The payment carries the total shown, and an order that
+      would cost more is refused with nothing paid. Eight new tests, one of them two customers and six rescue
+      packs.</td></tr>
+    <tr><td>Still open</td><td>Units the hub would fail to find are counted at full price in the bill and leave the order at
+      payment. In that rare case the order costs less than the bill said.</td></tr>
+  </table>
+</div>
+
+<div class="story">
+  <h2>3. The date fault at one in the morning</h2>
+  <table>
+    <tr><td>The rule</td><td>The code took "today" from the server's clock, which is UTC.</td></tr>
+    <tr><td>What happened</td><td>India is five and a half hours ahead, so a pack stayed on sale until 05:30 on the morning after its
+      use-by date. On staging at 01:00 on 24 November, India time, a batch with a use-by date of the 23rd was still
+      on sale, and at the rescue price.</td></tr>
+    <tr><td>How it was found</td><td>By looking at staging after a deploy, at that hour. The tests could not catch it: they took "today"
+      from the same wrong clock as the code.</td></tr>
+    <tr><td>What changed</td><td>One place answers "what is the date", with India's date. The tests ask it too, and set the clock to
+      both sides of India's midnight. The run that checked the fix happened to fall at 01:43 India time.</td></tr>
+    <tr><td>Still open</td><td>Sales statistics still count a day from midnight UTC.</td></tr>
+  </table>
+</div>
+
+<p class="note"><b>Two smaller ones, from the journal.</b> A database migration was edited after it had been applied to
+  a test database; thirteen tests then failed with an error about SQL, not about the change. And a staging setting
+  was edited in the working folder while a deploy of the previous change was under way, and the deploy script read
+  its template from that folder. The edit was taken back out in time. The script has been changed to read the
+  template of the commit it deploys; that step was tried by hand and has not yet run inside a deploy.</p>
