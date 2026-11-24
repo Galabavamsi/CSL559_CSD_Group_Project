@@ -222,6 +222,7 @@ Every "simplified" cell is a task in one of the member guides.
 - [`docs/guide-member-3-supply.md`](docs/guide-member-3-supply.md): Supply (forecasting, replenishment, inbound, slotting)
 - [`docs/guide-member-4-platform.md`](docs/guide-member-4-platform.md): Platform, store network and screens
 - [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md): the script for presenting the prototype
+- [`docs/HANDOVER.md`](docs/HANDOVER.md): where things stand, where they are, how to test, deploy and build, and what is known to be wrong
 - [`docs/DEMO_ON_A_PHONE.md`](docs/DEMO_ON_A_PHONE.md): showing the app from phones alone, against staging
 - [`docs/EDGE_NODE.md`](docs/EDGE_NODE.md): design note for the in-store edge node (HLD 5), with an outage experiment
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): branches, pull requests and the checks to run before pushing
