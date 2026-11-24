@@ -496,8 +496,25 @@ Different from what the sections above say, each for a reason:
 Not built: what the hub does with a bag that comes back (4.7), the agent's position and the customer's map
 (4.8), a time of arrival, and the dispatch panel as a page (4.9 is an API only).
 
-On staging a trip leaves when the oldest order has waited two minutes, not ten, so that one person can show a
+On staging a trip leaves when the oldest order has waited half a minute, not ten, so that one person can show a
 delivery without three more orders or a long pause.
+
+### 4.11 Decision: on staging, an order nobody starts is picked and packed by the app
+
+**What.** With `DEMO_AUTOPACK` on, an order that no picker has claimed after 45 seconds is claimed, scanned line
+by line and packed into a free crate slot by `app/demo_hub.py`, using the functions the picker's screen calls.
+
+**Why.** The owner has to show the work from a phone, alone. Between a customer's payment and an agent's trip
+stands a person at the hub, and without one the order waits at Confirmed for ever. This is the same answer as the
+demo farms (section 8.1) to the same problem: the people are simulated and the code paths are not.
+
+**Why not skip the hub and mark the order packed.** Packing is where the sale is committed: stock leaves the
+shelf, the hold ends, and the bill follows which batches were picked. A shortcut would leave the stock records
+describing a hub nobody had touched. Going through claim, scan and pack keeps them true, and it meets the same
+refusals a picker would (an expired batch is "not on shelf", and the line moves to a fresh one).
+
+**Costs.** A person who wants to show the picker's screen has 45 seconds to claim the order before the app does.
+The setting is off everywhere but staging.
 
 ## 5. Asking farms for what the hub expects to sell
 
@@ -531,10 +548,25 @@ be inventing. A fixed margin is honest about being a guess.
 
 ## 7. An installable build
 
-**What.** After delivery works, one Android build made by Expo's build service (EAS), installed from a file.
-**Why not now.** Expo Go is enough to demo and to develop in, and this laptop cannot build Android itself. The
-build service needs an Expo account, which is the owner's to create. **Why at all.** A build of our own is what
-lifts the limits in section 6's last row, and "install this" is a stronger ending to a demo than "open Expo Go".
+**What.** `scripts/build_apk.sh` builds an Android app (an APK) from `mobile/` with the API's address built in:
+Expo generates the Android project from `app.json` (`expo prebuild`), and Gradle builds a release for 64-bit ARM
+phones, signed with the debug key. It is built on the dev server, which has Java 17 and the Android SDK; the
+owner approved those downloads and accepting the SDK's licence on 24 November. The app's Android name is
+`com.galabavamsi.farm2home`.
+
+**Why now.** Until then the app ran inside Expo Go, loaded from a laptop over a USB cable. That cannot be handed
+to a professor or put on a second phone for the delivery agent.
+
+**Why built by us and not by Expo's build service.** EAS needs an Expo account and uploads the project to
+Expo's cloud for each build, with a queue on the free plan. The dev server was already there, and a build on it
+needs nobody to sign in to anything.
+
+**Why the debug key.** A store release needs a signing key that must then be kept for the life of the app. For
+installing by hand on a few phones the debug key is enough, and it commits us to nothing.
+
+**Costs.** Android warns when installing an app from outside the Play Store, and each phone has to allow it
+once. An app signed with one key cannot be updated by one signed with another, so a later store build means
+uninstalling this one. The address is built in: an app built for staging talks only to staging.
 
 ## 8. A simulated day
 
