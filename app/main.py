@@ -56,9 +56,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Dark Store Prototype",
-    version="0.1.0",
-    description="Micro-warehousing module of a quick-commerce app. One module per service in the HLD.",
+    title="JustInTimeFarm2Home",
+    version="0.2.0",
+    description="Farm to local hub to pooled home delivery. Farmers list lots, hubs take them in and sell them in "
+                "units, customers order from the hub that serves them, and delivery agents carry several orders "
+                "in one trip. One module per service; the hub's stock and picking began as a dark-store prototype.",
     lifespan=lifespan,
 )
 
