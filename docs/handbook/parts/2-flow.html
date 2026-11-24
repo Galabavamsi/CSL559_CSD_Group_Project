@@ -1,0 +1,197 @@
+<h1><small>2 · System design</small>The flow: farm, hub, customer, door</h1>
+<p class="lede">One lot of tomatoes and one order, followed through every step. The numbers in the boxes are those of
+  the end-to-end run of 24 November, which section 3 shows in pictures.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 720 232" role="img" aria-label="The journey of one lot, in eight steps">
+  <g>
+    <rect class="g" x="0" y="6" width="165" height="82" rx="8"/><text class="k" x="10" y="22">1 · FARMER'S PHONE</text>
+    <text class="t" x="10" y="40">Farmer lists a lot</text><text class="s" x="10" y="56">40 kg of tomatoes at ₹18 a kg,</text><text class="s" x="10" y="70">harvested today</text>
+    <rect class="g" x="185" y="6" width="165" height="82" rx="8"/><text class="k" x="195" y="22">2 · BACKEND</text>
+    <text class="t" x="195" y="40">A hub and a slot are chosen</text><text class="s" x="195" y="56">nearest hub with room: 14.6 km;</text><text class="s" x="195" y="70">next slot, 06:00 to 09:00</text>
+    <rect class="g" x="370" y="6" width="165" height="82" rx="8"/><text class="k" x="380" y="22">3 · RECEIVER'S PHONE</text>
+    <text class="t" x="380" y="40">Weighed and graded</text><text class="s" x="380" y="56">39.5 kg arrived, 1.5 kg turned</text><text class="s" x="380" y="70">away, grade A</text>
+    <rect class="g" x="555" y="6" width="165" height="82" rx="8"/><text class="k" x="565" y="22">4 · HUB DOCK</text>
+    <text class="t" x="565" y="40">Kilograms become packs</text><text class="s" x="565" y="56">38 kg accepted = 76 packs</text><text class="s" x="565" y="70">of 500 g, batch L1</text>
+    <path class="a" d="M165 47 H183"/><path class="a" d="M350 47 H368"/><path class="a" d="M535 47 H553"/>
+    <path class="a" d="M637 88 V114 H82 V140"/>
+    <rect class="g" x="0" y="142" width="165" height="82" rx="8"/><text class="k" x="10" y="158">5 · HUB SHELVES</text>
+    <text class="t" x="10" y="176">Put away, on sale</text><text class="s" x="10" y="192">a pack is sellable the moment</text><text class="s" x="10" y="206">its bin is confirmed</text>
+    <rect class="g" x="185" y="142" width="165" height="82" rx="8"/><text class="k" x="195" y="158">6 · CUSTOMER'S PHONE</text>
+    <text class="t" x="195" y="176">Customer holds and pays</text><text class="s" x="195" y="192">two packs, ₹48, held for</text><text class="s" x="195" y="206">10 minutes while paying</text>
+    <rect class="g" x="370" y="142" width="165" height="82" rx="8"/><text class="k" x="380" y="158">7 · PICKER'S PHONE</text>
+    <text class="t" x="380" y="176">Picked and packed</text><text class="s" x="380" y="192">oldest batch first, every unit</text><text class="s" x="380" y="206">scanned, into crate slot S-01</text>
+    <rect class="g" x="555" y="142" width="165" height="82" rx="8"/><text class="k" x="565" y="158">8 · AGENT'S PHONE</text>
+    <text class="t" x="565" y="176">A trip, and a code</text><text class="s" x="565" y="192">bags leave in one round;</text><text class="s" x="565" y="206">four digits at the door</text>
+    <path class="a" d="M165 183 H183"/><path class="a" d="M350 183 H368"/><path class="a" d="M535 183 H553"/>
+  </g>
+</svg>
+</div>
+<p>All eight steps run on the real backend. Step 8, delivery, is new since 23 November.</p>
+
+<h2>Why a hub, and why two cities</h2>
+<div class="two">
+  <div>
+    <p>A hub is a <b>micro-warehouse</b>: a small room of shelves a few kilometres from the homes it serves. It is
+      where quality is checked, where kilograms become units, and where "in stock" is kept true.</p>
+    <p>Farmers deal in kilograms. Customers buy fixed units: a 500 g pack, a piece, a bunch. The hub converts one
+      into the other, once, at its dock, which keeps every stock count a whole number.</p>
+  </div>
+  <div>
+    <table>
+      <tr><th>City</th><th>Tier</th><th class="num">Built-up radius</th><th class="num">A hub serves</th><th class="num">Hubs today</th></tr>
+      <tr><td>Bangalore</td><td>1</td><td class="num">18 km</td><td class="num">2 km</td><td class="num">2</td></tr>
+      <tr><td>Bhilai</td><td>2</td><td class="num">8 km</td><td class="num">3 km</td><td class="num">4</td></tr>
+    </table>
+    <p>The same code runs both. A dense tier-1 city gets hubs close together; a tier-2 city gets fewer, with a
+      longer reach. Bhilai's are BH-01 Civic Centre, BH-02 Nehru Nagar, BH-03 Durg and BH-04 IIT Bhilai.</p>
+  </div>
+</div>
+
+<h2>What an order goes through</h2>
+<table class="keep">
+  <tr><th style="width:21%">The customer sees</th><th>Set when</th></tr>
+  <tr><td><b>Placed, Confirmed</b></td><td>The customer pays for a held cart. Payment is a stand-in, so the two are one moment.</td></tr>
+  <tr><td><b>Packed</b></td><td>The picker packs the bag into a crate slot. Only now does stock on hand go down.</td></tr>
+  <tr><td><b>Pooled</b></td><td>The order is put on a trip. The four-digit code appears on the customer's screen.</td></tr>
+  <tr><td><b>Out for delivery</b></td><td>The agent has checked every bag of the trip out of the hub.</td></tr>
+  <tr><td><b>Delivered</b></td><td>The agent types in the code the customer reads out at the door.</td></tr>
+  <tr><td><b>Cancelled</b></td><td>The customer cancels before the order is packed, or the hub could find none of its items.</td></tr>
+  <tr><td><b>Delivery failed</b></td><td>The agent could not hand the bag over, and records why.</td></tr>
+</table>
+<p>Each state is written when it changes, with its time. The hub publishes an event for each step, and the order
+  moves forward in the same database transaction as the event, so an order cannot disagree with its pick job or
+  its trip.</p>
+
+<h1><small>2 · System design</small>Inside a hub</h1>
+<p class="lede">A hub does three things: it lets good produce in, it knows exactly what is on which shelf, and it
+  never promises a pack it does not have. Each rule below is in the code and has a test.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 720 318" role="img" aria-label="Inside a hub: goods in, shelves, goods out">
+  <text class="lane" x="0" y="12">GOODS IN</text>
+  <rect class="b" x="0" y="20" width="165" height="64" rx="8"/><text class="t" x="10" y="40">Dock: weigh and grade</text><text class="s" x="10" y="56">kg received, kg rejected,</text><text class="s" x="10" y="70">grade A, B, C or reject</text>
+  <rect class="b" x="185" y="20" width="165" height="64" rx="8"/><text class="t" x="195" y="40">Pack into units</text><text class="s" x="195" y="56">accepted kg become whole</text><text class="s" x="195" y="70">packs; the rest is trim</text>
+  <rect class="b" x="370" y="20" width="165" height="64" rx="8"/><text class="t" x="380" y="40">Goods receipt</text><text class="s" x="380" y="56">units wait "on the dock":</text><text class="s" x="380" y="70">counted, not yet for sale</text>
+  <rect class="g" x="555" y="20" width="165" height="64" rx="8"/><text class="t" x="565" y="40">Put away: confirm the bin</text><text class="s" x="565" y="56">on sale from this moment,</text><text class="s" x="565" y="70">line by line</text>
+  <path class="a" d="M165 52 H183"/><path class="a" d="M350 52 H368"/><path class="a" d="M535 52 H553"/>
+  <path class="a" d="M637 84 V104"/>
+
+  <text class="lane" x="0" y="118">SHELVES</text>
+  <rect class="zone" x="0" y="126" width="720" height="78" rx="8"/>
+  <g>
+    <text class="t" x="12" y="146">Ambient</text><text class="t" x="252" y="146">Chilled</text><text class="t" x="492" y="146">Frozen</text>
+    <g fill="#fff" stroke="#cfc8b8">
+      <rect x="12" y="154" width="30" height="22" rx="3"/><rect x="46" y="154" width="30" height="22" rx="3"/><rect x="80" y="154" width="30" height="22" rx="3"/><rect x="114" y="154" width="30" height="22" rx="3"/><rect x="148" y="154" width="30" height="22" rx="3"/><rect x="182" y="154" width="30" height="22" rx="3"/>
+      <rect x="252" y="154" width="30" height="22" rx="3"/><rect x="286" y="154" width="30" height="22" rx="3"/><rect x="320" y="154" width="30" height="22" rx="3"/><rect x="354" y="154" width="30" height="22" rx="3"/><rect x="388" y="154" width="30" height="22" rx="3"/><rect x="422" y="154" width="30" height="22" rx="3"/>
+      <rect x="492" y="154" width="30" height="22" rx="3"/><rect x="526" y="154" width="30" height="22" rx="3"/><rect x="560" y="154" width="30" height="22" rx="3"/>
+    </g>
+    <rect x="252" y="154" width="30" height="22" rx="3" fill="#e3f1e3" stroke="#2e7d32"/>
+    <g class="s" text-anchor="middle"><text x="27" y="169">1</text><text x="61" y="169">2</text><text x="95" y="169">3</text><text x="129" y="169">4</text><text x="163" y="169">5</text><text x="197" y="169">6</text>
+      <text x="267" y="169">7</text><text x="301" y="169">8</text><text x="335" y="169">9</text><text x="369" y="169">10</text><text x="403" y="169">11</text><text x="437" y="169">12</text>
+      <text x="507" y="169">13</text><text x="541" y="169">14</text><text x="575" y="169">15</text></g>
+    <text class="s" x="12" y="194">Bins are numbered in walking order from the packing desk. Each bin holds batches, each batch has one use-by date, and no bin is overfilled.</text>
+  </g>
+  <path class="a" d="M82 204 V226"/>
+
+  <text class="lane" x="0" y="240">GOODS OUT</text>
+  <rect class="g" x="0" y="248" width="132" height="64" rx="8"/><text class="t" x="10" y="268">Hold</text><text class="s" x="10" y="284">a cart sets stock aside</text><text class="s" x="10" y="298">for 10 minutes</text>
+  <rect class="b" x="147" y="248" width="132" height="64" rx="8"/><text class="t" x="157" y="268">Pick job</text><text class="s" x="157" y="284">bins chosen: oldest</text><text class="s" x="157" y="298">batch first</text>
+  <rect class="b" x="294" y="248" width="132" height="64" rx="8"/><text class="t" x="304" y="268">Walk and scan</text><text class="s" x="304" y="284">every unit checked</text><text class="s" x="304" y="298">by barcode</text>
+  <rect class="g" x="441" y="248" width="132" height="64" rx="8"/><text class="t" x="451" y="268">Pack</text><text class="s" x="451" y="284">only now does stock</text><text class="s" x="451" y="298">on hand go down</text>
+  <rect class="g" x="588" y="248" width="132" height="64" rx="8"/><text class="t" x="598" y="268">Crate slot, then a trip</text><text class="s" x="598" y="284">the agent checks each</text><text class="s" x="598" y="298">bag out of the hub</text>
+  <path class="a" d="M132 280 H145"/><path class="a" d="M279 280 H292"/><path class="a" d="M426 280 H439"/><path class="a" d="M573 280 H586"/>
+</svg>
+</div>
+
+<div class="two">
+<div>
+<h2>Letting produce in</h2>
+<ul>
+  <li><b>Which hub.</b> The nearest open hubs within 60 km of the farm are tried nearest first. A hub is passed
+    over if it has no shelves of the item's temperature zone, or no room for the weight.</li>
+  <li><b>Room counts what is coming.</b> Free room = capacity − produce on the shelves − lots already on their way.
+    Without the last term, ten farmers listing in one hour would all be sent to the same nearly full hub.</li>
+  <li><b>When.</b> The next morning intake window, 06:00 to 09:00 India time, never before the harvest date.</li>
+  <li><b>Weigh and grade once.</b> Received kg, rejected kg, a grade and a remark. The farmer is judged on
+    rejected ÷ delivered over 30 days, shown beside each expected drop.</li>
+  <li><b>Kilograms into units.</b> Weights are whole grams. Accepted grams ÷ pack size = whole packs; what does
+    not fill a pack is recorded as trim. The lot becomes batch <code>L&lt;listing&gt;</code> with use-by date =
+    harvest date + shelf life.</li>
+  <li><b>Too old is refused.</b> A batch with less than half its shelf life left is recorded and never stocked.</li>
+  <li><b>A lot is taken in once.</b> Two receivers taking in the same lot at the same moment take turns; the
+    second is told it is done.</li>
+</ul>
+</div>
+<div>
+<h2>Knowing what is where</h2>
+<p>Stock is written in three places that must always agree:</p>
+<table>
+  <tr><th style="width:19%">Record</th><th style="width:40%">One row per</th><th>Used for</th></tr>
+  <tr><td><b>Level</b></td><td>hub, item</td><td>On hand and held</td></tr>
+  <tr><td><b>Shelf</b></td><td>hub, item, bin, batch</td><td>Where units are; use-by dates</td></tr>
+  <tr><td><b>Ledger</b></td><td>every movement</td><td>Who moved what, and why</td></tr>
+</table>
+<pre>on hand  =  sum of the shelves
+         =  sum of the ledger
+0  ≤  held  ≤  on hand</pre>
+<p>Only one module writes stock. Every test that moves stock ends by checking these two lines.</p>
+<ul>
+  <li><b>Counts.</b> A picker who finds a shelf empty corrects the count on the spot, and a count of that bin is
+    opened. Small differences are approved automatically (under ₹500); larger ones wait for a manager.</li>
+  <li><b>Dates.</b> Expired batches are written off every hour, by India's date.</li>
+  <li><b>Who did it.</b> Every staff call is in an audit log, refusals included.</li>
+</ul>
+</div>
+</div>
+
+<h2 style="break-before: page; margin-top: 0">Picking and packing</h2>
+<div class="two">
+<ul>
+  <li><b>Paying creates the pick job.</b> Its bins are chosen then, oldest batch first.</li>
+  <li><b>One picker per order.</b> Claiming a job is a guarded update, so two pickers cannot take one order.</li>
+  <li><b>Busy hours.</b> With 4 or more orders waiting, a picker takes 3 in one walk, one tote each. This is batch
+    picking; section 4 has what it saves.</li>
+  <li><b>Every unit is scanned.</b> A wrong barcode is refused.</li>
+</ul>
+<ul>
+  <li><b>Empty shelf.</b> The line moves to another bin, or a substitute of the same kind that is never dearer is
+    offered, or the line is dropped and comes off the bill.</li>
+  <li><b>Packing commits the sale.</b> Until then a cancel only releases a hold; no count is ever "put back".</li>
+  <li><b>Stuck orders.</b> No scan for 5 minutes and the order returns to the queue.</li>
+  <li><b>A crate slot.</b> The packed bag waits in a numbered slot, which the agent's screen later names.</li>
+</ul>
+</div>
+
+<h2>Planning ahead</h2>
+<table class="keep">
+  <tr><th style="width:24%">Question</th><th>How the hub answers it</th></tr>
+  <tr><td>How much will sell tomorrow?</td><td>A daily forecast per item. Three simple models are compared by their measured error and the best is used; reorder points follow from it. It does not yet drive requests to farms.</td></tr>
+  <tr><td>Which shelf for which item?</td><td>Slotting: each zone's items are ranked by 14 days of sales and the fast sellers get the bins nearest the packing desk.</td></tr>
+  <tr><td>Where should the next hub go?</td><td>Every address lookup is saved by its H3 cell (a hexagon of a grid over the map), served or turned away. The network map picks the sites that would cover the most turned-away customers.</td></tr>
+  <tr><td>What needs attention now?</td><td>The ops dashboard lists stalled orders, bags waiting and items out of stock first, then every key figure beside its target.</td></tr>
+</table>
+
+<h2>The numbers a hub runs on <span style="font-weight:400; font-size:8.5pt; color:var(--muted)">&nbsp;settings of a deployment, the same for every hub today</span></h2>
+<div class="two">
+<table class="keep">
+  <tr><th>Rule</th><th class="num">Value</th></tr>
+  <tr><td>A hub is looked for within</td><td class="num">60 km of the farm</td></tr>
+  <tr><td>A farm's GPS fix must be good to</td><td class="num">50 m</td></tr>
+  <tr><td>Largest lot; earliest listing before harvest</td><td class="num">2,000 kg; 7 days</td></tr>
+  <tr><td>Arriving weight may exceed the listing by</td><td class="num">10%</td></tr>
+  <tr><td>Shelf life a batch must still have at the dock</td><td class="num">half</td></tr>
+  <tr><td>A cart is held for; expired holds swept every</td><td class="num">10 min; 30 s</td></tr>
+  <tr><td>Batch picking starts at; orders per walk</td><td class="num">4 waiting; 3</td></tr>
+</table>
+<table class="keep">
+  <tr><th>Rule</th><th class="num">Value</th></tr>
+  <tr><td>An order with no scan returns to the queue after</td><td class="num">5 minutes</td></tr>
+  <tr><td>A batch is sold 30% cheaper in its last</td><td class="num">day</td></tr>
+  <tr><td>A trip is formed when this many orders wait</td><td class="num">4</td></tr>
+  <tr><td>or the oldest has waited (on staging)</td><td class="num">10 min (30 s)</td></tr>
+  <tr><td>Most orders on one trip</td><td class="num">6</td></tr>
+  <tr><td>Wrong door codes before the hand-over locks</td><td class="num">5</td></tr>
+  <tr><td>Delivery zone cell</td><td class="num">H3 resolution 9</td></tr>
+</table>
+</div>

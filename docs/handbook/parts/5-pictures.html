@@ -1,0 +1,111 @@
+<h1><small>3 · The system in pictures</small>The customer</h1>
+<p class="lede">Unless a caption says otherwise, every picture in this section is from one scripted run on 24 November
+  2026: the phone app (its web build, at phone size) and the hub's web pages, driving the real API and a PostgreSQL
+  database on the development server. A script plays every person, so the clock times are a script's.</p>
+
+<div class="phones" style="padding: 0 9mm">
+  <figure><img src="shots/customer-location-request.png" alt=""><figcaption><b>Asking where nobody serves</b>Kumhari is in no hub's zone. "Request delivery here" was tapped, and the request is counted in planning.</figcaption></figure>
+  <figure><img src="shots/customer-location.png" alt=""><figcaption><b>Where to deliver</b>An area from the list, or the phone's location. Supela is in BH-01 Civic Centre's zone.</figcaption></figure>
+  <figure><img src="shots/customer-home-tomato.png" alt=""><figcaption><b>The shop</b>All this hub holds in this run. Grade, harvest day and use-by day are those of the batch picked next.</figcaption></figure>
+  <figure><img src="shots/customer-cart.png" alt=""><figcaption><b>Cart</b>Two packs, ₹48: before the hold, the phone's own sum from the shop's list.</figcaption></figure>
+</div>
+<div class="phones" style="padding: 0 9mm">
+  <figure><img src="shots/customer-checkout.png" alt=""><figcaption><b>Checkout: the hub's bill</b>Held for ten minutes. "Pay ₹48" is what the hub would charge now. Payment is a stand-in.</figcaption></figure>
+  <figure><img src="shots/customer-order-confirmed.png" alt=""><figcaption><b>Confirmed</b>The order is a record on the server. The code stays blank until the order is on a trip.</figcaption></figure>
+  <figure><img src="shots/customer-order-out.png" alt=""><figcaption><b>Out for delivery</b>Packed, pooled, checked out of the hub. The customer reads 5791 out at the door.</figcaption></figure>
+  <figure><img src="shots/customer-order-delivered.png" alt=""><figcaption><b>Delivered</b>Every step with its time. About a minute from placed to delivered: a script was picker and agent.</figcaption></figure>
+</div>
+
+<h2 style="break-before: page; margin-top: 0">A stocked shop, and the rescue price <span class="tag real">Real API</span></h2>
+<p>The run above starts from an empty hub, so its shop has one item. The next picture is not from that run. It is one
+  long screenshot of the same build, shown as three windows: the shop at MG Road, Bangalore, served by the hub DS-01
+  Central.</p>
+<div class="phones strip" style="padding: 0 5mm">
+  <figure><img src="shots/customer-shop-bangalore.png" alt="" style="object-position: 0 0"><figcaption><b>Every card has a photograph</b>A farm's lot shows its grade and the day it was picked. Packaged goods, left from the dark-store prototype, show a use-by date.</figcaption></figure>
+  <figure><img src="shots/customer-shop-bangalore.png" alt="" style="object-position: 0 51.8%"><figcaption><b>Spinach in its last day</b>Picked yesterday, use by tomorrow: ₹15, not ₹22. The tag reads 32% because 30% off is rounded to a whole rupee.</figcaption></figure>
+  <figure><img src="shots/customer-shop-bangalore.png" alt="" style="object-position: 0 100%"><figcaption><b>Milk too</b>₹20, not ₹28. "Only 1 left" on the ice cream is the hub's count of what it can deliver now.</figcaption></figure>
+  <figure><img src="shots/customer-orders.png" alt="" style="object-position: top"><figcaption><b>Your orders</b>Back in the tomato run: the list of orders is read from the server. Until 24 November it was kept on the phone.</figcaption></figure>
+</div>
+
+<h1 style="break-before: auto; margin-top: 7mm"><small>3 · The system in pictures</small>The farmer</h1>
+<p class="lede">A farmer signs in with a code sent by email, registers a farm where they stand, and lists what was
+  picked. The backend finds the nearest hub with the right shelves and room for the weight.</p>
+<div class="phones mid" style="padding: 0 5mm">
+  <figure><img src="shots/farmer-add-farm.png" alt=""><figcaption><b>The farm is where the farmer stands</b>The phone is sure of this spot to about 18 m. A fix rougher than 50 m is refused.</figcaption></figure>
+  <figure><img src="shots/farmer-list-produce.png" alt="" style="object-position: bottom"><figcaption><b>Tomato, 40 kg, ₹18 a kg</b>The app says how long the item keeps and in which units customers buy it.</figcaption></figure>
+  <figure><img src="shots/farmer-listing-made.png" alt=""><figcaption><b>A hub and a slot</b>BH-01 Civic Centre, 14.6 km from the farm. The next morning intake window, 6 to 9 am.</figcaption></figure>
+  <figure><img src="shots/farmer-listing-graded.png" alt=""><figcaption><b>After the hub's check</b>Grade A; 38 kg accepted, 1.5 kg turned away, the hub's note, and the farm's 30-day record.</figcaption></figure>
+</div>
+<p class="note"><b>Not built for the farmer:</b> payment for the accepted weight, a photograph of the lot, and requests
+  from a hub for what it expects to sell. The asking price is recorded; it does not yet set the price on the shelf.</p>
+
+<h1><small>3 · The system in pictures</small>The hub: intake and picking</h1>
+<p class="lede">Two web pages made for a phone held in one hand. Each shows one thing at a time: one lot, one portion,
+  one bin; then one order line, one bin, one scan.</p>
+
+<h2 style="margin-top:0">Intake: weigh, grade, pack into units, put away</h2>
+<div class="phones short">
+  <figure><img src="shots/hub-intake-lots.png" alt=""><figcaption><b>Lots on their way</b>With the slot and the farm's record: this is its first delivery.</figcaption></figure>
+  <figure><img src="shots/hub-intake-weigh.png" alt=""><figcaption><b>Weigh and grade</b>The screen says what will be packed before it is recorded. The server decides.</figcaption></figure>
+  <figure><img src="shots/hub-intake-putaway.png" alt=""><figcaption><b>Put away</b>76 packs, batch L1, use by 29 November, into chilled bin C-01-01.</figcaption></figure>
+  <figure><img src="shots/hub-intake-done.png" alt=""><figcaption><b>On sale</b>From the moment the bin is confirmed.</figcaption></figure>
+</div>
+<table class="keep">
+  <tr><th>Listed</th><th>Arrived</th><th>Turned away</th><th>Accepted</th><th>Packed</th><th>Trim</th><th>Batch</th><th>Use by</th></tr>
+  <tr><td>40 kg</td><td>39.5 kg</td><td>1.5 kg</td><td><b>38 kg</b></td><td><b>76 packs of 500 g</b></td><td>0 kg</td><td>L1</td><td>29 Nov (harvest on 24 Nov + 5 days)</td></tr>
+</table>
+
+<h2>Picking: one line at a time, every unit scanned</h2>
+<div class="phones short">
+  <figure><img src="shots/hub-picker-idle.png" alt=""><figcaption><b>Ready</b>The picker asks for the next paid order.</figcaption></figure>
+  <figure><img src="shots/hub-picker-line.png" alt=""><figcaption><b>One line</b>Bin C-01-01, two packs: the bin holding the oldest batch. "Not on shelf" moves the line elsewhere.</figcaption></figure>
+  <figure><img src="shots/hub-picker-pack.png" alt=""><figcaption><b>All scanned</b>The bag goes into crate slot S-01. A wrong barcode would have been refused.</figcaption></figure>
+  <figure><img src="shots/hub-picker-packed.png" alt=""><figcaption><b>Packed</b>The sale is counted now. The bag waits in its slot for a trip.</figcaption></figure>
+</div>
+<p class="note">On staging, an order that no picker claims within 45 seconds goes through these same steps by the
+  server (the demo hub setting). In this run the picker's page was driven by the script.</p>
+
+<h1><small>3 · The system in pictures</small>The hub manager's pages</h1>
+<p class="lede">Problems first, then every key figure beside its target, then where the next hub should go.</p>
+
+<figure class="wide"><img src="shots/hub-ops-dashboard.png" alt="" style="aspect-ratio: 1920 / 1040; object-fit: cover; object-position: top">
+  <figcaption><b>Ops dashboard, BH-01 Civic Centre.</b> What needs action now comes first, then every key figure
+    (KPI) beside its target. A figure with nothing to measure yet says "No data yet" and is not shown as met. The
+    numbers here come from the one order of the run, scanned by a script in seconds: they show the page working,
+    not a real picker's pace.</figcaption></figure>
+<div class="two">
+  <figure>
+    <div class="crop" style="aspect-ratio: 860 / 750"><img src="shots/hub-network-map.png" alt="" style="width: 223.3%; left: -17.44%; top: -58.67%"></div>
+    <figcaption><b>Network map, Bhilai</b> (part of the map on the page). Blue rings are the four hubs' delivery
+      zones. Red cells are where address lookups were turned away: Risali, just outside BH-01's 3 km. The dashed
+      ring is a site where one more hub would serve them, and the page's "Open a hub here" button opens it. The
+      lookups were generated before the run so that the map has something to show. The panel beside the map, not
+      shown, counts one request for delivery: the customer's from Kumhari. Map © OpenStreetMap
+      contributors.</figcaption></figure>
+  <figure>
+    <div class="crop" style="aspect-ratio: 700 / 607"><img src="shots/hub-desk.png" alt="" style="width: 274.3%; left: -168.3%; top: -227%"></div>
+    <figcaption><b>The hub desk's event feed for the run</b> (part of the page). Read upwards: the sale is
+      counted and the order packed into crate slot S-01, a trip is formed with a planned 5.55 km, the trip
+      leaves, and it is done with 1 delivered and 0 failed. "rider.assigned" is the prototype's made-up rider,
+      still sent for every packed order; it steps aside for the trip's agent.</figcaption></figure>
+</div>
+
+<h1><small>3 · The system in pictures</small>The delivery agent</h1>
+<p class="lede">New on 24 November. An agent's side of the app was one placeholder screen. An agent can now choose a
+  hub, go on duty, collect the bags, and hand each over against the customer's code.</p>
+
+<div class="phones three mid">
+  <figure><img src="shots/agent-hub.png" alt=""><figcaption><b>Choosing a hub</b>An agent works from one hub. Choosing it in the app is for a demo run by one person; the design has the platform team attach agents.</figcaption></figure>
+  <figure><img src="shots/agent-off-duty.png" alt=""><figcaption><b>Off duty</b>One bag is waiting at the hub. On duty, the agent who has been free longest is given the next trip.</figcaption></figure>
+  <figure><img src="shots/agent-bags.png" alt=""><figcaption><b>Collect 1 bag</b>The crate slot in large type, the order number and area to match by eye. A tap, not a scan. When every bag is checked the trip starts.</figcaption></figure>
+</div>
+<div class="phones three mid">
+  <figure><img src="shots/agent-stop.png" alt=""><figcaption><b>The stop</b>Address, order and slot. "5.6 km planned" is straight lines times 1.7, an estimate. "Could not deliver" records a reason.</figcaption></figure>
+  <figure><img src="shots/agent-code.png" alt=""><figcaption><b>The customer's code</b>Typed in as the customer reads it out: the 5791 on the customer's screen. The agent's screen is never sent the code.</figcaption></figure>
+  <figure><img src="shots/agent-done.png" alt=""><figcaption><b>Trip finished</b>1 delivered, 0 not delivered. The agent is free for the next trip.</figcaption></figure>
+</div>
+<div class="box">
+  <p><b>What these pictures do not show.</b> The trip has one stop because the run placed one order; no picture here
+    shows several bags on one trip. The app draws no map and shows no position of the agent: neither is built. The
+    "Open in maps" button on the stop was not pressed in the run.</p>
+</div>

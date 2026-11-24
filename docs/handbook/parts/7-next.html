@@ -1,0 +1,60 @@
+<h1><small>5 · What is left</small>Not built, not checked, and what comes next</h1>
+<p class="lede">Nine days before the demo: what a reader might assume exists, and does not.</p>
+
+<h2 style="margin-top:0">Not built</h2>
+<table>
+  <tr><th style="width:34%">Piece</th><th>What there is today instead</th></tr>
+  <tr><td><b>A map in the app; the agent's position; a time of arrival</b></td>
+      <td>An area from a list or a GPS fix. Trip distances are straight lines times 1.7. A maps provider is chosen and a key for its tiles exists; no map is in the app.</td></tr>
+  <tr><td><b>A bag that comes back to the hub</b></td>
+      <td>The order ends as "delivery failed" with a reason. Shelf or write-off is not built.</td></tr>
+  <tr><td><b>Releasing a locked code; scanning a label</b></td>
+      <td>Five wrong codes end a hand-over as not delivered. A bag is confirmed by a tap.</td></tr>
+  <tr><td><b>The hub's dispatch panel as a page</b></td>
+      <td>Bags waiting, trips and agents on duty are in the API. No page shows them.</td></tr>
+  <tr><td><b>A simulated day of many orders</b></td>
+      <td>Pooling is a claim about many orders. Every number in section 4 comes from one order, a scripted batch of orders, or a load test.</td></tr>
+  <tr><td><b>Hubs asking farms for produce</b></td>
+      <td>The farmer offers; the hub does not ask. The forecast it would ask from exists.</td></tr>
+  <tr><td><b>Real payment, refunds, paying farmers</b></td>
+      <td>Payment is a stand-in. A farmer's accepted weight and asking price are only recorded.</td></tr>
+  <tr><td><b>A production environment; a second copy of the app; real staff accounts</b></td>
+      <td>Staging only, one copy, shared demo logins for hub staff. Each is a decision not to do it before the demo.</td></tr>
+</table>
+
+<div class="two">
+<div>
+<h2>Built, but not checked</h2>
+<ul>
+  <li><b>An order from the installed app.</b> So far it has only been installed and started, on one phone.</li>
+  <li><b>Several bags on one trip, end to end.</b> Tests cover it. The end-to-end run places one order.</li>
+  <li><b>Load on the new code.</b> The load test is from 23 November and calls neither orders nor delivery.</li>
+  <li><b>The deploy script's newest step</b> was tried by hand and has not run inside a deploy.</li>
+</ul>
+</div>
+<div>
+<h2>Known limits of what is built</h2>
+<ul>
+  <li>Settings such as 4 orders, 10 minutes, 6 per trip and 30% are starting values, not measured ones.</li>
+  <li>The bill follows the pack, not the actual weight.</li>
+  <li>Bangalore's two hubs still carry the packaged groceries of the dark-store prototype this project grew
+    from. About six hundred tests are written against that data.</li>
+  <li>Eleven of the app's 40 photographs need credit, which the app does not show yet.</li>
+</ul>
+</div>
+</div>
+
+<h2>What comes next, in the design's order of work</h2>
+<table class="keep">
+  <tr><th style="width:3%"></th><th style="width:40%">Piece</th><th>Why</th><th style="width:19%">If it runs late</th></tr>
+  <tr><td>1</td><td><b>The rest of delivery:</b> a returned bag, a locked code, the dispatch page, the agent's position</td>
+      <td>The cases a real round meets and a demo of one order does not.</td><td>Position trail cut first</td></tr>
+  <tr><td>2</td><td><b>Maps:</b> in the app and on the network page; road times for trips</td>
+      <td>A pin on the door; a trip's kilometres stop being an estimate.</td><td>The demo works without</td></tr>
+  <tr><td>3</td><td><b>Requests to farms</b></td>
+      <td>It closes the loop the name "just in time" promises.</td><td>Cut whole</td></tr>
+  <tr><td>4</td><td><b>The simulated day</b> and its numbers</td>
+      <td>Minutes to the door, orders per trip, kilometres with and without pooling.</td><td>A shorter run</td></tr>
+  <tr><td>5</td><td><b>Rehearsal on the phone,</b> on the venue's kind of network</td>
+      <td>It starts with an order from the installed app, unchecked so far.</td><td>Not cut</td></tr>
+</table>

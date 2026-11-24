@@ -447,11 +447,11 @@ def on_demo_data(browser) -> None:
     page.wait_for_timeout(PAUSE * 1500)
     finish(context, clip)
 
-    context = browser.new_context(**PHONE)                              # stills only: the agent's placeholder
+    context = browser.new_context(**PHONE)                              # a still only: the agent on demo data
     page = context.new_page()
     sign_in(page, "x", MOCK_URL, "kiran@example.com", "Delivery", real=False)
     page.wait_for_timeout(2500)
-    page.screenshot(path=str(SHOTS / "agent-placeholder.png"))
+    page.screenshot(path=str(SHOTS / "mock-agent.png"))
     context.close()
 
 

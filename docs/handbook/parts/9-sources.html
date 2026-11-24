@@ -1,0 +1,59 @@
+<h1><small>Sources and credits</small>Where the facts and the pictures come from</h1>
+<div class="two">
+<div>
+<h2 style="margin-top:3mm">The project's own documents</h2>
+<ul>
+  <li><code>docs/DESIGN.md</code>, 24 November 2026: every decision in section 2 with what was considered and not
+    taken, what it costs, and its own list of outside sources.</li>
+  <li><code>docs/journal/</code>: one entry for each piece of work, with what went wrong. Five are from 24 November:
+    orders on the server; the app on those orders and a key for map tiles; stocked shops, IIT Bhilai and India's
+    calendar; an order reaches a door; an app that installs.</li>
+  <li><code>docs/DEMO_ON_A_PHONE.md</code>: the run sheet behind section 6.</li>
+</ul>
+<h2>Outside sources the design leans on</h2>
+<ul>
+  <li>B. E. Gillett and L. R. Miller, "A Heuristic Algorithm for the Vehicle-Dispatch Problem", <i>Operations
+    Research</i> 22(2), 1974: the sweep method.</li>
+  <li>IETF, RFC 2104, "HMAC: Keyed-Hashing for Message Authentication": the door code. RFC 2606, "Reserved Top
+    Level DNS Names": the demo farms' <code>.invalid</code> address.</li>
+  <li>H3, "Tables of cell statistics across resolutions": the size of a resolution 9 cell. h3geo.org</li>
+  <li>AWS, Amazon Location Service developer guide: displaying a map, and best practices for API keys.</li>
+  <li>Google Maps Platform, Terms of Service and Service Specific Terms: no use with a non-Google map.</li>
+  <li>OWASP Cheat Sheet Series, "Multifactor Authentication" and "Forgot Password": the rules a one-time code
+    follows.</li>
+  <li>AWS documentation: password management for RDS with Secrets Manager (the seven-day rotation), HTTP headers
+    of Application Load Balancers (which caller's address to trust), and the ECS deployment circuit breaker.</li>
+  <li>Expo, "Create a release build locally": the Android build and its debug key.</li>
+  <li>Swiggy Instamart's fresh vegetable listings: packs, pieces with weight ranges, bunches.</li>
+  <li>The AWS Price List API, read on 23 November 2026: every price in section 2.</li>
+</ul>
+<p>Measured by the project: every number in section 4, each with its date and method.</p>
+</div>
+<div>
+<h2 style="margin-top:3mm">Credits</h2>
+<ul>
+  <li><b>Product photographs:</b> 40 photographs from Wikimedia Commons, 25 of produce and 15 of packaged goods.
+    Each is in the public domain, under CC0, or under a CC BY licence. The eleven under CC BY need credit: okra
+    by Paul Lowry (CC BY 4.0), lemon by ASADAL, Inc. (CC BY 2.0 KR), watermelon by liz west (CC BY 2.0), paneer
+    by Ian Brown (CC BY 2.0), bread by Evan Swigart (CC BY 2.0), rice by cookbookman17 (CC BY 2.0), atta by
+    Margaret Hoogstrate (CC BY 3.0), sugar by Douglas P Perkins (CC BY 3.0), tea by HeroidShehu (CC BY 3.0), ice
+    cream by Benreis (CC BY 3.0) and green peas by Paul Wilkinson (CC BY 2.0). Every file, author, licence and
+    link is in <code>mobile/ASSETS.md</code>. The photograph used for sunflower oil is of olive oil in a plain
+    bottle: no unbranded picture of sunflower oil under an open licence was good enough.</li>
+  <li><b>Map:</b> © OpenStreetMap contributors, on the network map.</li>
+  <li><b>Typeface:</b> Plus Jakarta Sans, SIL Open Font License 1.1.</li>
+  <li><b>Icons:</b> Material Design Icons, Apache License 2.0.</li>
+  <li><b>Logo, icon set and colours:</b> made for this project. No logo, artwork, name or screen of another
+    company is used.</li>
+</ul>
+<h2>How this document was made</h2>
+<p>The pictures of section 3 are saved by the script that makes the end-to-end run,
+  <code>scripts/record_demo.sh</code>. It starts the backend on an empty database, adds generated sales history and
+  address lookups so that the hub's dashboards have something to show, drives the app and the hub's pages in a
+  browser, and saves a picture at each step. Running it again remakes them.</p>
+<p>The long screenshot of the Bangalore shop and the picture of the installed app were taken separately, on 24
+  November. This report does not use the app's demo-data pictures or the old placeholder screen of the agent.</p>
+<p>The pages are HTML in <code>docs/handbook/</code>, printed to PDF by <code>build.ps1</code>. The numbers in
+  section 4 are typed in by hand from the runs named beside them.</p>
+</div>
+</div>

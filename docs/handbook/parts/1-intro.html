@@ -3,87 +3,81 @@
     <path d="M0 0 L10 5 L0 10 z" fill="#62665e"/></marker></defs></svg>
 
 <section class="cover">
-  <div class="kicker">CSL559 · Handbook · status on 23 November 2026</div>
+  <div class="kicker">CSL559 · System design report · status on 24 November 2026</div>
   <div class="name">JustInTime<span>Farm2Home</span></div>
-  <div class="sub">Fresh produce from farms to a local hub to homes. What is built, how the micro-warehouse works, what
-    was measured, and how to show it.</div>
+  <div class="sub">Fresh produce from farms to a local hub to homes, delivered in pooled trips. How the system is
+    designed and why, what it looks like, and what was measured.</div>
   <div class="tiles">
-    <div class="tile"><b>702</b><span>automated tests pass on AWS for every commit that is deployed</span></div>
-    <div class="tile"><b>2 cities</b><span>Bangalore (tier 1) and Bhilai (tier 2), one design sized for each</span></div>
-    <div class="tile"><b>Live</b><span>staging on AWS: HTTPS, firewall, standby database, rolling deploys</span></div>
-    <div class="tile"><b>9 min</b><span>from a chosen commit to tested, built and running on staging</span></div>
+    <div class="tile"><b>800</b><span>automated tests pass on AWS for the commit that staging runs</span></div>
+    <div class="tile"><b>6 hubs</b><span>in two cities: Bangalore (tier 1) and Bhilai (tier 2), one design sized for each</span></div>
+    <div class="tile"><b>9 passes</b><span>of the end-to-end run, none failed: from a farmer's listing to a code at the customer's door</span></div>
+    <div class="tile"><b>130 ms</b><span>for the shop's read at the 99th percentile under load. The target is 100 ms: missed</span></div>
   </div>
   <div class="strip">
     <img src="shots/farmer-listing-made.png" alt="">
     <img src="shots/customer-home-tomato.png" alt="">
-    <img src="shots/customer-order-packed.png" alt="">
-    <img src="shots/farmer-listing-graded.png" alt="">
+    <img src="shots/customer-order-out.png" alt="">
+    <img src="shots/agent-code.png" alt="">
   </div>
-  <div class="foot"><span>Demo: 3 and 4 December 2026</span><span>Every number in this document says how it was measured.
-    What is not built is named as not built.</span></div>
+  <div class="foot"><span>Demo: 3 and 4 December 2026, Bhilai</span><span>Every number in this report says when and how
+    it was measured. What is not built, or not checked, is named as such.</span></div>
 </section>
 
-<h1><small>1 · The idea</small>Farm to hub to home</h1>
-<p class="lede">A farmer lists a lot in kilograms. A small local hub weighs it, grades it and packs it into the units
-  customers buy. A customer's phone shows only what their hub can deliver now.</p>
+<h1><small>1 · Where it stands</small>What this is, and what works today</h1>
+<p class="lede">A farmer lists a lot in kilograms. A local hub weighs it, grades it and packs it into the units
+  customers buy. A customer's phone shows only what the hub serving their address can deliver now. A delivery
+  agent takes several bags out in one trip and hands each over against a code.</p>
 
-<div class="diagram">
-<svg viewBox="0 0 720 232" role="img" aria-label="The journey of one lot, in eight steps">
-  <g>
-    <rect class="g" x="0" y="6" width="165" height="82" rx="8"/><text class="k" x="10" y="22">1 · FARMER'S PHONE</text>
-    <text class="t" x="10" y="40">Farmer lists a lot</text><text class="s" x="10" y="56">40 kg of tomatoes at ₹18 a kg,</text><text class="s" x="10" y="70">harvested today</text>
-    <rect class="g" x="185" y="6" width="165" height="82" rx="8"/><text class="k" x="195" y="22">2 · BACKEND, POSTGIS</text>
-    <text class="t" x="195" y="40">A hub and a slot are chosen</text><text class="s" x="195" y="56">nearest hub with room: 14.6 km;</text><text class="s" x="195" y="70">tomorrow, 06:00 to 09:00</text>
-    <rect class="g" x="370" y="6" width="165" height="82" rx="8"/><text class="k" x="380" y="22">3 · RECEIVER'S PHONE</text>
-    <text class="t" x="380" y="40">Weighed and graded</text><text class="s" x="380" y="56">39.5 kg arrived, 1.5 kg turned</text><text class="s" x="380" y="70">away, grade A</text>
-    <rect class="g" x="555" y="6" width="165" height="82" rx="8"/><text class="k" x="565" y="22">4 · HUB DOCK</text>
-    <text class="t" x="565" y="40">Kilograms become packs</text><text class="s" x="565" y="56">38 kg accepted = 76 packs</text><text class="s" x="565" y="70">of 500 g, batch L1</text>
-    <path class="a" d="M165 47 H183"/><path class="a" d="M350 47 H368"/><path class="a" d="M535 47 H553"/>
-    <path class="a" d="M637 88 V114 H82 V140"/>
-    <rect class="g" x="0" y="142" width="165" height="82" rx="8"/><text class="k" x="10" y="158">5 · HUB SHELVES</text>
-    <text class="t" x="10" y="176">Put away, on sale</text><text class="s" x="10" y="192">a pack is sellable the moment</text><text class="s" x="10" y="206">its bin is scanned</text>
-    <rect class="g" x="185" y="142" width="165" height="82" rx="8"/><text class="k" x="195" y="158">6 · CUSTOMER'S PHONE</text>
-    <text class="t" x="195" y="176">Customer holds and pays</text><text class="s" x="195" y="192">whole cart or nothing,</text><text class="s" x="195" y="206">held for 10 minutes</text>
-    <rect class="g" x="370" y="142" width="165" height="82" rx="8"/><text class="k" x="380" y="158">7 · PICKER'S PHONE</text>
-    <text class="t" x="380" y="176">Picked and packed</text><text class="s" x="380" y="192">oldest batch first,</text><text class="s" x="380" y="206">every unit scanned</text>
-    <rect class="d" x="555" y="142" width="165" height="82" rx="8"/><text class="kn" x="565" y="158">8 · NOT BUILT YET</text>
-    <text class="t" x="565" y="176">Pooled delivery</text><text class="s" x="565" y="192">several orders in one trip,</text><text class="s" x="565" y="206">a code at the door</text>
-    <path class="a" d="M165 183 H183"/><path class="a" d="M350 183 H368"/><path class="a" d="M535 183 H553"/>
-  </g>
-</svg>
-</div>
-<p>Steps 1 to 7 run today on the real backend, and section 3 follows one lot of tomatoes through them with the
-  numbers above. Step 8, delivery, is the largest part still to build.</p>
-
-<h2>Why a hub, and why two cities</h2>
 <div class="two">
-  <div>
-    <p>A hub is a <b>micro-warehouse</b>: a small room of shelves a few kilometres from the homes it serves. It is
-      where quality is checked, where kilograms become sellable units, and where the promise "this is in stock" is
-      kept. Everything the customer sees is a statement about one hub's shelves.</p>
-    <p>Farmers deal in kilograms. Customers buy fixed units: a 500 g pack, a piece with a weight range, a bunch.
-      The hub converts one into the other, once, at its dock. This is how the reference apps sell produce, and it
-      keeps every stock count a whole number.</p>
-  </div>
-  <div>
-    <table>
-      <tr><th>City</th><th>Tier</th><th>Built-up radius</th><th>Radius a new hub serves</th></tr>
-      <tr><td>Bangalore</td><td>1</td><td class="num">18 km</td><td class="num">2 km</td></tr>
-      <tr><td>Bhilai</td><td>2</td><td class="num">8 km</td><td class="num">3 km</td></tr>
-    </table>
-    <p>The same code runs both. A dense tier-1 city gets hubs close together, each serving a small radius; a
-      tier-2 city gets fewer hubs with a longer reach. Bangalore has two hubs in the demo data and Bhilai three, opened
-      with the same call the network map uses when it suggests a new site (section 5).</p>
-  </div>
+<div>
+<h2 style="margin-top:0">On 24 November 2026</h2>
+<ul>
+  <li><b>The whole journey runs on the real backend.</b> Delivery, the last step, was built on 24 November.</li>
+  <li><b>The backend</b> is one FastAPI application with a PostgreSQL database, on AWS in Mumbai. The copy people
+    can use is called staging. It runs the main branch at merge commit <code>567ff67</code> (pull request 100).</li>
+  <li><b>One phone app</b> serves customers, farmers and delivery agents, and now installs on an Android phone
+    from a file. Hub staff use web pages.</li>
+  <li><b>800 automated tests</b> pass on AWS for that commit.</li>
+  <li><b>Two cities, six hubs:</b> 2 in Bangalore and 4 in Bhilai, the fourth beside IIT Bhilai, where the demo
+    will be given.</li>
+</ul>
+</div>
+<div>
+<h2 style="margin-top:0">New since the build of 23 November</h2>
+<ul>
+  <li>An order is a record on the server. It was kept on the phone.</li>
+  <li>The shop says which batch a pack comes from: grade, harvest date, use-by date and farm.</li>
+  <li>A batch in its last day is sold 30% cheaper, and the checkout shows the hub's own bill.</li>
+  <li>Delivery: trips, the agent's screens, a four-digit code at the door.</li>
+  <li>A customer outside every delivery zone can ask for delivery, and the request is counted.</li>
+  <li>The calendar is India's: a fault found on staging at one in the morning.</li>
+</ul>
+</div>
 </div>
 
 <h2>Who uses what</h2>
 <table>
-  <tr><th style="width:13%">Person</th><th style="width:24%">Screen</th><th>What they do there</th><th style="width:19%">Today</th></tr>
-  <tr><td><b>Farmer</b></td><td>Phone app</td><td>Registers a farm at its location, lists produce, sees the hub, the drop slot and the hub's quality check</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Hub receiver</b></td><td>Intake page on a phone (web)</td><td>Weighs and grades a lot, has it packed into units, puts each portion in its bin</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Customer</b></td><td>Phone app</td><td>Picks a delivery area, shops what the hub has, holds a cart, pays, follows the order as far as Packed</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Hub picker</b></td><td>Picker page on a phone (web)</td><td>Claims the next order, walks the bins in order, scans every unit, packs</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Hub manager</b></td><td>Ops dashboard, hub desk, network map (web)</td><td>Problems first, every KPI beside its target, a live event feed, where the next hub should go, and opening it</td><td><span class="tag real">Real backend</span></td></tr>
-  <tr><td><b>Delivery agent</b></td><td>Phone app</td><td>Pooled trips, hand-over against the customer's code</td><td><span class="tag none">Not built</span></td></tr>
+  <tr><th style="width:14%">Person</th><th style="width:21%">Screen</th><th>What they do there</th><th style="width:11%">Today</th></tr>
+  <tr><td><b>Farmer</b></td><td>Phone app</td><td>Registers a farm, lists produce, sees the hub's quality check</td><td><span class="tag real">Real API</span></td></tr>
+  <tr><td><b>Hub receiver</b></td><td>Intake page (web)</td><td>Weighs and grades a lot, packs it into units, puts it in bins</td><td><span class="tag real">Real API</span></td></tr>
+  <tr><td><b>Customer</b></td><td>Phone app</td><td>Shops what the hub has, holds a cart, pays, follows the order</td><td><span class="tag real">Real API</span></td></tr>
+  <tr><td><b>Hub picker</b></td><td>Picker page (web)</td><td>Walks the bins in order, scans every unit, packs the bag</td><td><span class="tag real">Real API</span></td></tr>
+  <tr><td><b>Delivery agent</b></td><td>Phone app</td><td>Checks bags out of the hub, hands each over against a code</td><td><span class="tag real">Real API</span></td></tr>
+  <tr><td><b>Hub manager</b></td><td>Dashboard, map (web)</td><td>Problems first, key figures against targets, where the next hub goes</td><td><span class="tag real">Real API</span></td></tr>
 </table>
+
+<div class="box warn">
+  <h3>Five things a reader should be told first</h3>
+  <ul>
+    <li><b>Payment is a stand-in.</b> Tapping Pay confirms the order and no money moves.</li>
+    <li><b>On staging, some people are simulated.</b> Demo farms deliver a lot when a hub is nearly out of an item,
+      and an order no picker starts within 45 seconds is picked and packed by the server, through the code a
+      person's screen calls.</li>
+    <li><b>The pictures in section 3 are from a scripted run on the project's development server,</b> not from
+      staging: the real backend code, a real PostgreSQL, and the app's web build at phone size.</li>
+    <li><b>The installed Android app has been started on one phone</b> and showed its sign-in screen. Signing in
+      and ordering from it had not been done when this was written.</li>
+    <li><b>Not built:</b> a map, the agent's position, a time of arrival, what the hub does with a bag that comes
+      back, hubs asking farms for produce, a simulated day of many orders. Section 5 has the whole list.</li>
+  </ul>
+</div>
