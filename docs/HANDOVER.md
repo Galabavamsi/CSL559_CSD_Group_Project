@@ -153,6 +153,8 @@ them. They simulate people; the records are made by the real code paths. All are
   is fine for installing by hand and wrong for a store: a store release needs its own key, and phones with this
   build would have to uninstall it first.
 - **Hub staff share one password per environment.**
+- **`/metrics` on staging answers anyone.** It holds counters and timings for Prometheus, no secrets and no
+  personal data, but a hosted site should not publish them. Found on 24 November; not yet closed.
 - **The report's video is from 23 November** and stops at Packed.
 
 ## What to do next, in order
