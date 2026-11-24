@@ -54,6 +54,13 @@ def _claim(db: Session, job: FulfilmentJob, picker_id: str, tote: str | None = N
     return claimed
 
 
+def claim(db: Session, job: FulfilmentJob, picker_id: str) -> bool:
+    """Give one chosen waiting order to this picker, by the same guarded update as `next_job`. For a caller that
+    chooses the order itself (the demo hub). False, with nothing changed, if it is no longer waiting. Does not
+    commit."""
+    return _claim(db, job, picker_id)
+
+
 def next_batch(db: Session, picker_id: str, store_id: int) -> list[FulfilmentJob]:
     """Single-order picking off-peak, batch picking at peak (HLD 13.1, task 2.6). Commits.
 

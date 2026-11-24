@@ -9,7 +9,9 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native. The Android and iOS projects are generated from app.json (scripts/build_apk.sh) and not kept.
+/android/
+/ios/
 .kotlin/
 *.orig.*
 *.jks

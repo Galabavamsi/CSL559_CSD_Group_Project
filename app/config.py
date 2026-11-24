@@ -167,6 +167,13 @@ DELIVERY_CHECK_SECONDS = float(os.getenv("DELIVERY_CHECK_SECONDS", "30"))
 # up as an agent and choose a hub, which is what a demo with one person and two email addresses needs.
 AGENT_SELF_SIGNUP = os.getenv("AGENT_SELF_SIGNUP", "off") == "on"
 
+# The demo hub (app/demo_hub.py): with this on, an order no picker has started after DEMO_AUTOPACK_SECONDS is picked
+# and packed by the app itself, the way a picker would, so a demo run from phones alone reaches delivery. Off unless
+# turned on; a person at the picker's screen within that time is never raced.
+DEMO_AUTOPACK = os.getenv("DEMO_AUTOPACK", "off") == "on"
+DEMO_AUTOPACK_SECONDS = float(os.getenv("DEMO_AUTOPACK_SECONDS", "45"))
+DEMO_AUTOPACK_CHECK_SECONDS = float(os.getenv("DEMO_AUTOPACK_CHECK_SECONDS", "10"))
+
 # Demo farms (app/demo_supply.py): lots that arrive without a farmer, through the hub's ordinary intake, whenever a
 # hub has fewer than DEMO_SUPPLY_MIN_UNITS of an item on sale. A hosted demo's shops are then never empty. Off for
 # the tests and for the recorded demo, which shows a hub's first lot arriving at empty shelves.

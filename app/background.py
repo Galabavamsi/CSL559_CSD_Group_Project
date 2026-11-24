@@ -10,7 +10,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-from . import config, demo_supply
+from . import config, demo_hub, demo_supply
 from .db import SessionLocal
 from .modules.delivery import service as delivery
 from .modules.fulfilment import service as fulfilment
@@ -53,6 +53,12 @@ def delivery_once() -> int | None:
     trips were formed, or None."""
     with SessionLocal() as db:
         return delivery.form_all(db) or None
+
+
+def demo_hub_once() -> list[str] | None:
+    """Pick and pack the orders nobody has started (app/demo_hub.py). Returns the orders packed, or None."""
+    with SessionLocal() as db:
+        return demo_hub.pack_waiting(db) or None
 
 
 def demo_supply_once() -> list[dict] | None:
@@ -98,6 +104,10 @@ def delivery_loop():
     return _repeat("trips formed", delivery_once, lambda: config.DELIVERY_CHECK_SECONDS, first_run_now=False)
 
 
+def demo_hub_loop():
+    return _repeat("demo hub packed", demo_hub_once, lambda: config.DEMO_AUTOPACK_CHECK_SECONDS, first_run_now=False)
+
+
 def demo_supply_loop():
     # Runs at start-up too: a hub opened by this deploy has stock before anyone opens its shop.
     return _repeat("demo farms delivered", demo_supply_once, lambda: config.DEMO_SUPPLY_INTERVAL_MINUTES * 60,
@@ -105,13 +115,15 @@ def demo_supply_loop():
 
 
 def loops() -> list[Callable]:
-    """The timed jobs to start. Replenishment is left out when REPLENISHMENT_INTERVAL_MINUTES is 0 or less, and the
-    demo farms unless DEMO_SUPPLY is on."""
+    """The timed jobs to start. Replenishment is left out when REPLENISHMENT_INTERVAL_MINUTES is 0 or less, the
+    demo farms unless DEMO_SUPPLY is on, and the demo hub unless DEMO_AUTOPACK is on."""
     jobs = [sweep_loop, expiry_loop, stall_loop, delivery_loop]
     if config.REPLENISHMENT_INTERVAL_MINUTES > 0:
         jobs.append(replenish_loop)
     if config.DEMO_SUPPLY and config.DEMO_SUPPLY_INTERVAL_MINUTES > 0:
         jobs.append(demo_supply_loop)
+    if config.DEMO_AUTOPACK:
+        jobs.append(demo_hub_loop)
     return jobs
 
 
