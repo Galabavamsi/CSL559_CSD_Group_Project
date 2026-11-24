@@ -9,6 +9,8 @@ the hub already publishes and moves the order in the publisher's transaction, so
 disagree: both change or neither does.
 """
 import contextvars
+import hashlib
+import hmac
 from datetime import datetime
 
 import h3
@@ -18,15 +20,16 @@ from sqlalchemy.orm import Session
 from ... import clock, config, events
 from ...errors import DomainError
 from ...models import (SKU, FulfilmentJob, Order, OrderEvent, OrderLine, PickTask, Reservation, Store, StoreZone,
-                       utcnow)
+                       TripStop, utcnow)
 from ..catalogue import service as catalogue
 from ..fulfilment import service as fulfilment
 from ..inventory import service as inventory
 
-# Statuses, in the order an order can pass through them. Delivery adds pooled, out_for_delivery, delivered and
-# delivery_failed; nothing sets them yet.
+# Statuses, in the order an order can pass through them: confirmed, packed, then pooled (on a trip, bag still at
+# the hub), out_for_delivery, and delivered or delivery_failed. Delivery moves an order through the last four.
 OPEN = ("confirmed",)                               # a customer may still cancel
 ENDED = ("delivered", "cancelled", "delivery_failed")
+ON_A_TRIP = ("pooled", "out_for_delivery")          # the customer is shown the door code
 
 # The customer and address of the order being placed in this request, for on_order_paid below. `place` sets it
 # around the hold's confirmation; the handler runs inside that confirmation's transaction, on the same thread.
@@ -55,8 +58,18 @@ def _totals(lines: list[OrderLine], delivery_fee: float) -> dict:
             "total": round(item_total - savings + delivery_fee, 2)}
 
 
+def door_code(order_id: str) -> str:
+    """The four digits the customer reads to the agent at the door (docs/DESIGN.md, section 4.6). Worked out from the
+    order's id and the server's secret each time it is needed, and stored nowhere: a copy of the database holds no
+    codes."""
+    digest = hmac.new(config.JWT_SECRET.encode(), f"door-code:{order_id}".encode(), hashlib.sha256).digest()
+    return f"{int.from_bytes(digest[:4], 'big') % 10_000:04d}"
+
+
 def view(db: Session, order: Order) -> dict:
     hub = db.get(Store, order.store_id)
+    stop = db.scalar(select(TripStop).where(TripStop.order_id == order.id))
+    trip = stop.trip if stop is not None else None
     return {
         "id": order.order_id, "status": order.status, "placed_at": _stamp(order.placed_at),
         "history": [{"status": event.status, "at": _stamp(event.at)} for event in order.events],
@@ -66,13 +79,16 @@ def view(db: Session, order: Order) -> dict:
         "total": order.total, "payment": order.payment,
         "address": {"label": order.address_label, "line": order.address_line, "landmark": order.landmark,
                     "lat": order.lat, "lng": order.lng},
-        # Delivery is not built: no code, no pool, no agent, and no promise of a time.
-        "delivery_code": None, "pooled_with": None, "eta_minutes": None, "agent_name": None,
+        # The code appears once the order is on a trip. No time is promised until road times are wired in.
+        "delivery_code": door_code(order.order_id) if order.status in ON_A_TRIP else None,
+        "pooled_with": len(trip.stops) - 1 if trip is not None else None,
+        "agent_name": trip.agent.name if trip is not None else None,
+        "eta_minutes": None,
         "can_cancel": order.status in OPEN,
     }
 
 
-def _move(db: Session, order_id: str, to: str, only_from: tuple[str, ...]) -> bool:
+def move(db: Session, order_id: str, to: str, only_from: tuple[str, ...]) -> bool:
     """Move an order to a status if it is in one of `only_from`, and note when. One guarded update, so an event
     that arrives twice, or after the order has ended, changes nothing. Does not commit."""
     moved = db.execute(update(Order).where(Order.order_id == order_id, Order.status.in_(only_from))
@@ -240,9 +256,9 @@ def on_job_state(db: Session, store_id: int, payload: dict) -> None:
             _price_by_batch(db, order, payload["job_id"])
             _refuse_a_dearer_bill(order)
     elif payload["state"] == "packed":
-        _move(db, payload["order_id"], "packed", only_from=("confirmed",))
+        move(db, payload["order_id"], "packed", only_from=("confirmed",))
     elif payload["state"] == "cancelled":
-        _move(db, payload["order_id"], "cancelled", only_from=("confirmed",))
+        move(db, payload["order_id"], "cancelled", only_from=("confirmed",))
 
 
 def _order_for(db: Session, order_id: str) -> Order | None:

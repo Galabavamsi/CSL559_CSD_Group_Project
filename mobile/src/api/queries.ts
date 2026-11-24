@@ -1,11 +1,13 @@
 /** TanStack Query hooks: the only way screens read from or write to the API. */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useCart } from '@/state/cart';
 import { useSession } from '@/state/session';
 
 import { api } from './index';
 import type {
+  AgentState,
+  DeliveryFailReason,
   HoldRequest,
   LatLng,
   NewFarm,
@@ -15,11 +17,13 @@ import type {
   PlaceOrderRequest,
   ProfileChanges,
   Role,
+  Trip,
 } from './types';
 
 export const queryKeys = {
   me: ['me'] as const,
   cities: ['cities'] as const,
+  hubs: (citySlug: string | null) => ['hubs', citySlug] as const,
   serviceability: (point: LatLng | null) => ['serviceability', point?.lat, point?.lng] as const,
   products: (hubId: number | null) => ['products', hubId] as const,
   hold: (holdId: string | null) => ['hold', holdId] as const,
@@ -29,6 +33,7 @@ export const queryKeys = {
   produceItems: ['produce-items'] as const,
   farms: ['farms'] as const,
   listings: ['listings'] as const,
+  agent: ['agent'] as const,
 };
 
 const FINAL_STATES: OrderStatus[] = ['delivered', 'cancelled', 'delivery_failed'];
@@ -81,6 +86,16 @@ export function useUpdateProfile() {
 
 export function useCities() {
   return useQuery({ queryKey: queryKeys.cities, queryFn: () => api.listCities(), staleTime: 10 * 60_000 });
+}
+
+/** The hubs of one city. Waits until a city is named. */
+export function useHubs(citySlug: string | null) {
+  return useQuery({
+    queryKey: queryKeys.hubs(citySlug),
+    queryFn: () => api.listHubs(citySlug as string),
+    enabled: citySlug !== null,
+    staleTime: 60_000,
+  });
 }
 
 export function useServiceability(point: LatLng | null) {
@@ -251,4 +266,86 @@ export function useCancelOrder() {
       ]);
     },
   });
+}
+
+// ---------------------------------------------------------------------- delivery
+
+/**
+ * The agent's hub, duty and trip. Asked again every few seconds while they are on duty or on a trip: that is how
+ * a new trip reaches the phone.
+ */
+export function useAgent() {
+  return useQuery({
+    queryKey: queryKeys.agent,
+    queryFn: () => api.getAgent(),
+    staleTime: 0,
+    refetchInterval: (query) => (query.state.data?.onDuty || query.state.data?.trip ? 5000 : false),
+  });
+}
+
+/**
+ * Put what the API just answered into the agent's cached state. An answer to a question asked before the change
+ * may still be on its way and would put the old state back, so it is dropped first.
+ */
+async function writeAgent(
+  queryClient: QueryClient,
+  change: (agent: AgentState | undefined) => AgentState | undefined,
+): Promise<void> {
+  await queryClient.cancelQueries({ queryKey: queryKeys.agent });
+  queryClient.setQueryData<AgentState>(queryKeys.agent, change);
+}
+
+export function useChooseAgentHub() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (hubId: number) => api.chooseAgentHub(hubId),
+    onSuccess: (agent) => writeAgent(queryClient, () => agent),
+    // A refusal means the phone was behind (on duty after all, say): ask for the state as the server has it.
+    // Not awaited, here and below: the message should show at once, not after that answer.
+    onError: () => void queryClient.invalidateQueries({ queryKey: queryKeys.agent }),
+  });
+}
+
+export function useSetAgentDuty() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (onDuty: boolean) => api.setAgentDuty(onDuty),
+    onSuccess: (agent) => writeAgent(queryClient, () => agent),
+    onError: () => void queryClient.invalidateQueries({ queryKey: queryKeys.agent }),
+  });
+}
+
+/**
+ * One step of a trip. The API answers with the trip as it stands now, which replaces the cached one. After the
+ * last stop that trip is "done": it stays cached for the moment it takes to ask what comes next, which is no trip
+ * or the next one. A refusal means the phone was behind (or a wrong code used up a try), so the state is asked
+ * for again.
+ */
+function useTripStep<Step>(mutationFn: (step: Step) => Promise<Trip>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: async (trip) => {
+      await writeAgent(queryClient, (agent) => agent && { ...agent, trip });
+      if (trip.status === 'done') void queryClient.invalidateQueries({ queryKey: queryKeys.agent });
+    },
+    onError: () => void queryClient.invalidateQueries({ queryKey: queryKeys.agent }),
+  });
+}
+
+/** Confirm one bag at the hub, by its order id. */
+export function useLoadBag() {
+  return useTripStep((orderId: string) => api.loadBag(orderId));
+}
+
+/** Hand an order over against the code the customer reads out. */
+export function useDeliverOrder() {
+  return useTripStep(({ orderId, code }: { orderId: string; code: string }) => api.deliverOrder(orderId, code));
+}
+
+/** Report that an order could not be handed over. */
+export function useFailDelivery() {
+  return useTripStep(({ orderId, reason }: { orderId: string; reason: DeliveryFailReason }) =>
+    api.failDelivery(orderId, reason),
+  );
 }

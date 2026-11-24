@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 from . import config, demo_supply
 from .db import SessionLocal
+from .modules.delivery import service as delivery
 from .modules.fulfilment import service as fulfilment
 from .modules.inventory import service as inventory
 from .modules.replenishment import service as replenishment
@@ -44,6 +45,14 @@ def replenish_once() -> list[dict] | None:
     with SessionLocal() as db:
         changed = [row for row in replenishment.run_all(db) if row["transfer_order_id"] or row["capped"]]
     return changed or None
+
+
+def delivery_once() -> int | None:
+    """Form the trips that have become due because an order has waited long enough (docs/DESIGN.md, section 4.1).
+    Packing an order and an agent coming free check at once; only the passing of time needs this. Returns how many
+    trips were formed, or None."""
+    with SessionLocal() as db:
+        return delivery.form_all(db) or None
 
 
 def demo_supply_once() -> list[dict] | None:
@@ -85,6 +94,10 @@ def replenish_loop():
                    first_run_now=False)
 
 
+def delivery_loop():
+    return _repeat("trips formed", delivery_once, lambda: config.DELIVERY_CHECK_SECONDS, first_run_now=False)
+
+
 def demo_supply_loop():
     # Runs at start-up too: a hub opened by this deploy has stock before anyone opens its shop.
     return _repeat("demo farms delivered", demo_supply_once, lambda: config.DEMO_SUPPLY_INTERVAL_MINUTES * 60,
@@ -94,7 +107,7 @@ def demo_supply_loop():
 def loops() -> list[Callable]:
     """The timed jobs to start. Replenishment is left out when REPLENISHMENT_INTERVAL_MINUTES is 0 or less, and the
     demo farms unless DEMO_SUPPLY is on."""
-    jobs = [sweep_loop, expiry_loop, stall_loop]
+    jobs = [sweep_loop, expiry_loop, stall_loop, delivery_loop]
     if config.REPLENISHMENT_INTERVAL_MINUTES > 0:
         jobs.append(replenish_loop)
     if config.DEMO_SUPPLY and config.DEMO_SUPPLY_INTERVAL_MINUTES > 0:

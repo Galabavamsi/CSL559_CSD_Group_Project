@@ -88,3 +88,18 @@ export const AGENT_NAMES = ['Ravi Yadav', 'Imran Khan', 'Suresh Nayak', 'Manoj K
 
 /** The sign-in code the mock accepts for every address. Shown on the sign-in screens in mock mode. */
 export const MOCK_OTP_CODE = '123456';
+
+/** The door code the mock accepts at every stop of a trip. Shown on the agent's screen in mock mode. */
+export const MOCK_DOOR_CODE = '1234';
+
+/**
+ * Who the mock's delivery trips are for, and where in the area they live. One has no phone number and some no
+ * landmark, as real orders do. The numbers are not real ones.
+ */
+export const TRIP_CUSTOMERS: { name: string; phone: string | null; line: string; landmark: string | null }[] = [
+  { name: 'Asha Verma', phone: '+910000000001', line: 'Room 12, Hostel A', landmark: 'Near the main gate' },
+  { name: 'Rohit Sahu', phone: null, line: 'House 14, Street 3', landmark: null },
+  { name: 'Meena Iyer', phone: '+910000000003', line: 'Flat 2B, Sai Residency', landmark: 'Opposite the water tank' },
+  { name: 'Farhan Ali', phone: '+910000000004', line: 'Quarter 7C, Sector 6', landmark: null },
+  { name: 'Lata Deshmukh', phone: '+910000000005', line: 'No. 27, 2nd Cross', landmark: 'Behind the temple' },
+];

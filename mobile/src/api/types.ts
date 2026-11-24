@@ -309,6 +309,66 @@ export interface NewListing {
   harvestDate: string;
 }
 
+// ---------------------------------------------------------------------- delivery
+
+/** The hub a delivery agent collects bags from. */
+export interface AgentHub {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+/** "assigned" (bags still at the hub), "out" (on the road) or "done" (every stop is over). */
+export type TripStatus = 'assigned' | 'out' | 'done';
+
+/** "waiting" (bag at the hub), "loaded" (with the agent), "delivered" or "failed". */
+export type TripStopStatus = 'waiting' | 'loaded' | 'delivered' | 'failed';
+
+export type DeliveryFailReason = 'nobody_home' | 'refused' | 'not_found';
+
+/** One order of a trip: the bag to collect at the hub and the door to take it to. */
+export interface TripStop {
+  orderId: string;
+  /** The stop's place in the trip, from 1. */
+  seq: number;
+  status: TripStopStatus;
+  /** Where the bag waits on the hub's shelf, for example "S-01"; null when the hub recorded none. */
+  crateSlot: string | null;
+  units: number;
+  address: DeliveryAddress;
+  customer: { name: string | null; phone: string | null };
+  failedReason: DeliveryFailReason | null;
+  /** Wrong door codes still allowed. At 0 the stop can only be reported as not delivered. */
+  triesLeft: number;
+}
+
+/** A round from the hub and back. Stops come in the order they should be made. */
+export interface Trip {
+  id: number;
+  status: TripStatus;
+  /** Planned length of the round in road kilometres. */
+  km: number;
+  /** ISO timestamps. */
+  createdAt: string;
+  leftAt: string | null;
+  doneAt: string | null;
+  hub: AgentHub;
+  stops: TripStop[];
+}
+
+/** Where a delivery agent stands: their hub, whether they are on duty, and the trip they are on. */
+export interface AgentState {
+  userId: number;
+  name: string | null;
+  /** Null until the agent has chosen a hub. */
+  hub: AgentHub | null;
+  onDuty: boolean;
+  trip: Trip | null;
+  /** Packed bags at the hub that are on no trip yet. */
+  waitingAtHub: number;
+}
+
 /**
  * Paying for a hold. The bill is the one the customer was shown: the API works out its own, and refuses to
  * charge more than `total` (`price_changed`).

@@ -30,8 +30,10 @@ CLIPS = {
     "3-customer": ("3. The customer orders", "Real API. Payment is a stand-in: no money moves.", True),
     "4-hub-picking": ("4. The hub picks and packs", "Real API, on the picker's phone screen.", True),
     "5-farmer-result": ("5. The farmer sees the grade", "Real API.", True),
-    "6-customer-packed": ("6. The customer's order is packed", "Real API. Delivery is not built yet.", True),
-    "7-demo-data": ("7. What is still to come", "DEMO DATA, not the backend: orders, tracking, rescue deals.", True),
+    "6-customer-packed": ("6. The customer's order is packed", "Real API.", True),
+    "7-agent-delivers": ("7. A delivery agent takes it to the door", "Real API. The code is read off the customer's phone.", True),
+    "8-customer-delivered": ("8. The customer's order is delivered", "Real API.", True),
+    "9-demo-data": ("9. On demo data", "DEMO DATA, not the backend: the same screens with made-up orders.", True),
 }
 
 
