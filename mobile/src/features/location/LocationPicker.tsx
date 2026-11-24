@@ -25,7 +25,8 @@ export interface LocationPickerProps {
 
 /**
  * THE SEAM FOR THE MAP. Today the picker is a GPS button plus a list of areas, with no maps SDK.
- * A Google Maps pin-drop is a second component with these same props (`MapLocationPicker`: a map centred on
+ * A map pin-drop (Amazon Location tiles drawn with MapLibre, docs/DESIGN.md section 1.2) is a second component
+ * with these same props (`MapLocationPicker`: a map centred on
  * `value` or the city, a fixed pin, `onChange` when the map settles). Point this constant at it and the
  * location screen needs no other change.
  */
